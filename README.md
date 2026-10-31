@@ -6,7 +6,7 @@
       <td><img src="samples/logo/.readme/app_200_border.png" width="200" height="200"></td>
     </tr>
   </table>
-  <br/>AIO QC
+  AIO QC
 </h1>
 
 <h4 align="center">
