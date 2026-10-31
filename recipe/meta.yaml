@@ -29,7 +29,7 @@ requirements:
   run:
     - python >={{ python_min }}
     # Qt 6 bindings: check the conda-forge name first (`conda search -c conda-forge pyqt6` / anaconda.org) —
-    # if PyQt6 is not packaged there, conda-forge will not accept the recipe; see PUBLISHING.md for alternatives.
+    # if PyQt6 is not packaged there, conda-forge will not accept the recipe.
     - pyqt6 >=6.5
     - numpy >=1.23
     - opencv >=4.7                  # conda-forge name of OpenCV with Python bindings
@@ -51,7 +51,7 @@ test:
     - pip
 
 about:
-  home: https://github.com/3ST4R/aio-qc
+  home: https://github.com/spreetkaran/aio-qc
   summary: All-in-one quality control for annotated image datasets (LabelMe and YOLO)
   description: |
     Desktop app to find and fix problems in LabelMe / YOLO datasets before training: broken files, label names,
@@ -61,8 +61,8 @@ about:
     - LICENSE
     - THIRD_PARTY_NOTICES.md
     - licenses/
-  dev_url: https://github.com/3ST4R/aio-qc
+  dev_url: https://github.com/spreetkaran/aio-qc
 
 extra:
   recipe-maintainers:
-    - 3ST4R
+    - spreetkaran
