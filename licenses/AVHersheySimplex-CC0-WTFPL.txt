@@ -1,0 +1,17 @@
+AV Hershey Simplex (AIO_QC/fonts/AVHersheySimplexMedium.ttf, unmodified)
+
+Made in 2016 by Stewart C. Russell - scruss.com
+Licence: Dual-licensed CC0 / WTFPL — you may use it under either.
+
+Derived from character stroke coordinates by Allen V. Hershey published in
+"Calligraphy for Computers" (US Naval Weapons Laboratory, 1967-08-01, NWL Report
+No. 2101, NTIS accession number AD-662 398) and elsewhere. These coordinates were
+published without copyright.
+
+CC0 1.0 Universal (public domain dedication):
+  https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+WTFPL (Do What The F*ck You Want To Public License), Version 2:
+  http://www.wtfpl.net/txt/copying/
+
+(The notice above is the licence text embedded in the font's own metadata.)
