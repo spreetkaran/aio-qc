@@ -16,8 +16,8 @@
 <div align="center">
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/pypi/v/aio-qc.svg"></a>
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
-  <a href="https://github.com/3ST4R/aio-qc/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <a href="https://github.com/3ST4R/aio-qc/releases"><img src="https://img.shields.io/github/v/release/3ST4R/aio-qc.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/releases"><img src="https://img.shields.io/github/v/release/spreetkaran/aio-qc.svg"></a>
 </div>
 
 <div align="center">
@@ -26,7 +26,7 @@
   | <a href="#features"><b>Features</b></a>
   | <a href="#keyboard-shortcuts"><b>Shortcuts</b></a>
   | <a href="#faq"><b>FAQ</b></a>
-  | <a href="https://github.com/3ST4R/aio-qc/releases"><b>Download ↗</b></a>
+  | <a href="https://github.com/spreetkaran/aio-qc/releases"><b>Download ↗</b></a>
 </div>
 
 <br/>
@@ -86,12 +86,12 @@ pip install aio-qc
 pip install "aio-qc[full]"
 
 # the latest version from GitHub:
-# pip install git+https://github.com/3ST4R/aio-qc.git
+# pip install git+https://github.com/spreetkaran/aio-qc.git
 ```
 
 ### Option 2: Using standalone executable (easiest)
 
-Download the zip for your system from the [Releases](https://github.com/3ST4R/aio-qc/releases) page — no Python
+Download the zip for your system from the [Releases](https://github.com/spreetkaran/aio-qc/releases) page — no Python
 needed:
 
 - **standalone**: one program file, `AIO-QC.exe` on Windows
@@ -187,7 +187,7 @@ pyinstaller aio-qc/AIO_QC/__main__.py \
 ## Development
 
 ```bash
-git clone https://github.com/3ST4R/aio-qc.git
+git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
 pip install -e ".[full]"
 AIO_QC --logger-level debug
