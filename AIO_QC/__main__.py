@@ -3,8 +3,6 @@
 import os, argparse, sys, io, contextlib
 from loguru import logger
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from AIO_QC import __appname__
 from AIO_QC import __version__
 # Qt and the app are imported in main() after the arguments are read, so `--version` / `--help` work instantly and
