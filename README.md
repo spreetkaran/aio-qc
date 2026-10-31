@@ -168,14 +168,20 @@ Everything has a key; press **`?`** in the app for the live key map (type to fil
 
 ## How to build standalone executable
 
-PyInstaller cannot cross-compile: build on the system you are building for (the
-[Build apps](.github/workflows/build-apps.yml) workflow builds Windows, macOS and Linux on every release).
+PyInstaller cannot cross-compile: build on the system you are building for.
 
 ```bash
-pip install -r requirements.txt pyinstaller
-python packaging/build.py               # both zips for this OS, in dist/
-python packaging/build.py --standalone  # one file:   AIO-QC-<version>-<os>-standalone.zip
-python packaging/build.py --portable    # one folder: AIO-QC-<version>-<os>-portable.zip
+AIO_QC_PATH=./AIO_QC
+pyinstaller aio-qc/AIO_QC/__main__.py \
+  --name=AIO-QC \
+  --windowed \
+  --noconfirm \
+  --specpath=build \
+  --add-data="$(AIO_QC_PATH)/icons:AIO_QC/icons" \
+  --add-data="$(AIO_QC_PATH)/fonts:AIO_QC/fonts" \
+  --add-data="$(AIO_QC_PATH)/editors:AIO_QC/editors" \
+  --add-data="$(AIO_QC_PATH)/validators:AIO_QC/validators" \
+  --onedir
 ```
 
 ## Development
