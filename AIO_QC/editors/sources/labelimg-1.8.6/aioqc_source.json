@@ -1,0 +1,22 @@
+{
+ "kind": "labelimg",
+ "version": "1.8.6",
+ "flags": [],
+ "deps": [
+  "pyqt5",
+  "lxml"
+ ],
+ "patches": [
+  "labelImg.py: distutils was removed in Python 3.12 (the import is unused)",
+  "labelImg.py: Qt needs an int (Python 3.10+)",
+  "labelImg.py: Qt needs an int (Python 3.10+)",
+  "labelImg.py: Qt needs an int",
+  "labelImg.py: Qt needs an int",
+  "libs/canvas.py: Qt needs ints",
+  "libs/canvas.py: Qt needs ints",
+  "libs/canvas.py: Qt needs ints",
+  "libs/shape.py: Qt needs ints",
+  "labelImg.py: save YOLO .txt, never Pascal VOC .xml",
+  "labelImg.py: auto-save on, like labelme --autosave"
+ ]
+}
