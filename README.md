@@ -226,6 +226,3 @@ AIO QC is released under the [MIT License](LICENSE). Copyright (c) 2026 Preetkar
 It bundles third-party components that keep their own licenses — notably the **labelme** sources (GPL-3.0), which run
 as a separate program for *Fix in Editor*. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the full license
 texts are in [`licenses/`](licenses/).
-
-<img src="samples/stats/.readme/stats.png" width="49%" /> <img src="samples/main_app/.readme/main_dark.png" width="49%" />\
-<i>Stats and Dark appearance</i>
