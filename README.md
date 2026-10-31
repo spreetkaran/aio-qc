@@ -184,12 +184,12 @@ python packaging/build.py --portable    # one folder: AIO-QC-<version>-<os>-port
 git clone https://github.com/3ST4R/aio-qc.git
 cd aio-qc
 pip install -e ".[full]"
-python -m AIO_QC --logger-level debug
+AIO_QC --logger-level debug
 ```
 
 ```
 AIO_QC/
-├── __main__.py        entry point (python -m AIO_QC)
+├── __main__.py        entry point
 ├── app.py             main window; the QC_TOOLS registry builds the tabs, menus and shortcuts
 ├── core/              Qt-free logic (datasets, checks, backups, history, sampling, data prep …)
 ├── widgets/           the UI: canvas, panels, tool windows, animations
