@@ -1,0 +1,46 @@
+{
+ "kind": "labelme",
+ "version": "6.3.1",
+ "flags": [
+  "--autosave",
+  "--config",
+  "--epsilon",
+  "--flags",
+  "--keep-prev",
+  "--label-flags",
+  "--labelflags",
+  "--labels",
+  "--logger-level",
+  "--no-auto-save",
+  "--no-sort-labels",
+  "--nodata",
+  "--nosortlabels",
+  "--output",
+  "--reset-config",
+  "--validate-label",
+  "--validatelabel",
+  "--version",
+  "--with-image-data"
+ ],
+ "deps": [
+  "imgviz>=2.0.0",
+  "loguru>=0.7",
+  "matplotlib>=3.7",
+  "natsort>=7.1.0",
+  "numpy>=1.24",
+  "osam>=0.4.0",
+  "pillow>=2.8",
+  "pyqt5>=5.14.0",
+  "pyqt5-qt5!=5.15.13 ; sys_platform == 'linux'",
+  "pyqt5-qt5!=5.15.11,!=5.15.12,!=5.15.13,!=5.15.14,!=5.15.15,!=5.15.16 ; sys_platform == 'win32'",
+  "pyyaml>=6.0",
+  "scipy>=1.8",
+  "scikit-image>=0.21",
+  "tifffile>=2024.1.30"
+ ],
+ "patches": [
+  "labelme/config/__init__.py: settings file ~/.labelme6rc (not the shared ~/.labelmerc)",
+  "labelme/app.py: settings file ~/.labelme6rc (not the shared ~/.labelmerc)",
+  "labelme/utils/__init__.py: import imgviz (imgviz.io import fails with some releases)"
+ ]
+}

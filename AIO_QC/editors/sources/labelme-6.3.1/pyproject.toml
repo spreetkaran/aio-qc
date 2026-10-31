@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling>=1.20.0", "hatch-vcs", "hatch-fancy-pypi-readme"]
+build-backend = "hatchling.build"
+
+[project]
+name = "labelme"
+description = "Image annotation with Python."
+license = { text = "GPL-3.0-only" }
+requires-python = ">=3.10"
+authors = [{ name = "Kentaro Wada", email = "www.kentaro.wada@gmail.com" }]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "imgviz>=2.0.0",
+  "loguru>=0.7",
+  "matplotlib>=3.7",
+  "natsort>=7.1.0",
+  "numpy>=1.24",
+  "osam>=0.4.0",
+  "pillow>=2.8",
+  "pyqt5>=5.14.0",
+  "pyqt5-qt5!=5.15.13 ; sys_platform == 'linux'",
+  "pyqt5-qt5!=5.15.11,!=5.15.12,!=5.15.13,!=5.15.14,!=5.15.15,!=5.15.16 ; sys_platform == 'win32'",
+  "pyyaml>=6.0",
+  "scipy>=1.8",
+  "scikit-image>=0.21",
+  "tifffile>=2024.1.30",
+]
+dynamic = ["readme", "version"]
+
+[tool.uv]
+constraint-dependencies = ["onnxruntime<1.24; python_version < '3.11'"]
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+fragments = [{ path = "README.md" }]
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = 'src="(?!https?://)([^"]+)"'
+replacement = 'src="https://raw.githubusercontent.com/wkentaro/labelme/main/\1"'
+
+[tool.hatch.version]
+source = "vcs"
+
+[dependency-groups]
+dev = [
+  "ipython",
+  "mdformat-frontmatter>=2.0.10",
+  "mdformat>=0.7",
+  "pyqt5-stubs>=5.15.6.0",
+  "pytest>=8.3.4",
+  "pytest-cov>=7.1.0",
+  "pytest-qt>=4.4.0",
+  "pytest-xdist>=3.8.0",
+  "ruff~=0.12.11",
+  "taplo>=0.9.3",
+  "twine>=6.1.0",
+  "ty>=0.0.31",
+  "types-pillow>=10.2.0.20240822",
+  "types-pyyaml>=6.0.12.20241230",
+  "typos>=1.45.0",
+  "yamlfix>=1.19.1",
+]
+
+[project.scripts]
+labelme = "labelme.__main__:main"
+
+[tool.pytest.ini_options]
+qt_api = "pyqt5"
+markers = ["gui: mark a test as a GUI test."]
+
+[tool.ruff.lint]
+select = [
+  "ANN", # flake8-annotations
+  "E",   # pycodestyle
+  "F",   # pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
