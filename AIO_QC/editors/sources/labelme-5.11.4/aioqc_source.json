@@ -1,0 +1,38 @@
+{
+ "kind": "labelme",
+ "version": "5.11.4",
+ "flags": [
+  "--autosave",
+  "--config",
+  "--epsilon",
+  "--flags",
+  "--keep-prev",
+  "--labelflags",
+  "--labels",
+  "--logger-level",
+  "--nodata",
+  "--nosortlabels",
+  "--output",
+  "--reset-config",
+  "--validatelabel",
+  "--version"
+ ],
+ "deps": [
+  "imgviz>=2.0.0",
+  "loguru",
+  "matplotlib",
+  "natsort>=7.1.0",
+  "numpy",
+  "osam>=0.3.1",
+  "pillow>=2.8",
+  "pyqt5>=5.14.0",
+  "pyqt5-qt5!=5.15.13 ; sys_platform == 'linux'",
+  "pyqt5-qt5!=5.15.11,!=5.15.12,!=5.15.13,!=5.15.14,!=5.15.15,!=5.15.16 ; sys_platform == 'win32'",
+  "pyyaml",
+  "scikit-image"
+ ],
+ "patches": [
+  "labelme/config/__init__.py: settings file ~/.labelme5rc (not the shared ~/.labelmerc)",
+  "labelme/app.py: settings file ~/.labelme5rc (not the shared ~/.labelmerc)"
+ ]
+}
