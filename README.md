@@ -75,7 +75,7 @@ changes, so any change can be undone. It is written in Python and uses Qt for it
 
 ## Installation
 
-There are 3 options to install AIO QC:
+There are 2 options to install AIO QC:
 
 ### Option 1: Using pip
 
