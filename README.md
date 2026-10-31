@@ -39,8 +39,11 @@ changes, so any change can be undone. It is written in Python and uses Qt for it
 <img src="samples/qc_drawer/.readme/qc_drawer.gif" width="32%" /> <img src="samples/review/.readme/review.gif" width="32%" /> <img src="samples/zoom/.readme/zoom.gif" width="32%" />\
 <i>QC drawer, Review and Zoom</i>
 
-<img src="samples/validation/.readme/validation.png" width="32%" /> <img src=".readme/crop_gallery.png" width="32%" /> <img src=".readme/review_grid.png" width="32%" />\
+<img src="samples/validation/.readme/validation.png" width="32%" /> <img src="samples/crop_gallery/.readme/crop_gallery.png" width="32%" /> <img src="samples/review_grid/.readme/review_grid.png" width="32%" />\
 <i>Validation, Crop Gallery and Review Grid.</i>
+
+<img src="samples/stats/.readme/stats.png" width="49%" /> <img src="samples/main_app/.readme/main_dark.png" width="49%" />\
+<i>Stats and Dark appearance</i>
 
 ## Features
 
