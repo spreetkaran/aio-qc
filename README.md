@@ -1,5 +1,12 @@
 <h1 align="center">
-  <img src="AIO_QC/icons/app_200_border.png" width="200" height="200"><br/>AIO QC
+  <table align="center">
+    <tr>
+      <td><img src="samples/logo/.readme/fx_icon_200x200.png" width="200" height="200"></td>
+      <td><b>|</b></td>
+      <td><img src="samples/logo/.readme/app_200_border.png" width="200" height="200"></td>
+    </tr>
+  </table>
+  <br/>AIO QC
 </h1>
 
 <h4 align="center">
