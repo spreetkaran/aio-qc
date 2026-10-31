@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+aio_qc_tool.log*
+aio_qc_crash.log
+.aio_qc/
+.aio_qc_trash/
+_aioqc_prep/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.ruff_cache/
