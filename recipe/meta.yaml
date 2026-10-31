@@ -1,0 +1,68 @@
+# conda-forge recipe for AIO QC — submit to https://github.com/conda-forge/staged-recipes as recipes/aio-qc/meta.yaml
+# (after the release is on PyPI: the source is the PyPI sdist). Fill the sha256 with:
+#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-1.0.0.tar.gz | sha256sum
+{% set name = "aio-qc" %}
+{% set version = "1.0.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/aio-qc-{{ version }}.tar.gz
+  sha256: REPLACE_WITH_SHA256
+
+build:
+  noarch: python
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - aio-qc = AIO_QC.__main__:main
+    - aio-qc-console = AIO_QC.__main__:main
+
+requirements:
+  host:
+    - python {{ python_min }}
+    - pip
+    - setuptools >=68
+    - wheel
+  run:
+    - python >={{ python_min }}
+    # Qt 6 bindings: check the conda-forge name first (`conda search -c conda-forge pyqt6` / anaconda.org) —
+    # if PyQt6 is not packaged there, conda-forge will not accept the recipe; see PUBLISHING.md for alternatives.
+    - pyqt6 >=6.5
+    - numpy >=1.23
+    - opencv >=4.7                  # conda-forge name of OpenCV with Python bindings
+    - loguru >=0.7
+    - natsort
+    - pillow
+    - pyyaml
+    - orjson
+
+test:
+  imports:
+    - AIO_QC
+    - AIO_QC.core
+  commands:
+    - pip check
+    - aio-qc-console --version
+  requires:
+    - python {{ python_min }}
+    - pip
+
+about:
+  home: https://github.com/3ST4R/aio-qc
+  summary: All-in-one quality control for annotated image datasets (LabelMe and YOLO)
+  description: |
+    Desktop app to find and fix problems in LabelMe / YOLO datasets before training: broken files, label names,
+    sloppy or duplicate shapes, split leakage, probable mislabels — with backups, history and undo.
+  license: MIT AND GPL-3.0-only AND OFL-1.1   # AIO QC (MIT) + bundled labelme (GPL-3.0) + fonts (OFL)
+  license_file:
+    - LICENSE
+    - THIRD_PARTY_NOTICES.md
+    - licenses/
+  dev_url: https://github.com/3ST4R/aio-qc
+
+extra:
+  recipe-maintainers:
+    - 3ST4R

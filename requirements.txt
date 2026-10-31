@@ -1,0 +1,11 @@
+# AIO QC — runtime requirements (Python 3.10+)
+PyQt6>=6.5
+numpy>=1.23
+opencv-python>=4.7
+loguru>=0.7
+
+# Optional — used automatically when installed
+natsort>=8.0        # natural sort order in lists
+Pillow>=9.5         # EXIF orientation, extra image checks, PDF/report thumbnails fallback
+PyYAML>=6.0         # data.yaml parsing (a built-in parser is used otherwise)
+orjson>=3.9         # faster JSON reading / writing on large datasets
