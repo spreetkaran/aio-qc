@@ -36,9 +36,9 @@ dependencies = [
 full = ["natsort>=8.0", "Pillow>=9.5", "PyYAML>=6.0", "orjson>=3.9"]
 
 [project.urls]
-Homepage = "https://github.com/3ST4R/aio-qc"
-Issues = "https://github.com/3ST4R/aio-qc/issues"
-Changelog = "https://github.com/3ST4R/aio-qc/blob/main/AIO_QC/CHANGES.md"
+Homepage = "https://github.com/spreetkaran/aio-qc"
+Issues = "https://github.com/spreetkaran/aio-qc/issues"
+Changelog = "https://github.com/spreetkaran/aio-qc/blob/main/AIO_QC/CHANGES.md"
 
 [project.gui-scripts]
 aio-qc = "AIO_QC.__main__:main"       # `aio-qc` command (no console window on Windows)
