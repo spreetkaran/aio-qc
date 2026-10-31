@@ -98,15 +98,6 @@ needed:
 - **portable**: one folder that keeps its settings, logs and editor environments inside it (runs from a USB stick and
   leaves nothing on the PC)
 
-### Option 3: From source
-
-```bash
-git clone https://github.com/3ST4R/aio-qc.git
-cd aio-qc
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m AIO_QC
-```
 
 ### Supported Python and platforms
 
@@ -127,9 +118,9 @@ Python environment** that you choose, so AIO QC itself never needs PyTorch or a 
 aio-qc                                # open the app (pip install)
 aio-qc-console                        # the same, with the log in a terminal
 
-python -m AIO_QC                      # from source (run from the folder that contains AIO_QC/)
-python -m AIO_QC --version            # print the version
-python -m AIO_QC --logger-level debug # verbose log in aio_qc_tool.log
+
+AIO_QC --version                      # print the version
+AIO_QC --logger-level debug           # verbose log in aio_qc_tool.log
 ```
 
 Click **Open Dir** (`Ctrl+O`) or drop a dataset folder on the window; the layout is detected automatically. On the
