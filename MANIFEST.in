@@ -1,4 +1,6 @@
 include LICENSE THIRD_PARTY_NOTICES.md requirements.txt
 recursive-include licenses *
 recursive-include AIO_QC/editors *
+recursive-include AIO_QC/icons *
+recursive-include AIO_QC/fonts *
 global-exclude __pycache__ *.py[cod]
