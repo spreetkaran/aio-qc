@@ -15,7 +15,7 @@
 
 <div align="center">
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/pypi/v/aio-qc.svg"></a>
-  <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
+  <a href="https://pypi.org/project/aio-qc/1.0.0"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
   <a href="https://github.com/spreetkaran/aio-qc/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg"></a>
   <a href="https://github.com/spreetkaran/aio-qc/releases"><img src="https://img.shields.io/github/v/release/spreetkaran/aio-qc.svg"></a>
 </div>
