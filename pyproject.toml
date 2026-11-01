@@ -47,6 +47,7 @@ aio-qc = "AIO_QC.__main__:main"       # `aio-qc` command (no console window on W
 aio-qc-console = "AIO_QC.__main__:main"   # same app, with a console (logs visible) — handy for troubleshooting
 
 [tool.setuptools]
+include-package-data = true                 # pulls everything from MANIFEST.in file
 license-files = ["LICENSE", "licenses/*"]   # in the wheel's .dist-info, next to the metadata
 
 [tool.setuptools.dynamic]
@@ -58,7 +59,7 @@ include = ["AIO_QC*"]
 
 [tool.setuptools.package-data]
 # the bundled LabelMe / labelImg sources ("Fix in Editor") are not importable packages — ship them as data, whole
-"AIO_QC" = ["editors/**/*", "icons/**/*", "fonts/**/*", "validators/**/*", "THIRD_PARTY_NOTICES.md"]
+"AIO_QC" = ["validators/*", "validators/**/*", "THIRD_PARTY_NOTICES.md"]
 "*" = ["*.svg", "*.png", "*.ico", "*.ttf", "*.otf", "*.json", "*.yaml", "*.md", "*.txt", "*.zip", "*.toml",
        "*.qrc", "*.ui", "*.cfg", "*.py"]
 
