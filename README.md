@@ -119,8 +119,8 @@ aio-qc                                # open the app (pip install)
 aio-qc-console                        # the same, with the log in a terminal
 
 
-aio-qc --version                      # print the version
-aio-qc --logger-level debug           # verbose log in aio_qc_tool.log
+aio-qc-console --version                      # print the version
+aio-qc-console --logger-level debug           # verbose log in aio_qc_tool.log
 ```
 
 Click **Open Dir** (`Ctrl+O`) or drop a dataset folder on the window; the layout is detected automatically. On the
@@ -190,7 +190,7 @@ pyinstaller aio-qc/AIO_QC/__main__.py \
 git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
 pip install -e ".[full]"
-aio-qc --logger-level debug
+aio-qc-console --logger-level debug
 ```
 
 ```
