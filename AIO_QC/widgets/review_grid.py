@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 ▦ Review Grid — whole images with their annotations, a page at a time, for the fast first pass.
 

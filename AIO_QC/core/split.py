@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Split planner (train / val / optional test) — adapted from the pipeline's 02_split_dataset.py, made scalable.
 

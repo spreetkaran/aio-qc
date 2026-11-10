@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Get Started — the guided overview shown on the first start (and any time from Help ▸ Get Started).
 

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🔗 Relationship Rules — how annotations relate to each other and to the image (containment, counts, co-occurrence,
 overlaps, size, shape type, attributes, groups, classification). Configure once per dataset, or let AIO QC suggest

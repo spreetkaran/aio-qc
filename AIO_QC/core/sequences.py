@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Sequence consistency (Qt-free): frames that come from one video / burst are checked against their neighbours.
 Works for any dataset whose frames can be ordered — nothing here knows about a particular project.

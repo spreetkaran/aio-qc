@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🩺 Image Quality — integrity (corrupt / truncated files, EXIF rotation and size disagreements: errors) and low-priority
 information (blurry, under- / over-exposed, low contrast). Also: the background IntegritySweep that checks every image

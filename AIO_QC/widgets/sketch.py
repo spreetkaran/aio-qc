@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Sketch (P) and ROI capture (O) — two modes on the main image, with zoom / pan / Space-pan working as usual.
 

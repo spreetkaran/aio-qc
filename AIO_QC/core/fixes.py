@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 User-confirmed repairs for validation issues. Nothing here runs automatically:
 the Validation dialog lists every proposed fix and applies only the checked ones.

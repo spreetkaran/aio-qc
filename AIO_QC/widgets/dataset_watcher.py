@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """Background scanner for outside changes (see core.watch). Emits snapshots; the GUI thread diffs and applies them."""
 from __future__ import annotations
 

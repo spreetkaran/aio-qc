@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 File list dock: model/view (instant for 100k files, unlike QListWidget),
 text search, split filter and a "QC filter" banner used by every QC tool.

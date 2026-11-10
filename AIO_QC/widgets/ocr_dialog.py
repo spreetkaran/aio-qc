@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🔤 OCR Check — read the text inside text-class boxes with an OCR engine from your own Python environment and
 check it: no text · low confidence · validator rules · truncated / loose boxes · several lines · stored-text

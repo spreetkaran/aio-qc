@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """Keeps one embedding server (core/embed_server.py, in the chosen environment) alive and its model loaded."""
 from __future__ import annotations
 

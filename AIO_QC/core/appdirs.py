@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Where AIO QC keeps its own files (Qt-free) — the same rules for a pip install, a standalone .exe and a portable folder.
 

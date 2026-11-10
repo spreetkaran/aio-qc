@@ -1,23 +1,22 @@
 <h1 align="center">
   <table align="center">
     <tr>
-      <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/fx_icon_200x200.png" width="200" height="200"></td>
-      <td><b>|</b></td>
       <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/app_200_border.png" width="200" height="200"></td>
+      <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/studio_icon_200x200.png" width="160" height="160"></td>
     </tr>
   </table>
   AIO QC
 </h1>
 
 <h4 align="center">
-  Find and fix annotation errors in LabelMe and YOLO datasets before you train.
+  Find and fix annotation errors in LabelMe and YOLO datasets before you train — with Data Studio for tables, in one desktop app.
 </h4>
 
 <div align="center">
-  <a href="https://pypi.org/project/aio-qc/1.0.1/"><img src="https://img.shields.io/badge/pypi-1.0.1-blue.svg"></a>
+  <a href="https://pypi.org/project/aio-qc/2.0.0/"><img src="https://img.shields.io/badge/pypi-2.0.0-blue.svg"></a>
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/blob/v1.0.1/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/release-v1.0.1-informational.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.0.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.0.0"><img src="https://img.shields.io/badge/release-v2.0.0-informational.svg"></a>
 </div>
 
 <div align="center">
@@ -40,7 +39,7 @@
 AIO QC is a desktop app for checking annotated image datasets **before you train**: broken files, wrong or
 inconsistent label names, sloppy or duplicate shapes, split leakage and probable mislabels.\
 It shows every problem on the image, lets you fix it in the same window, and keeps the original of every file it
-changes, so any change can be undone. It is written in Python and uses Qt for its graphical interface.
+changes, so any change can be undone. A second mode, **Data Studio**, analyses and cleans tables. It is written in Python and uses Qt for its graphical interface.
 
 <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/qc_drawer/.readme/qc_drawer.gif" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/review/.readme/review.gif" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/zoom/.readme/zoom.gif" width="32%" />\
 <i>QC drawer, review and zoom.</i>
@@ -54,6 +53,8 @@ changes, so any change can be undone. It is written in Python and uses Qt for it
 <sub>Screenshots are of the current release on <a href="https://cocodataset.org">COCO</a> (COCO128 subset); the look of older releases differs.</sub>
 
 ## Features
+
+### Image QC
 
 - [x] LabelMe (v5 and v6, every shape type) and YOLO datasets (detection, segmentation, OBB, pose; flat or split), plus image classification (class folders or LabelMe flags) — the layout is detected automatically
 - [x] Ranked checks, worst first, each jumping straight to the problem on the image:
@@ -74,6 +75,12 @@ changes, so any change can be undone. It is written in Python and uses Qt for it
 - [x] Built for big datasets: cached indexing, background work, virtualised lists — fluid at millions of files and shapes
 - [x] Safe by design: confirmations, atomic writes, originals kept in a compressed backup store, deletes are moves to a trash folder
 
+### Data Studio
+
+- [x] CSV / TSV, Excel, Parquet, Feather, JSON and SQLite; the open image dataset's annotations as a table
+- [x] A recipe of undoable steps (columns, filters, cleaning, reshaping, features), shown as pandas / PySpark code and runnable on Spark
+- [x] Column profile with one-click fixes, charts, an HTML profile report and exports
+
 ## Installation
 
 There are 2 options to install AIO QC:
@@ -81,15 +88,16 @@ There are 2 options to install AIO QC:
 ### Option 1: Using pip
 
 ```bash
-pip install aio-qc==1.0.1
+pip install aio-qc==2.0.0
 
-# with the optional extras (faster JSON, natural sort, YAML, Pillow):
+# with every optional part (Data Studio, faster JSON, natural sort, YAML, Pillow):
 pip install "aio-qc[full]"
+# or only Data Studio: "aio-qc[data]"
 ```
 
 ### Option 2: Using standalone executable (easiest)
 
-Download the zip for your system from the [v1.0.1 release](https://github.com/spreetkaran/aio-qc/releases/tag/v1.0.1) page — no Python needed.
+Download the zip for your system from the [v2.0.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.0.0) page — no Python needed.
 
 ### Supported Python and platforms
 
@@ -99,7 +107,7 @@ Download the zip for your system from the [v1.0.1 release](https://github.com/sp
 | Qt | Qt6 (PyQt6) |
 | OS | Windows / macOS / Linux |
 | Required | PyQt6, NumPy, OpenCV, loguru |
-| Optional | natsort, Pillow, PyYAML, orjson (picked up automatically) |
+| Optional | `[data]` pandas, pyarrow, openpyxl · natsort, Pillow, PyYAML, orjson |
 
 Model-based checks run your detector, embedding or OCR models in **their own Python environment** that you choose, so the app itself never needs PyTorch or a GPU.
 
@@ -108,12 +116,14 @@ Model-based checks run your detector, embedding or OCR models in **their own Pyt
 ```bash
 aio-qc                                # open the app
 aio-qc-console                        # the same, with the log in a terminal
+aio-qc --mode data                    # start in Data Studio
+aio-qc sales.csv                      # open a table in Data Studio
 
 aio-qc-console --version                      # print the version
 aio-qc-console --logger-level debug           # verbose log in aio_qc_tool.log
 ```
 
-Click **Open Dir** (`Ctrl+O`) or drop a dataset folder on the window; the layout is detected automatically. **`F1`** opens the user guide.
+Click **Open Dir** (`Ctrl+O`) or drop a dataset folder on the window; the layout is detected automatically. The switch in the menu-bar corner (`Ctrl+Alt+M`) changes mode. **`F1`** opens the user guide.
 
 ### Supported datasets
 
@@ -137,6 +147,7 @@ Everything has a key; press **`?`** in the app for the live key map (type to fil
 | `Ctrl+0` / `Ctrl+1` | fit / 100 % | double-click | zoom in ↔ back to fit |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo an edit | `Ctrl+H` | file history |
 | `P` / `O` | sketch / ROI capture | `F1` | user guide |
+| `Ctrl+Alt+M` | next mode | | |
 
 ### Your data is safe
 
@@ -177,7 +188,7 @@ pyinstaller AIO_QC/__main__.py \
 ```bash
 git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
-git checkout v1.0.1
+git checkout v2.0.0
 pip install -e ".[full]"
 aio-qc-console --logger-level debug
 ```
@@ -195,8 +206,9 @@ for bugs, the relevant part of `aio_qc_tool.log`. Logic belongs in `core/` (Qt-f
 
 ## License
 
-AIO QC is released under the [MIT License](LICENSE). Copyright (c) 2026 Preetkaran Singh.
+AIO QC is free software, released under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-only).
+Copyright (c) 2026 Preetkaran Singh.
 
 It bundles third-party components that keep their own licenses. See
-[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v1.0.1/THIRD_PARTY_NOTICES.md); the full license texts
-are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v1.0.1/licenses).
+[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.0.0/THIRD_PARTY_NOTICES.md); the full license texts
+are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.0.0/licenses).

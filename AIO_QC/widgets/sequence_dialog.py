@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🎞 Sequence Check — consecutive frames checked against their neighbours (any dataset; see core.sequences).
 

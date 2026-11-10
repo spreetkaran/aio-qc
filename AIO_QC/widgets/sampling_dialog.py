@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🎯 QC sampling: review a random (stratified) sample instead of every file, and get a statistically
 sound estimate of the dataset's error rate with a pass / fail verdict.

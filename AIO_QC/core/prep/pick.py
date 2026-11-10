@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Pick images to label next (Qt-free): from a pool of unlabelled images choose the set that teaches the model the
 most per image labelled — as varied as possible (no near-identical frames), optionally unlike what is already

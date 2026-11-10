@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Continuous red → yellow → green scale (hue interpolation in HSL, so the middle is a clean yellow
 instead of the muddy brown you get from RGB blending).

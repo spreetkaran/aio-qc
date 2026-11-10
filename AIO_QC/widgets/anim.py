@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Motion helpers — every animation runs on FrameAnimator (one step per display refresh, eased), so it is as smooth as
 the screen allows and costs nothing when idle. View ▸ Animations turns them all off (ENABLED = False): every helper

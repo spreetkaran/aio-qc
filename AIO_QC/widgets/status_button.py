@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 from PyQt6.QtCore import QPropertyAnimation
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsColorizeEffect, QHBoxLayout, QLabel, QWidget

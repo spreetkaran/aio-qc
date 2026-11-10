@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Qt helpers — the labelme `qt.py` utilities ported to PyQt6 and extended for AIO QC.
 Every button, action, menu and toolbar in the app is built through these.

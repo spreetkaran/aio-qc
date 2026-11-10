@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Text Labels (Qt-free): check the text STORED in your annotations (a LabelMe shape field such as `description`) —
 no OCR model needed — and suggest corrections. Nothing here knows about any particular kind of text: the rules come

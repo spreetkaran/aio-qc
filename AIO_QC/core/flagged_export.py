@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Save flagged files: copy them to a folder, or write their names to a text file (Review ▸ Save Flagged Files…).
 

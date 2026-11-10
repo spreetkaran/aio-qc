@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Relationship rules: how annotations relate to each other and to the image — configured once per dataset
 (.aio_qc/rules.json), checked in seconds, no model needed. Rule = {"type", "enabled", "severity", …params}.

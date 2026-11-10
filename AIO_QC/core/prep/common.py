@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Shared pieces of the Data Prep tools (Qt-free): scanning, JSON / imageData helpers, content hashing, unique names,
 and the run log every tool writes so a run can be undone.

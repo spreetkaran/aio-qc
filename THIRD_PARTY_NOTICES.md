@@ -1,6 +1,6 @@
 # Third-party components bundled with AIO QC
 
-AIO QC's own code is Copyright (c) 2026 Preetkaran Singh, under the **MIT License** in [`LICENSE`](LICENSE). The files below are **bundled** with it (in the
+AIO QC's own code is Copyright (c) 2026 Preetkaran Singh, under the **GNU General Public License v3.0** (GPL-3.0-only) in [`LICENSE`](LICENSE). The files below are **bundled** with it (in the
 `AIO_QC/` package) and keep **their own licenses**; every full license text is in [`licenses/`](licenses/).
 
 | Component | Where | License | Notes |

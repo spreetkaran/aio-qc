@@ -1,6 +1,6 @@
 # Third-party licenses
 
-AIO QC's own code is under the MIT License in [`../LICENSE`](../LICENSE). The components below are **bundled** with
+AIO QC's own code is under the GNU General Public License v3.0 (GPL-3.0-only) in [`../LICENSE`](../LICENSE). The components below are **bundled** with
 it and keep **their own licenses**; their full texts are in this folder. (The labelme and labelImg texts also stay
 next to those components, as their licenses require.)
 

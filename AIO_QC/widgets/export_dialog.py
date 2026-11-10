@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 📦 Export & Split — build train / val / [test] (or keep the existing splits), see how they look, export a clean dataset.
 

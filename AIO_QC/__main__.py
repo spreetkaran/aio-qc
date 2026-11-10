@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 import os, argparse, sys, io, contextlib
 from loguru import logger
 
@@ -9,7 +9,7 @@ from AIO_QC import __appname__
 from AIO_QC import __version__
 # Qt and the app are imported in main() after the arguments are read, so `--version` / `--help` work instantly and
 # without a display.
-QApplication = MainWindow = appIcon = lifecycle = None
+QApplication = appIcon = lifecycle = None
 
 class _LoggerIO(io.StringIO):
     def write(self, message: str) -> int:
@@ -92,15 +92,17 @@ def main():
         choices=["debug", "info", "warning", "fatal", "error"],
         help="logger level",
     )
+    parser.add_argument("--mode", choices=["image", "data"], default=None,
+                        help="start in Image QC or Data Studio (default: the mode used last)")
+    parser.add_argument("files", nargs="*", help="data files to open in Data Studio (CSV, Excel, Parquet, JSON …)")
     args = parser.parse_args()
 
     if args.version:
         print(f"{__appname__} {__version__}")
         sys.exit(0)
         
-    global QApplication, MainWindow, appIcon, lifecycle
+    global QApplication, appIcon, lifecycle
     from PyQt6.QtWidgets import QApplication
-    from AIO_QC.app import MainWindow
     from AIO_QC.utils import appIcon
     from AIO_QC.widgets import lifecycle
     _setup_loguru(logger_level=args.logger_level.upper())
@@ -137,12 +139,17 @@ def _run(args) -> int:
     lifecycle.install(app, os.path.dirname(os.path.abspath(LOG_FILE)))   # Qt messages, Ctrl+C, crashes, exit
 
     _install_excepthook()
-    window = MainWindow()
-    app.main_window = window
+    from AIO_QC.shell import AppShell
+    shell = AppShell(app)
+    app.shell = shell
+    app.main_window = shell                  # Ctrl+C / crash hooks: request_quit / log_errors reach both modes
+    mode = "data" if args.files else shell.start_mode(args.mode)
+    logger.info(f"starting in {'Data Studio' if mode == 'data' else 'Image QC'}")
 
     with contextlib.redirect_stderr(new_target=_LoggerIO()):
-        window.show()
-        window.raise_()
+        window = shell.show(mode)
+        for f in args.files:
+            window._open_path(os.path.abspath(f))
         code = app.exec()
     logger.debug(f"event loop finished (code {code})")
     return code

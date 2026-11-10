@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 App-wide inference service: one server process in the chosen environment, shared by the Model Setup
 window and Model Check. Blocking methods are meant to be called from worker threads (FuncWorker /

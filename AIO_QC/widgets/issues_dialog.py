@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 📥 Issues Inbox — every tool's findings in one place, one risk score per file, one review queue (worst first).
 Model/view table (scales to hundreds of thousands of files); refreshes live as tools publish and marks change.

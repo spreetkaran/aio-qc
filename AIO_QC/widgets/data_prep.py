@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Tools ▸ Data Prep (Ctrl+Alt+P) — get raw data ready before it is opened as a dataset. Works without a dataset open.
 

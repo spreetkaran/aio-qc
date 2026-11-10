@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Tools ▸ Storage… — what AIO QC keeps next to the dataset (<root>/.aio_qc), and the controls to keep it small:
 backup operations (export / delete), cached results per model / OCR setting (delete), editor sessions, old-style

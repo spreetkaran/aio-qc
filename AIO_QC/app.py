@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 AIO QC Tool — annotation quality control for LabelMe and YOLO datasets.
 
@@ -436,6 +436,12 @@ class MainWindow(QMainWindow):
             data_prep=A("Data Prep…", self.open_data_prep, "Ctrl+Alt+P", icon="tool-dataprep",
                         tip="Raw data → dataset: unzip, combine & flatten, orphans, integrity, exact duplicates, resize "
                             "(no dataset needed; every run can be undone)"),
+            to_studio=A("Switch to Data Studio", lambda: self._shell_call("switch", "data"), "Ctrl+Alt+M",
+                        icon="mode-data", tip="The table-data mode of AIO QC: CSV / Excel / Parquet analysis, "
+                                              "cleaning, features, charts, PySpark"),
+            ann_table=A("Annotations → Data Studio", lambda: self._shell_call("annotations_to_studio"),
+                        icon="mode-data", tip="One row per annotation shape of this dataset, opened as a table in "
+                                              "Data Studio (sizes, classes per split, review state, attributes …)"),
             get_started=A("Get Started", self.show_get_started, icon="get-started",
                           tip="The guided overview: what the app does, the window, the workflow, team features, keys"),
             guide=A("User Guide", self.show_guide, "F1", icon="info",
@@ -637,7 +643,13 @@ class MainWindow(QMainWindow):
         utils.addActions(self.menus.file, (self.a.open_dir,))
         self.menus.file.addMenu(self.recent_menu)
         utils.addActions(self.menus.file, (self.a.reload, self.a.load_classes, None, self.a.open_trash,
-                                           self.a.clear_cache, self.a.storage, None, self.a.exit))
+                                           self.a.clear_cache, self.a.storage, None, self.a.to_studio, None,
+                                           self.a.exit))
+        from AIO_QC.widgets.mode_switch import ModeSwitch
+        self.mode_switch = ModeSwitch("image", self)
+        self.mode_switch.switched.connect(lambda m: self._shell_call("switch", m))
+        mb.setCornerWidget(self.mode_switch, Qt.Corner.TopRightCorner)
+        self.mode_switch.setVisible(getattr(QApplication.instance(), "shell", None) is not None)
         utils.addActions(self.menus.edit, (self.a.undo_edit, self.a.redo_edit, None, self.a.new_box, None,
                                            self.a.guide_good, self.a.guide_bad, None, self.a.history))
         hint = QAction("Select a shape (V, click) — drag handles or the shape · arrows nudge · Del · 1–9 / L relabel ·"
@@ -669,7 +681,8 @@ class MainWindow(QMainWindow):
         utils.addActions(self.menus.review, [self.qc_actions[t.key] for t in QC_TOOLS if t.group == "review"] + [
             None, self.a.change_class, self.a.mark_ok, self.a.mark_flag, self.a.flag_note, self.a.mark_clear, None,
             self.a.next_unreviewed, self.a.auto_advance, None, self.a.save_flagged, self.a.export_review])
-        utils.addActions(self.menus.tools, (self.a.sketch, self.a.roi, None, self.a.data_prep, None, self.a.palette, None, self.a.storage, None, self.a.reset, self.a.logs))
+        utils.addActions(self.menus.tools, (self.a.sketch, self.a.roi, None, self.a.data_prep, self.a.ann_table, None,
+                                            self.a.palette, None, self.a.storage, None, self.a.reset, self.a.logs))
         utils.addActions(self.menus.help, (self.a.get_started, None, self.a.guide, self.a.tool_map, self.a.shortcuts,
                                            self.a.keymap))
         utils.addActions(self.menus.go, (None, self.a.next_panel, self.a.prev_panel))
@@ -749,7 +762,7 @@ class MainWindow(QMainWindow):
 
     def set_dataset_actions_enabled(self, on: bool):
         for act in (self.a.reload, self.a.next, self.a.prev, self.a.rename, self.a.open_trash, self.a.label_map,
-                    self.a.clear_cache, self.a.storage,
+                    self.a.clear_cache, self.a.storage, self.a.ann_table,
                     self.a.mark_ok, self.a.mark_flag, self.a.flag_note, self.a.mark_clear, self.a.next_unreviewed,
                     self.a.export_review, self.a.save_flagged):
             act.setEnabled(on)
@@ -2320,6 +2333,14 @@ class MainWindow(QMainWindow):
         "handoff_export": "Editing here → on the image, or Fix in Editor for your own editor.",
         "handoff_import": "Files changed by another program in the dataset itself → picked up live (History shows them).",
     }
+
+    def _shell_call(self, name, *args):
+        """The app shell (both modes) — absent when the window runs on its own (tests, embedding)."""
+        shell = getattr(QApplication.instance(), "shell", None)
+        if shell is None:
+            QMessageBox.information(self, "AIO QC", "Data Studio is available when AIO QC is started normally.")
+            return
+        getattr(shell, name)(*args)
 
     def open_data_prep(self):
         from AIO_QC.widgets.data_prep import DataPrepDialog

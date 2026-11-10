@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 📏 Training Size — every object measured at the size the detector will actually see it: the image shrunk so its
 longer side equals the training imgsz, optionally shrunk further by scale augmentation. Lists the objects that

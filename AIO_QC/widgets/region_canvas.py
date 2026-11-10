@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 RegionCanvas — draw / move / resize one rectangle on an image frame of a fixed pixel size (Dim / Area ▸ Region).
 

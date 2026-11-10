@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Per-dataset QC state, stored in <root>/.aio_qc/ (hidden -> ignored by discovery):
 

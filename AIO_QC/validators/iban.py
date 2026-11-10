@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 NAME = "IBAN"
 DESCRIPTION = "Country code + 2 check digits + account (mod-97 check)"
 

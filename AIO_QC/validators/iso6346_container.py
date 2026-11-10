@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 NAME = "Container ID (ISO 6346)"
 DESCRIPTION = "Owner code (3 letters) + category (U/J/Z) + 6-digit serial + check digit, e.g. MSKU1234565"
 

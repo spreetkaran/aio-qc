@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 from __future__ import annotations
+
+import time
 
 import math
 from typing import Dict, List, Optional, Set
@@ -40,8 +42,10 @@ class LabelTag(QGraphicsItem):
 
     * drawn in screen pixels (ItemIgnoresTransformations) — the same readable size at every zoom, never blurry,
       never a giant block when zoomed in or unreadable specks when zoomed out;
-    * anchored to the shape's top-left corner; its offset from that corner is chosen by Canvas.layout_tags so tags
-      never sit on top of each other (see there);
+    * attached to a point ON the shape's outline (a vertex / corner, chosen by Canvas.layout_tags so tags never sit
+      on top of each other): the pill's corner touches that point and a small connector dot in the class colour
+      marks it, so it is clear at every zoom which outline a label belongs to; when the pill had to move further
+      away, a thin leader line runs from the pill to the dot;
     * rounded fill in the class colour, a hairline darker border, text in black or white by contrast, long names
       elided (full name in the tooltip); clicking it selects the shape like clicking the outline.
     """
@@ -71,6 +75,9 @@ class LabelTag(QGraphicsItem):
         self.ink = QColor(20, 20, 20) if lum > 150 else QColor(255, 255, 255)
         self.off = QPointF(0, -self.h - 1)        # top-left of the pill relative to the anchor, in screen pixels
         self.emphasis = False
+        self.connector = False                    # class tags: dot at the anchor (+ leader line when detached)
+        self.dot = QColor(color)
+        self.anchors = []                         # scene points on the outline, best first (set by the canvas)
 
     def size(self):
         return self.w, self.h
@@ -80,8 +87,21 @@ class LabelTag(QGraphicsItem):
             self.prepareGeometryChange()
             self.off = QPointF(round(dx), round(dy))   # whole pixels: sharp edges and text
 
+    def _pill(self) -> QRectF:
+        return QRectF(self.off.x(), self.off.y(), self.w, self.h)
+
+    def _leader(self):
+        """Pill edge point nearest the anchor (0, 0), and the distance — None when the pill touches the anchor."""
+        r = self._pill()
+        nx, ny = min(max(0.0, r.left()), r.right()), min(max(0.0, r.top()), r.bottom())
+        d = math.hypot(nx, ny)
+        return (QPointF(nx, ny), d) if d > 6 else (None, d)
+
     def boundingRect(self):
-        return QRectF(self.off.x() - 1, self.off.y() - 1, self.w + 2, self.h + 2)
+        r = self._pill().adjusted(-1, -1, 1, 1)
+        if self.connector:
+            r = r.united(QRectF(-4.5, -4.5, 9, 9))
+        return r
 
     def shape(self):
         path = QPainterPath()
@@ -91,6 +111,22 @@ class LabelTag(QGraphicsItem):
     def paint(self, p, _opt, _widget=None):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        if self.connector:
+            end, _d = self._leader()
+            if end is not None:                              # detached pill: a leader back to the outline
+                halo = QPen(QColor(0, 0, 0, 120), 3.0)
+                halo.setCosmetic(True)
+                p.setPen(halo)
+                p.drawLine(QPointF(0, 0), end)
+                line = QPen(self.dot, 1.4)
+                line.setCosmetic(True)
+                p.setPen(line)
+                p.drawLine(QPointF(0, 0), end)
+            ring = QPen(QColor(255, 255, 255, 230) if self.emphasis else self.border, 1.2)
+            ring.setCosmetic(True)
+            p.setPen(ring)
+            p.setBrush(self.dot)
+            p.drawEllipse(QPointF(0, 0), 3.2, 3.2)
         r = QRectF(self.off.x() + 0.5, self.off.y() + 0.5, self.w - 1, self.h - 1)
         pen = QPen(self.border if not self.emphasis else QColor(255, 255, 255), 1.0 if not self.emphasis else 1.6)
         pen.setCosmetic(True)
@@ -172,6 +208,8 @@ class Canvas(QGraphicsView):
         self._zoom_anim: Optional[QVariantAnimation] = None
         self._target_zoom = 1.0                 # where the running animation will end
         self._target_center: Optional[QPointF] = None
+        self._tags_slow = False                 # tag layout too slow for every glide frame (many tags)
+        self._padded = False                    # scene rect temporarily enlarged while gliding
 
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
@@ -412,7 +450,11 @@ class Canvas(QGraphicsView):
                     xs, ys = [points[0].x() - rr, points[0].x() + rr], [points[0].y() - rr, points[0].y() + rr]
                 rect_item = LabelTag(label, color, font)
                 rect_item.bbox = QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-                rect_item.setPos(rect_item.bbox.topLeft())
+                rect_item.connector = True
+                from AIO_QC.core.tag_layout import outline_anchors
+                rect_item.anchors = [QPointF(x, y) for x, y in
+                                     outline_anchors([(p.x(), p.y()) for p in points], self._stype(shape))]
+                rect_item.setPos(rect_item.anchors[0] if rect_item.anchors else rect_item.bbox.topLeft())
                 rect_item.setZValue(self.LABEL_BG_Z + z)
                 rect_item.area = rect_item.bbox.width() * rect_item.bbox.height()
                 self.scene.addItem(rect_item)
@@ -441,13 +483,12 @@ class Canvas(QGraphicsView):
         """Place every visible tag so none covers another — in SCREEN space, redone after every zoom / scroll /
         resize (tags keep their pixel size, so what collides depends on the zoom).
 
-        Order: the selected shape first, then small shapes before big ones (a small box's tag is the hard one to
-        place; a big box has room). For each tag the first free spot wins, in this order:
-            above the box, left-aligned  ·  inside the box's top-left corner (if the box is big enough)  ·
-            below the box  ·  above, right-aligned  ·  to the left / right of the box's top edge  ·
-            stacked further above (up to 4 rows)
-        Spots are kept on the image where possible. If every spot is taken, the one with the least overlap is used.
-        Collision checks use a coarse grid, so a few thousand tags lay out in a few milliseconds."""
+        Each tag is attached to a point ON its shape's outline (top-most vertex first, then left-most, right-most,
+        bottom-most …; rectangles: corners; circles: the rim), its pill corner touching that point and a connector
+        dot marking it — never on the empty corner of a tilted shape's bounding box. Order: the selected shape
+        first, then small shapes before big ones. For each tag the first free spot next to one of its points wins;
+        if none is free the pill moves out with a leader line to its point (core/tag_layout.place_anchored). Spots
+        stay on the image where possible; every shape's dot is kept clear of other tags."""
         tags = [t for t in self._tags() if t.isVisible()]
         if not tags:
             return
@@ -456,21 +497,28 @@ class Canvas(QGraphicsView):
         bounds = QRectF(img).intersected(vp.adjusted(-200, -200, 200, 200))
         sel = self.selected_group.rect_item if self.selected_group is not None else None
         tags.sort(key=lambda t: (t is not sel, t.area))
-        from AIO_QC.core.tag_layout import place
-        todo, boxes = [], []
+        from AIO_QC.core.tag_layout import place_anchored
+        tr = self.viewportTransform()                 # scene -> viewport, with sub-pixel precision
+        todo, items = [], []
+        near = vp.adjusted(-60, -60, 60, 60)
         for t in tags:
             w, h = t.size()
-            tl = self.mapFromScene(t.bbox.topLeft())
-            br = self.mapFromScene(t.bbox.bottomRight())
-            bx, by, bw, bh = float(tl.x()), float(tl.y()), float(br.x() - tl.x()), float(br.y() - tl.y())
-            if not vp.adjusted(-w - 50, -h - 50, w + 50, h + 50).intersects(QRectF(bx, by, max(bw, 1), max(bh, 1))):
-                t.set_offset(0, -h - 1)                       # off screen: default spot, not part of the puzzle
+            pts = [tr.map(a) for a in (t.anchors or [t.bbox.topLeft()])]
+            on = [(float(q.x()), float(q.y())) for q in pts if near.contains(q)]
+            if not on:                                # nothing of the outline on screen: not part of the puzzle
+                if t.anchors:
+                    t.setPos(t.anchors[0])
+                t.set_offset(-2, -h - 3)
                 continue
-            todo.append((t, bx, by))
-            boxes.append((bx, by, bw, bh, w, h))
-        spots = place(boxes, (bounds.left(), bounds.top(), bounds.right(), bounds.bottom()))
-        for (t, bx, by), (x, y) in zip(todo, spots):
-            t.set_offset(x - bx, y - by)
+            todo.append((t, pts, on))
+            items.append((on, w, h))
+        spots = place_anchored(items, (bounds.left(), bounds.top(), bounds.right(), bounds.bottom()))
+        inv, _ok = tr.inverted()
+        for (t, _pts, on), (i, x, y) in zip(todo, spots):
+            ax, ay = on[i]
+            if t.anchors:
+                t.setPos(inv.map(QPointF(ax, ay)))
+            t.set_offset(x - ax, y - ay)
 
     def _emphasize_tag(self, group):
         """The selected shape's tag: white outline, on top of every other tag, laid out first."""
@@ -652,19 +700,28 @@ class Canvas(QGraphicsView):
     def _view_center(self) -> QPointF:
         return self.mapToScene(self.viewport().rect().center())
 
-    def _apply_view(self, zoom: float, center: QPointF):
+    def _apply_view(self, zoom: float, center: QPointF, animating: bool = False):
         self.setTransform(QTransform.fromScale(zoom, zoom))
         self.current_zoom = zoom
         self.centerOn(center)
         if self.shape_groups:                     # tags keep their screen size: re-place them for this zoom
+            if animating and self._tags_slow:
+                return                            # many tags: placed once the glide lands (keeps it fluid)
             if len(self.shape_groups) <= 400:
+                t0 = time.perf_counter()
                 self.layout_tags()                # every frame while zooming: no tag ever slides over another
+                if animating and time.perf_counter() - t0 > 0.004:
+                    self._tags_slow = True        # this frame was too costly: skip until the glide lands
             else:
                 self._schedule_tag_layout()
 
     def _set_smooth(self, zoom: float, animating: bool):
-        # Fast transform while moving, smooth when settled; crisp pixels when pixel-peeping (>= 300 %).
-        smooth = not animating and zoom < 3.0
+        # Smooth (bilinear) whenever it is affordable — also while gliding: nearest-neighbour shimmers while the
+        # scale changes, which reads as jitter. Very large images glide with the fast filter. Crisp pixels when
+        # pixel-peeping (>= 300 %) once settled.
+        pm = self.pixmap_item.pixmap()
+        big = pm.width() * pm.height() > 12_000_000
+        smooth = (not big if animating else True) and zoom < 3.0
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, smooth)
         self.pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation if smooth
                                                else Qt.TransformationMode.FastTransformation)
@@ -677,6 +734,35 @@ class Canvas(QGraphicsView):
         if anim is not None:
             anim.stop()
             anim.deleteLater()
+            self._unpad_scene()
+
+    # ---- geometry helpers (scene = image pixels)
+    def _image_rect(self) -> QRectF:
+        return QRectF(self.pixmap_item.pixmap().rect())
+
+    def clamp_center(self, zoom: float, c: QPointF) -> QPointF:
+        """Where the view centre can really be at this zoom: an axis the image fills is kept inside the image (no
+        empty band at an edge), an axis it does not fill is centred — exactly what Qt shows once settled."""
+        r = self._image_rect()
+        vp = self._viewport_size()
+        hw, hh = vp.width() / 2 / zoom, vp.height() / 2 / zoom
+        x = r.center().x() if r.width() <= 2 * hw else min(max(c.x(), r.left() + hw), r.right() - hw)
+        y = r.center().y() if r.height() <= 2 * hh else min(max(c.y(), r.top() + hh), r.bottom() - hh)
+        return QPointF(x, y)
+
+    def _pad_scene(self, zoom_min: float):
+        """While gliding, the view may pass through positions Qt would clamp or re-centre (that is what made the
+        zoom bend towards an edge first). A scene rect larger than any position the glide visits lets every frame
+        land exactly where the path says; the real rect is back before the last frame."""
+        vp = self._viewport_size()
+        m = max(vp.width(), vp.height()) / max(zoom_min, 1e-6)
+        self.scene.setSceneRect(self._image_rect().adjusted(-m, -m, m, m))
+        self._padded = True
+
+    def _unpad_scene(self):
+        if getattr(self, "_padded", False):
+            self._padded = False
+            self.scene.setSceneRect(self._image_rect())
 
     def animate_to(self, zoom: float, *, center: Optional[QPointF] = None, anchor_scene: Optional[QPointF] = None,
                    anchor_view=None, mode: Optional[str] = None, duration: int = 260,
@@ -684,7 +770,14 @@ class Canvas(QGraphicsView):
         """
         Glide to `zoom`.
           center=P                     -> P ends at the viewport centre (fit, focus shape)
-          anchor_scene=P, anchor_view=V -> P stays under viewport position V throughout (zoom at cursor)
+          anchor_scene=P, anchor_view=V -> P stays under viewport position V (zoom at the cursor / click)
+
+        Windows-Photos feel:
+          * the END view is decided first and clamped like a settled view (no empty band at an image edge), so the
+            glide never has to correct itself at the end;
+          * the glide is a pure zoom about the one image point that is at the same screen spot at the start and at
+            the end — every point travels in a straight line, nothing bends towards an edge;
+          * the zoom grows geometrically (constant perceived speed) and every frame is set absolutely.
         """
         if self.pixmap_item.pixmap().isNull():
             return
@@ -692,44 +785,53 @@ class Canvas(QGraphicsView):
         z0, c0 = self.current_zoom, self._view_center()
         self.stop_zoom_animation()
         vc = QPointF(self.viewport().rect().center())
-
         if anchor_scene is not None:
-            off = QPointF(anchor_view) - vc                  # anchor offset from viewport centre (px)
+            r = self._image_rect()
+            a = QPointF(min(max(anchor_scene.x(), r.left()), r.right()),      # a click on the letterbox band zooms
+                        min(max(anchor_scene.y(), r.top()), r.bottom()))      # into the nearest image edge
+            want = a - (QPointF(anchor_view) - vc) / zoom
+        else:
+            want = center if center is not None else c0
+        c1 = self.clamp_center(zoom, want)
+        self._target_zoom = zoom
+        self._target_center = c1
+        final_mode = mode or self.CUSTOM_MODE
+        if duration <= 0 or (is_close(z0, zoom, abs_tol=1e-4) and QLineF(c0, c1).length() * zoom < 0.5):
+            self._apply_view(zoom, c1)
+            self._finish_zoom(final_mode)
+            return
+        # the fixed point p* of the move: z0 (p* − c0) = z1 (p* − c1)
+        if abs(zoom - z0) > 1e-9 * max(zoom, z0):
+            fixed = (c1 * zoom - c0 * z0) / (zoom - z0)
 
             def center_at(z, _e):
-                return anchor_scene - off / z
-        else:
-            c1 = center if center is not None else c0
+                return fixed - (fixed - c0) * (z0 / z)
+        else:                                                 # same zoom: a straight pan
 
             def center_at(_z, e):
                 return c0 + (c1 - c0) * e
-
-        self._target_zoom = zoom
-        self._target_center = center_at(zoom, 1.0)
-        final_mode = mode or self.CUSTOM_MODE
-        if duration <= 0 or (is_close(z0, zoom, abs_tol=1e-4) and (center is None or
-                                                                    QLineF(c0, center).length() < 0.5)):
-            self._apply_view(zoom, center_at(zoom, 1.0))
-            self._finish_zoom(final_mode)
-            return
         ratio = zoom / z0
         anim = QVariantAnimation(self)
         anim.setDuration(duration)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
         anim.setEasingCurve(easing)
+        self._tags_slow = False
         self._set_smooth(zoom, True)
+        self._pad_scene(min(z0, zoom))
 
         def step(e):
             e = float(e)
             z = z0 * ratio ** e                              # geometric interpolation
-            self._apply_view(z, center_at(z, e))
+            self._apply_view(z, center_at(z, e), animating=True)
 
         def done():
             if self._zoom_anim is anim:
                 self._zoom_anim = None
                 anim.deleteLater()
-                self._apply_view(zoom, center_at(zoom, 1.0))   # land exactly on target
+                self._unpad_scene()
+                self._tags_slow = False
+                self._apply_view(zoom, c1)                   # land exactly on the (clamped) target
                 self._finish_zoom(final_mode)
 
         anim.valueChanged.connect(step)

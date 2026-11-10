@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Command palette (Ctrl+K): type a few letters to run any menu action — every QC tool, review mark, view toggle,
 Storage, Logs … Works with the QC Panel collapsed or hidden.

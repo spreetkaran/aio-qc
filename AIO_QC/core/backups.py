@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Compact, crash-safe backup store for every file AIO QC rewrites: <root>/.aio_qc/backups.sqlite
 

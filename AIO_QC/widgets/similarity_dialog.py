@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🔎 Visual Similarity — find mislabels by how objects LOOK, with a vision model you already have (DINOv3 / DINOv2 /
 SigLIP2 / CLIP …), running in your Python environment (Models & Environment), never inside the app.

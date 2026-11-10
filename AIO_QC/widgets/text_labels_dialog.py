@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🔤 Text Labels — check the text stored in your annotations (LabelMe `description` or another shape field) without
 any OCR model and without assuming any kind of text: formats, known texts and confused characters learned from the

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 In-app user guide (Help ▸ User Guide, F1; shown once on first start).
 HTML for QTextBrowser; <img src='aio-icon:NAME'> images are provided by the caller as document resources.
@@ -517,6 +517,14 @@ top.</td></tr>
 pixels &gt; largest file &gt; oldest) and says for every copy whether its labels match the kept one. <b>Export &amp;
 Split ▸ Class folders</b> writes an image into every class it is flagged with and decodes images that exist only as
 imageData.</p>
+
+<h3>{_i('mode-data')} Data Studio — the second mode (Ctrl+Alt+M)</h3>
+<p>AIO QC is one app with two modes. The switch in the top-right corner of the menu bar (or <span class='key'>Ctrl+Alt+M</span>)
+changes to <b>Data Studio</b>: its own window, menus and settings for table data — CSV, Excel, Parquet, JSON, SQLite.
+Clean, reshape, build features and chart a table step by step (every step undoable and shown as pandas / PySpark
+code), see each column's health with one-click fixes, and run the recipe on the full data with Spark. <i>Tools ▸
+Annotations → Data Studio</i> opens this dataset as a table — one row per shape. Data Studio has its own guide
+(F1 there). The app starts in the mode you used last.</p>
 
 <h3>Keyboard-only work</h3>
 <table>

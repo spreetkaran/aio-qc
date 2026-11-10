@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aio-qc"                       # the PyPI name: check it is free at https://pypi.org/project/aio-qc/
 dynamic = ["version"]                 # read from AIO_QC/__init__.py (__version__): bump it in one place
-description = "Find and fix annotation errors in LabelMe and YOLO datasets before training: checks, review and fixes in one desktop app"
+description = "Find and fix annotation errors in LabelMe and YOLO datasets before training, plus Data Studio for tables — one desktop app"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"                   # SPDX (PEP 639); bundled third-party: THIRD_PARTY_NOTICES.md, licenses/
+license = "GPL-3.0-only"          # SPDX (PEP 639); bundled third-party: THIRD_PARTY_NOTICES.md, licenses/
 license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Preetkaran Singh" }]
 keywords = ["annotation", "quality control", "labelme", "yolo", "dataset", "computer vision", "qc"]
@@ -33,12 +33,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-full = ["natsort>=8.0", "Pillow>=9.5", "PyYAML>=6.0", "orjson>=3.9"]
+full = ["natsort>=8.0", "Pillow>=9.5", "PyYAML>=6.0", "orjson>=3.9", "pandas>=2.0", "pyarrow>=14", "openpyxl>=3.1"]
+data = ["pandas>=2.0", "pyarrow>=14", "openpyxl>=3.1"]        # Data Studio (tables); PySpark runs in its own env
 
 [project.urls]
 Homepage = "https://github.com/spreetkaran/aio-qc"
 Issues = "https://github.com/spreetkaran/aio-qc/issues"
-Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v1.0.1"
+Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v2.0.0"
 Changelog = "https://github.com/spreetkaran/aio-qc/blob/main/AIO_QC/CHANGES.md"
 
 [project.gui-scripts]

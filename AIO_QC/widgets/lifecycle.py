@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 App lifecycle through loguru: every way AIO QC can end is logged, Qt's own messages reach the log, and background
 threads are never destroyed while running.

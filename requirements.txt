@@ -9,3 +9,9 @@ natsort>=8.0        # natural sort order in lists
 Pillow>=9.5         # EXIF orientation, extra image checks, PDF/report thumbnails fallback
 PyYAML>=6.0         # data.yaml parsing (a built-in parser is used otherwise)
 orjson>=3.9         # faster JSON reading / writing on large datasets
+
+# Data Studio (the table-data mode) — needed only for that mode
+pandas>=2.0         # tables, steps, profiling
+pyarrow>=14         # Parquet / Feather files
+openpyxl>=3.1       # Excel files
+# PySpark is NOT installed here: Data Studio runs Spark jobs in a Python environment you choose

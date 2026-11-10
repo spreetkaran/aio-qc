@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Shape instances for the Crop Gallery, stored column-wise so millions of instances stay cheap (Qt-free).
 

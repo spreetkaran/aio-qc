@@ -1,8 +1,8 @@
 # conda-forge recipe for AIO QC — submit to https://github.com/conda-forge/staged-recipes as recipes/aio-qc/meta.yaml
 # (after the release is on PyPI: the source is the PyPI sdist). Fill the sha256 with:
-#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-1.0.1.tar.gz | sha256sum
+#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-2.0.0.tar.gz | sha256sum
 {% set name = "aio-qc" %}
-{% set version = "1.0.1" %}
+{% set version = "2.0.0" %}
 
 package:
   name: {{ name|lower }}
@@ -56,7 +56,7 @@ about:
   description: |
     Desktop app to find and fix problems in LabelMe / YOLO datasets before training: broken files, label names,
     sloppy or duplicate shapes, split leakage, probable mislabels — with backups, history and undo.
-  license: MIT AND GPL-3.0-only AND OFL-1.1   # AIO QC (MIT) + bundled labelme (GPL-3.0) + fonts (OFL)
+  license: GPL-3.0-only AND MIT AND OFL-1.1   # AIO QC (GPL-3.0) + bundled labelImg / icons (MIT) + fonts (OFL)
   license_file:
     - LICENSE
     - THIRD_PARTY_NOTICES.md

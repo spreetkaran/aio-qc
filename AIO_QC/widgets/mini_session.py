@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Picture-in-picture for a Fix-in-Editor session, INSIDE the main window: a small overlay (draggable by its header,
 resizable, kept inside the window) with the editor state, the counts and one row per file with its status. The full

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Semantic, theme-aware colours. Nothing in the UI hard-codes a text colour: it asks for a ROLE, and the role is
 derived from the live palette (or a light / dark pair), so text is readable in both themes.

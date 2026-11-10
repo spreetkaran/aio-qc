@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Fix EXIF rotation (Qt-free): phone / camera photos often store the pixels sideways plus an EXIF "rotate me" tag.
 Viewers, labelme and Ultralytics apply the tag; OpenCV-based tools, some annotation tools and older trainers do not —

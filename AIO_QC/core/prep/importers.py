@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Import annotations from other tools (Qt-free) into a NEW folder as LabelMe or YOLO — sources are never touched.
 

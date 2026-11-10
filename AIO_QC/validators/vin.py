@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 NAME = "VIN (vehicle identification number)"
 DESCRIPTION = "17 characters, no I/O/Q; the North-American check digit (position 9) is checked when it is a digit/X"
 

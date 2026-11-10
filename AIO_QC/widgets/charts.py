@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Lightweight, theme-aware charts (QPainter + numpy; no matplotlib). Built for scale: data is binned / rasterised
 once, painting only blits the result plus a few interactive marks.

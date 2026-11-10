@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 ✅ Review coverage map: every file as a cell coloured by review state, grouped by split / folder.
 Answers "which parts of the dataset have been QC'ed?" at a glance; click any cell to open that file.

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 NAME = "Barcode number (EAN-8/13, UPC-A, GTIN-14)"
 DESCRIPTION = "8, 12, 13 or 14 digits with a valid GS1 check digit"
 

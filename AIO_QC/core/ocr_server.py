@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 AIO QC OCR server — runs INSIDE the user's chosen Python environment (same protocol as infer_server.py).
 

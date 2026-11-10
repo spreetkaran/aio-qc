@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 🔧 Fix in Editor — open flagged files in labelme (primary) or labelImg (secondary, YOLO boxes) and sync every
 save back into the dataset (see core.edit_session for the safety rules).

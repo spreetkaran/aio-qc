@@ -1,55 +1,56 @@
 # Changelog
 
-## 1.0.1 — Text Labels and Training Size; annotation import and image picking in Data Prep
+## 2.0.0 — Two modes: Image QC and Data Studio; now GPL-3.0
 
-Changes since 1.0.0.
+Changes since 1.0.1.
 
 ### What's new
 
-- **Text Labels** (Labels tab, Ctrl+Alt+T): checks the text **stored** in your annotations (LabelMe `description`
-  or another shape field) without an OCR model and without assuming any kind of text.
-  - Rules: the validators you choose (optional; the same library as OCR Check, plus your own), and what the app
-    learns from the open dataset, per class — the formats most texts share (only with ≥ 10 different texts, ≥ 80 %
-    of them fitting), the texts that recur, the characters used (any script) and the characters its frames confuse.
-  - Text classes are found in the data. Each finding (no text, rule failed, unusual format, look-alike of a frequent
-    text, differs from other frames, not normalised) comes with a correction, cheapest first: what the other frames
-    agree on · a frequent look-alike text · one look-alike character · a known text one or two characters away ·
-    any one character.
-  - Sure corrections are applied in one click; otherwise you pick. Writes are re-checked against the file, backed up
-    and undoable.
-- **Training Size** (Shapes tab, Ctrl+Alt+Z): every object measured at the training size (longer side = imgsz, as in
-  Ultralytics) and after scale augmentation. Lists the objects too small to learn and those at risk once augmentation
-  shrinks them; per class, the imgsz that keeps 95 % of the class above the limit, with advice (train larger,
-  crop / tile, SAHI). The imgsz defaults to your model's.
+- **Two modes in one app: Image QC and Data Studio.** A switch in the menu-bar corner of both windows (and
+  Ctrl+Alt+M) changes mode. Each mode is its own window with its own menus, panels, recent files and settings.
+  - The app starts in the mode used last; `aio-qc --mode data` or `aio-qc file.csv` starts in Data Studio.
+  - Data Studio never loads the image machinery unless you switch; closing either window quits the app, and both
+    get to save first.
+- **Data Studio** — table analysis, cleaning and feature engineering:
+  - **Open:** CSV / TSV (separator and encoding sniffed), Excel (sheet), Parquet, Feather, JSON, JSON lines and
+    SQLite. Files above 400 MB open as a sample; exports and Spark use the whole file. Drag and drop and recent files.
+  - **Recipe:** every change is a step — switch off, edit, reorder, undo, click to see the data right after it.
+    Results are cached per step.
+  - **Steps:** columns (keep, remove, rename, change type, new column from a safe formula language, split) · rows
+    (filter with 14 conditions, sort, sample, first rows) · clean (fill missing, remove missing, remove duplicates,
+    replace, clean text, outliers) · reshape (group & summarise with 11 summaries, join) · features (bin, one-hot,
+    scale, date parts).
+  - **Profile:** per column type, missing, distinct, statistics, a mini chart and warnings (constant, mostly missing,
+    IDs, numbers / dates stored as text, padded text, outliers, skew), each with a one-click fix; strong correlations
+    and a quality score.
+  - **Charts:** histogram, bar, line, scatter and box, colour by category, hover values, PNG export.
+  - **Code:** the recipe as runnable pandas or PySpark code — the app runs exactly the pandas code it shows.
+  - **Run on Spark:** the recipe on the full data in a Python environment with pyspark — locally, on a cluster
+    (`--master`) or via Spark Connect. The app never imports Spark.
+  - **Output:** CSV / Parquet / Excel / JSON, an HTML profile report, workspaces saved as small `.aioqc-data.json`
+    recipes.
 
 ### Added
 
-- **Model Check ▸ Accept by confidence…**: accepts every missing-box, class-mismatch or poor-fit finding at or above a
-  confidence you choose, in one go, with a live count per kind. Rejected findings and deletions are never included;
-  the change is backed up and undoable.
-- **Fix EXIF rotation** (Image Quality ▸ ⟳ Fix EXIF rotation, and Data Prep): the rotation tag is baked into the
-  pixels (other EXIF data and the colour profile kept) and LabelMe / YOLO labels are brought into the same upright
-  frame. Per file, the label size tells whether the labels were drawn on the raw or the upright picture. Every file is
-  kept first; Undo restores it byte for byte.
-- **Data Prep ▸ Import annotations**: COCO (boxes, polygons, RLE masks), Pascal VOC, CVAT for images / video (rotated
-  boxes, ellipses, masks, attributes) and Label Studio (rotated boxes, polygons, points, ellipses; text areas become
-  the description), into a new LabelMe or YOLO detection / segmentation folder. Images are matched by path, by name,
-  or by name without Label Studio's upload prefix, and hard-linked or copied.
-- **Data Prep ▸ Pick images to label**: picks the most varied set from an unlabelled pool (greedy k-center, so
-  near-identical frames are not picked twice). Optionally prefers images unlike the open dataset's and those where its
-  model is unsure. Images are compared by built-in features (no model needed) or the Visual Similarity model; the
-  picks are copied or moved with a ranked `picked.csv`.
-- Data Prep runs can undo in-place rewrites (used by the rotation fix) — restored only if the file is unchanged since.
+- *Tools ▸ Annotations → Data Studio*: the open dataset as a table, one row per shape.
+- `pip install "aio-qc[data]"` for Data Studio (pandas, pyarrow, openpyxl); `[full]` includes it.
+- A double-click on the empty band beside an image zooms into the nearest image edge.
 
 ### Changed
 
-- Package metadata follows PEP 639: `license = "MIT"` (SPDX) and `license-files`; the deprecated
-  `License ::` classifier is gone, so building for PyPI gives no deprecation warnings. Requires setuptools ≥ 77 to build.
-- Clearer PyPI / GitHub description; project links point to github.com/spreetkaran/aio-qc.
-- Every source file carries an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier: MIT`); the full texts
-  of bundled third-party licenses are in `licenses/`.
+- **License: GNU GPL v3.0 (GPL-3.0-only)** from this version on (1.x was MIT). `LICENSE` holds the GPL text; the
+  package metadata uses `license = "GPL-3.0-only"` and `license-files` (PEP 639, no deprecated `License ::`
+  classifier); the third-party notices and the conda recipe say so too.
+- **Class labels sit on their shape at every zoom:** a tag is attached to a point on the outline itself (top-most
+  vertex first, then left-, right- or bottom-most; corners for rectangles, the rim for circles), its corner touching
+  that point, marked by a dot in the class colour. When it has to move out to stay clear, a thin leader line runs back
+  to the dot; no tag ever covers another shape's dot.
+- **Zoom glide redone (double-click, Ctrl+wheel, fit, 100 %), Windows Photos style:** the end of the zoom is decided
+  first and kept inside the image; the glide is a pure zoom around one point (every point moves in a straight line);
+  the image stays smoothly filtered while gliding (very large images use the fast filter); with many tags on screen
+  they settle once the glide lands.
 
 ### Fixed
 
-- The PyPI page now shows the README's pictures (absolute image links).
-- README: `aio-qc --version` (was `AIO_QC --version`) and the PyInstaller command's `${AIO_QC_PATH}`.
+- The zoom no longer corrects itself at the end, no longer bends towards an edge first when clicking near one (also
+  on low-resolution images), and frames are no longer snapped back by Qt mid-glide.

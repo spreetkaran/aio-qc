@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 NAME = "ISBN (10 or 13)"
 DESCRIPTION = "ISBN-10 (last may be X) or ISBN-13 with a valid check digit"
 

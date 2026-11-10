@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 The smaller Data Prep tools (Qt-free). Each has plan(...) -> Plan (nothing changes) and run(plan) -> stats (logged,
 undoable — see common.RunLog).

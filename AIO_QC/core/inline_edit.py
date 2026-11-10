@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Inline edits made on the canvas (Qt-free): geometry, delete, relabel, new box — for every dataset type and every
 shape type — plus a byte-exact undo / redo history.

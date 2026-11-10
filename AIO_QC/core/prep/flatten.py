@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Combine & Flatten (Qt-free): one or more nested folders of images + LabelMe JSONs -> one flat dataset folder,
 without duplicate images.

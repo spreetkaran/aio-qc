@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Run a list of commands one after another (QProcess), streaming their output, with friendly failure messages.
 Used for editor environment installs; the editors themselves are launched with `clean_process_env()`.

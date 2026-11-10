@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 NAME = "Indian number plate"
 DESCRIPTION = ("State + RTO + series + 4-digit number (KA01AB1234, DL3CAB1234; HSRP plates print leading zeros), "
                "BH series (22BH1234AA); one or two lines joined")

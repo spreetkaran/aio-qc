@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Session = one opened dataset. The single place where annotations are written,
 so the viewer, the label index and every QC dialog stay in sync.
