@@ -22,9 +22,6 @@ Corner markers (top-right, same size everywhere): ✦ model · × remove · + ad
 
 ## Files
 - `*.svg` — UI icons (65). `shape-*.svg` are also used, tinted in the label colour, in the Annotations dock.
-- `sources/` — the supplied Phosphor + custom SVGs as received.
-- `generate_icons.py` — normalises `sources/` (any grid → 256, greys → currentColor), draws the rest, builds the
-  app icon rasters:  `python icons/generate_icons.py icons --sources icons/sources`
-- `LICENSE-phosphor` — MIT licence of the Phosphor icons.
+- Several icons are based on Phosphor Icons (MIT); the licence is in `licenses/Phosphor-Icons-MIT.txt` at the top of the repository.
 
 In code: `utils.newIcon("name")`, `icon="name"` in `newAction` / `newButton`, `utils.shapeIcon(type, color)`.

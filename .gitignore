@@ -6,7 +6,7 @@ venv/
 build/
 dist/
 aio_qc_tool.log*
-aio_qc_crash.log
+aio_qc_crash*.log
 .aio_qc/
 .aio_qc_trash/
 _aioqc_prep/
@@ -15,3 +15,4 @@ Thumbs.db
 .idea/
 .vscode/
 .ruff_cache/
+.pytest_cache/

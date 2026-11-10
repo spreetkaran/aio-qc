@@ -7,9 +7,10 @@ and the run log every tool writes so a run can be undone.
 RunLog: every file operation of a run is recorded twice —
     <log dir>/<tool>_<stamp>.csv     for people (action, from, to, note, status)
     <log dir>/<tool>_<stamp>.jsonl   for Undo: move · copy / create (with the result's sha256) · move_rewrite (the
-                                     source JSON's original bytes kept, zlib-compressed, under …_originals/)
+                                     source JSON's original bytes kept, zlib-compressed, under …_originals/) ·
+                                     rewrite (a file changed in place, its original bytes kept the same way)
 undo_run(jsonl) reverses it newest-first: moved files go back, created files are removed only if they are unchanged
-since the run, rewritten JSONs get their original bytes back. Nothing is overwritten on the way back.
+since the run, rewritten files get their original bytes back (in-place rewrites only if untouched since). Nothing is overwritten on the way back.
 """
 from __future__ import annotations
 
@@ -453,6 +454,11 @@ class RunLog:
         self.write({"op": "move_rewrite", "src": str(src), "dst": str(dst), "orig": original, "sha": file_sha(dst)})
         self.row("rewrite", src, dst, note)
 
+    def rewritten(self, path, original, note=""):
+        """`path` was rewritten in place; `original` = keep_original(path) result (taken BEFORE the write)."""
+        self.write({"op": "rewrite", "src": str(path), "orig": original, "sha": file_sha(path)})
+        self.row("rewrite", path, path, note)
+
     def deleted(self, src, original, note=""):
         self.write({"op": "delete", "src": str(src), "orig": original})
         self.row("delete", src, "", note)
@@ -515,6 +521,15 @@ def undo_run(jsonl, progress=None) -> dict:
                 if os.path.isdir(d):
                     shutil.rmtree(d)
                     st["removed"] += 1
+            elif op == "rewrite":                       # rewritten in place: back only if untouched since
+                src, orig = r["src"], r.get("orig")
+                if orig is None or not os.path.exists(orig):
+                    st["skipped"].append(f"{src}: original not kept")
+                elif os.path.exists(src) and r.get("sha") and file_sha(src) != r["sha"]:
+                    st["skipped"].append(f"{src}: changed after the run — kept")
+                else:
+                    write_atomic(src, zlib.decompress(Path(orig).read_bytes()))
+                    st["restored"] += 1
             elif op in ("move_rewrite", "delete"):
                 src, orig = r["src"], r.get("orig")
                 if orig is None or not os.path.exists(orig):

@@ -177,7 +177,9 @@ cannot be decoded, EXIF rotation that disagrees with the annotation (the boxes w
 EXIF), annotation size ≠ image size. <b>Information only</b>: blurry, under- / over-exposed and low-contrast images
 (adjustable thresholds). Every image is also checked automatically in the background after a dataset opens: broken
 files turn red in the file list, a notification offers <i>Show</i>, and a red banner appears over a broken image when
-you open it.</td></tr>
+you open it. <i>⟳ Fix EXIF rotation</i> bakes the rotation into the pixels of the ticked images (tag reset; other EXIF
+data and the colour profile kept) and brings their labels into the same upright frame — every file is kept first and
+<i>↶ Undo rotation</i> restores it exactly.</td></tr>
 <tr><td>{_i('tool-empty')}</td><td><b>Empty Annotations</b> — files without shapes. For YOLO these are often intentional background images.</td></tr>
 <tr><td>{_i('tool-image-dups')}</td><td><b>Duplicate Images</b> — identical and near-identical images, and the same scene in
 several splits (leakage). <i>Keep one per group</i> ticks the extra copies.</td></tr>
@@ -189,6 +191,20 @@ several splits (leakage). <i>Keep one per group</i> ticks the extra copies.</td>
 <i>Fix in Label Mapping</i> hands the suggestions over.</td></tr>
 <tr><td>{_i('tool-label-map')}</td><td><b>Label Mapping</b> (Ctrl+M) — the one place to rename or merge labels: either
 <b>view-only</b> (files untouched; everything in the app uses the new names) or <b>written to files</b>.</td></tr>
+<tr><td>{_i('tool-text-labels')}</td><td><b>Text Labels</b> (Ctrl+Alt+T) — checks the text <b>stored</b> in your
+annotations (LabelMe <code>description</code> or another shape field) without any OCR model, and without assuming
+any particular kind of text. The classes that carry text are found in the data. Each text is normalised (upper case,
+spaces / dashes removed — your choice) and judged by: the <b>validators you choose</b> (optional — the same library as
+OCR Check, plus your own), and what the app <b>learns from the open dataset</b>, per class — the formats most texts
+share (“4 letters · 7 digits”; only when ≥ 80 % of at least 10 different texts fit a few structures, so free text
+gets no format), the texts that occur again and again, the characters the class uses (any script) and the characters
+its frames confuse. In video / burst frames the same object is followed and compared. Findings: <b>no text</b>,
+<b>rule failed</b>, <b>unusual format</b>, <b>look-alike of a frequent text</b>, <b>differs from other frames</b>,
+<b>not normalised</b> (optional). Corrections, cheapest first: what the other frames agree on, a frequent known text
+that is a look-alike, one look-alike character (letter↔digit, plus the learned confusions), a known text one or two
+characters away, two look-alikes, any one character. <i>Sure</i> corrections are applied with <i>✓ Apply
+suggestion</i>; otherwise you pick. Every write is re-checked against the file as it is now, backed up and
+undoable.</td></tr>
 <tr><td>{_i('tool-remove-class')}</td><td><b>Remove / Re-order Classes</b> — delete a class everywhere; for YOLO also renumber
 ids and update the class file. Always preview first; backups are made by default.</td></tr>
 </table>
@@ -231,6 +247,13 @@ everything outside a region of interest. Drag inside to move, drag an edge to re
 or right-click to clear. A heat-map shows where the shapes of the other filters lie; matching boxes are outlined.
 The region combines with the size / area / label limits, the size scatter then shows only the region's shapes, and
 <i>Selection…</i>, the table and the crops follow it.</td></tr>
+<tr><td>{_i('tool-train-size')}</td><td><b>Training Size</b> (Ctrl+Alt+Z) — every object measured the way the detector will
+see it: the image shrunk so its longer side equals the training <i>imgsz</i> (like Ultralytics), and then shrunk again
+by scale augmentation (default 0.5). <b>Too small</b>: the shorter side at training size is below the limit (8 px =
+YOLO's finest stride; text you want read needs about 12–16 px). <b>At risk</b>: fine at training size but too small
+once augmentation shrinks the image. Per class: how many objects, the median size, and the <b>imgsz that keeps 95 %
+of the class above the limit</b> — with advice (train larger, crop / tile, or SAHI inference). The imgsz defaults to
+your model's.</td></tr>
 </table>
 
 <h3>{_i('group-models')} Models — see <a href='#models'>section 7</a>.</h3>
@@ -271,7 +294,10 @@ polygon-only YOLO files), poor box fit → replace the box, missed by model → 
 finding opens. <span class='key'>X</span> rejects it (“the label is right”): it is hidden now and on every later
 run, with any thresholds (<i>Show rejected</i> / <i>Forget</i> bring it back). Each accepted change re-finds its shape
 by the box it had in the scan (indices may have shifted), is skipped if the shape changed since, is never added twice,
-and is backed up — <i>↶ Undo</i> puts the files back.</p>
+and is backed up — <i>↶ Undo</i> puts the files back.
+<i>✓≥ Accept by confidence…</i> accepts every missing-box / class-mismatch / poor-fit finding the model is sure about
+in one go (choose the kinds and the minimum confidence, the counts update as you go); rejected findings and deletions
+are never included.</p>
 
 <h3>{_i('tool-similar')} Visual Similarity (Ctrl+Shift+Y)</h3>
 <p>Finds mislabels by how objects <b>look</b>: each object (each image for classification datasets) becomes a vector
@@ -373,7 +399,8 @@ grouped by split or folder: see at a glance what has been QC'ed; click a square 
 <li><b>Nothing changes without a confirmation.</b> Views, statistics, mappings (view-only) and display adjustments never
 touch files.</li>
 <li>Edits (relabel, delete shapes, fixes, class removal) rewrite annotation files <b>atomically</b> — a crash cannot leave a
-half-written file. Images are never modified.</li>
+half-written file. Images are only rewritten by the EXIF rotation fix (Image Quality / Data Prep), which keeps every
+original first.</li>
 <li>“Deleted” files are <b>moved</b> to <code>&lt;dataset&gt;/.aio_qc_trash/</code> (File ▸ Open Trash Folder) — move them back
 to restore.</li>
 <li>Every rewrite that can be undone (Fix in Editor, Dim / Area, class removal, …) first stores the original in
@@ -471,7 +498,20 @@ LabelMe (shapes, numeric points, labels, imageWidth / imageHeight against the re
 <b>Exact duplicates</b> — byte-identical images anywhere in a tree; kept: annotated &gt; original name &gt; oldest;
 the rest set aside with their JSON.<br>
 <b>Resize images</b> — downscale into a new folder (longest side, height rule or factor; JPEG / PNG / keep, quality);
-LabelMe points and sizes scaled, YOLO labels copied.</td></tr>
+LabelMe points and sizes scaled, YOLO labels copied.<br>
+<b>Import annotations</b> — COCO JSON (boxes, polygons, RLE masks traced to polygons), Pascal VOC XML (a folder),
+CVAT XML (images and video tracks; rotated boxes, ellipses, masks; attributes become flags / description) and Label
+Studio JSON (boxes incl. rotated, polygons, points, ellipses; a text area on a region becomes its description) → a
+NEW folder as LabelMe or YOLO detection / segmentation (with data.yaml and classes.txt). Images are found by path,
+then by name, then by the name without Label Studio's upload prefix, and hard-linked (no extra space) or copied.<br>
+<b>Fix EXIF rotation</b> — in place: the EXIF rotation baked into the pixels and LabelMe / YOLO labels brought into
+the same upright frame; per file the label size tells whether they were drawn on the raw or the upright picture.
+Every file is kept first (Undo restores it).<br>
+<b>Pick images to label</b> — from a folder of unlabelled images, the set worth labelling first: each pick is the
+image least like everything picked so far (so near-identical frames are not picked twice), optionally unlike the open
+dataset's images and weighted by how unsure its model is. Compared by built-in image features (fast, no model) or the
+Visual Similarity model. Copied or moved to a folder with <code>picked.csv</code> in rank order — label from the
+top.</td></tr>
 </table>
 <p>In a dataset, <b>Duplicate Images</b> now keeps the best copy first (train &gt; annotated &gt; original name &gt; most
 pixels &gt; largest file &gt; oldest) and says for every copy whether its labels match the kept one. <b>Export &amp;

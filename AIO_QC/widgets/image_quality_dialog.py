@@ -8,9 +8,13 @@ after a dataset opens, and the per-image check behind the viewer's red banner.
 from __future__ import annotations
 
 from collections import Counter
+from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QTabWidget, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QHBoxLayout, QLabel, QMessageBox, QProgressDialog, QTabWidget, QWidget,
+)
 
 from AIO_QC.core import image_quality as IQ
 from AIO_QC.utils import hexc
@@ -96,6 +100,14 @@ class ImageQualityDialog(BaseScanDialog):
         self.chk_info.setChecked(True)
         form.addRow(self.chk_decode)
         form.addRow(self.chk_info)
+        self.add_action("⟳ Fix EXIF rotation", self.fix_rotation,
+                        "For the ticked (or selected) EXIF rows — or all of them if none is ticked: bake the rotation "
+                        "into the pixels (tag reset, other EXIF + colour profile kept) and bring the labels into the "
+                        "same upright frame. Every file is kept first; ↶ Undo rotation puts them back.")
+        self.undo_rot_btn = self.add_action("↶ Undo rotation", self.undo_rotation,
+                                            "Put back the images and labels of the last rotation fix")
+        self.undo_rot_btn.setEnabled(False)
+        self._rot_undo = None
 
     def post_init(self):
         t = IQ.DEFAULT_THRESHOLDS
@@ -124,6 +136,111 @@ class ImageQualityDialog(BaseScanDialog):
         self.tabs.addTab(self.table, "Table")
         self.table_host.addWidget(self.tabs)
         self.filter_box.currentIndexChanged.connect(lambda _i: self._refresh_cards())
+
+    # ------------------------------------------------------------------ EXIF fix
+    def fix_rotation(self):
+        from AIO_QC.core.prep import exif_fix as X
+        rows = [r for r in self.target_rows() if r.payload[0] in ("exif_rotated", "exif_present")] or \
+            [r for r in self.visible_rows() if r.payload[0] in ("exif_rotated", "exif_present")]
+        keys = list(dict.fromkeys(r.key for r in rows))
+        if not keys:
+            QMessageBox.information(self, self.TITLE, "No EXIF rotation findings (scan first).")
+            return
+        items, key_of = [], {}
+        for k in keys:
+            s = self.session.by_key.get(k)
+            if s is None:
+                continue
+            img, _w, _h = image_of(self.session.adapter, s)
+            if img is None or (s.ann_path is not None and k in self.session.locked):
+                continue
+            ap = str(s.ann_path) if s.ann_path is not None and Path(s.ann_path).is_file() else None
+            js = ap if ap and ap.lower().endswith(".json") else None
+            txt = ap if ap and ap.lower().endswith(".txt") else None
+            items.append((str(img), js, txt))
+            key_of[str(img)] = k
+        policy = QComboBox()
+        for t, v in (("auto — decided per file from the label size", "auto"),
+                     ("the labels were drawn on the upright view", "upright"),
+                     ("the labels were drawn on the raw, un-rotated pixels", "raw")):
+            policy.addItem(t, v)
+        P = X.plan_files(items, "auto")
+        if not P.actions:
+            QMessageBox.information(self, self.TITLE, "Nothing to fix: " + " · ".join(
+                f"{a} {b}" for a, b in P.rows[1:] if b))
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle(self.TITLE)
+        box.setIcon(QMessageBox.Icon.Question)
+        lines = "\n".join(f"{a.strip()}: {b:,}" for a, b in P.rows[1:] if isinstance(b, int))
+        box.setText(f"Bake the EXIF rotation into {len(P.actions):,} image(s)?\n\n{lines}\n\nThe images are "
+                    "rewritten (JPEG at quality 95); every file is kept first and ↶ Undo rotation restores it exactly.")
+        box.setDetailedText("\n".join(f"{sec}:\n  " + "\n  ".join(v[:200]) for sec, v in P.details.items() if v))
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        lay = box.layout()
+        lay.addWidget(QLabel("Labels:"), lay.rowCount(), 0)
+        lay.addWidget(policy, lay.rowCount() - 1, 1, 1, lay.columnCount() - 1)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        if policy.currentData() != "auto":
+            P = X.plan_files(items, policy.currentData())
+        from AIO_QC.core.shape_ops import Backup
+        backup = Backup(self.session.root, "exif", "Fix EXIF rotation")
+        for _k, _img, _t, ex in P.actions:
+            for f in (ex.get("json"), ex.get("txt")):
+                if f and ex["frame"] == "raw":
+                    backup.save(f)                          # also in the file's History
+        backup.close()
+        paths = [p for _k, img, _t, ex in P.actions for p in (img, ex.get("json"), ex.get("txt")) if p]
+        self.session.ownPaths.emit(paths)                   # our writes, not "changed outside AIO QC"
+        dlg = QProgressDialog("Fixing rotation…", "Stop", 0, len(P.actions), self)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(300)
+        import threading
+        cancel = threading.Event()
+
+        def prog(d, _t, _l=""):
+            dlg.setValue(d)
+            QApplication.processEvents()
+            if dlg.wasCanceled():
+                cancel.set()
+        st = X.run(P, Path(self.session.root) / "_aioqc_prep", prog, cancel)
+        dlg.close()
+        done = sorted({key_of[p] for p in st["changed"] if p in key_of})
+        if done:
+            self.session.log(done, "edit", "EXIF rotation baked into the image (labels made upright)",
+                             tool=self.TITLE)
+            self.session.reindex_keys(done)
+            self._rot_undo, self._rot_keys = st["undo"], done
+            self.undo_rot_btn.setEnabled(True)
+            self.remove_rows(lambda r: r.key in set(done) and r.payload[0] in ("exif_rotated", "exif_present"))
+            self._compact()
+            self.summary.setText(self.summarize())
+            self._refresh_images(done)
+        self.report("EXIF rotation", [f"Fixed {st['done']:,} image(s); {st['labels']:,} label file(s) rotated with "
+                                      "their image."], st["errors"])
+
+    def _refresh_images(self, keys):
+        """The pixels changed: drop the cached pictures, show the current image again."""
+        cache = getattr(self.app, "pixmap_cache", None)
+        for k in keys:
+            if cache is not None:
+                cache.pop(k)
+        if getattr(self.app, "current_key", None) in set(keys):
+            self.app.show_sample(self.app.current_key)
+
+    def undo_rotation(self):
+        from AIO_QC.core.prep import common as PC
+        if not self._rot_undo or not self.confirm("Put back the images and labels of the last rotation fix?"):
+            return
+        st = PC.undo_run(self._rot_undo)
+        self._rot_undo = None
+        self.undo_rot_btn.setEnabled(False)
+        keys = getattr(self, "_rot_keys", [])
+        self.session.reindex_keys(keys)
+        self._refresh_images(keys)
+        self.report("Undone", [f"{st['restored']:,} file(s) restored."] +
+                    ([f"{len(st['skipped'])} left alone (changed since)."] if st["skipped"] else []), st["errors"])
 
     def _thr(self):
         return {**IQ.DEFAULT_THRESHOLDS, **{k: w.value() for k, w in self.thr_w.items()}}

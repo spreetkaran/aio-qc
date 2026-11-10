@@ -1,8 +1,8 @@
 # Third-party licenses
 
 AIO QC's own code is under the MIT License in [`../LICENSE`](../LICENSE). The components below are **bundled** with
-it and keep **their own licenses**; their full texts are in this folder. (The labelme, labelImg and Phosphor
-texts also stay next to those components, as their licenses require.)
+it and keep **their own licenses**; their full texts are in this folder. (The labelme and labelImg texts also stay
+next to those components, as their licenses require.)
 
 | Component | Bundled in | License | Text |
 |---|---|---|---|

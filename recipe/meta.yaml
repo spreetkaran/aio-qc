@@ -1,8 +1,8 @@
 # conda-forge recipe for AIO QC — submit to https://github.com/conda-forge/staged-recipes as recipes/aio-qc/meta.yaml
 # (after the release is on PyPI: the source is the PyPI sdist). Fill the sha256 with:
-#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-1.0.0.tar.gz | sha256sum
+#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-1.0.1.tar.gz | sha256sum
 {% set name = "aio-qc" %}
-{% set version = "1.0.0" %}
+{% set version = "1.0.1" %}
 
 package:
   name: {{ name|lower }}
@@ -24,7 +24,7 @@ requirements:
   host:
     - python {{ python_min }}
     - pip
-    - setuptools >=68
+    - setuptools >=77
     - wheel
   run:
     - python >={{ python_min }}

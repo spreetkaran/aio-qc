@@ -26,8 +26,8 @@ import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QLabel, QMessageBox, QSplitter, QTableWidget,
-    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+    QMessageBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from AIO_QC.core.model_check import (
@@ -45,6 +45,8 @@ from AIO_QC.utils import emphasis_bg, get_color_icon, gradient_hex, heat, newBut
 from .base_scan import BAR_ROLE, BaseScanDialog, ResultRow, dspin, ispin, readable_table
 from .card_gallery import Card, CardView, Panel, Shape, box_points
 from .model_setup_dialog import model_color, server_specs
+
+BULK_KINDS = (MISSING, MISMATCH, POOR_FIT)        # "missed by model" deletes labels: one at a time only
 
 KIND_TONE = {MISMATCH: "error", MISSING: "error", POOR_FIT: "warning", MISSED: "warning"}
 REPORT_COLS = [("label", "Label"), ("gt", "GT"), ("pred", "Pred"), ("tp", "TP"), ("fp", "FP"), ("fn", "FN"),
@@ -122,6 +124,10 @@ class ModelCheckDialog(BaseScanDialog):
                         "  poor box fit → replace the box with the model's box\n"
                         "  missed by model → delete the labelled shape (the label is the error)\n"
                         "Backed up, undoable; the next finding opens automatically.")
+        self.add_action("✓≥ Accept by confidence…", self.accept_by_confidence,
+                        "Accept every finding the model is sure about in one go: choose the kinds (missing box, "
+                        "class mismatch, poor fit) and the minimum confidence, see how many — then accept. Only the "
+                        "rows the current filter shows; rejected findings are never included. Backed up, undoable.")
         self.add_action("✕ Reject (X)", self.reject_rows,
                         "The label is right, the model is wrong: hide this finding now and on every later run "
                         "(“Show rejected” brings them back)")
@@ -1216,8 +1222,73 @@ class ModelCheckDialog(BaseScanDialog):
     def _rel(self, box, W, H):
         return (box[0] / W, box[1] / H, box[2] / W, box[3] / H) if box is not None and W and H else None
 
-    def accept_rows(self):
-        rows = [r for r in self.target_rows() if r.payload]
+    def accept_by_confidence(self):
+        from AIO_QC.core.fix_ledger import finding_key
+        rejected = self.ledger.keys()
+        cand = []
+        for r in self.visible_rows():
+            if not r.payload:
+                continue
+            f = r.payload[0]
+            if f.kind in BULK_KINDS and finding_key(self.session.root, r.key, *r.payload) not in rejected:
+                cand.append(r)
+        if not cand:
+            QMessageBox.information(self, self.TITLE, "No missing-box, class-mismatch or poor-fit findings in the "
+                                    "list (run the check, or clear the filter).")
+            return
+        st = self.app.settings
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Accept by confidence")
+        lay = QVBoxLayout(dlg)
+        intro = QLabel("Accept every finding below in one go — the originals are backed up (↶ Undo). Deleting "
+                       "labelled shapes (“missed by model”) is never done in bulk.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        conf = dspin(0.05, 1.0, float(st.value("modelcheck/bulk_conf", 0.8)), 2, 0.05)
+        form = QFormLayout()
+        form.addRow("Model confidence at least:", conf)
+        lay.addLayout(form)
+        boxes = {}
+        for k in BULK_KINDS:
+            c = QCheckBox(k)
+            c.setChecked(st.value(f"modelcheck/bulk_{k.replace(' ', '_')}", k == MISSING, type=bool))
+            boxes[k] = c
+            lay.addWidget(c)
+        files = QLabel()
+        apply_style(files, "font-weight:600;")
+        lay.addWidget(files)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+
+        def chosen():
+            want = {k for k, c in boxes.items() if c.isChecked()}
+            return [r for r in cand if r.payload[0].kind in want and float(r.payload[0].conf) >= conf.value()]
+
+        def update():
+            per = Counter(r.payload[0].kind for r in cand if float(r.payload[0].conf) >= conf.value())
+            for k, c in boxes.items():
+                c.setText(f"{k}  ({per.get(k, 0):,})")
+            sel = chosen()
+            files.setText(f"→ {len(sel):,} finding(s) in {len({r.key for r in sel}):,} file(s)")
+            bb.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(sel))
+            bb.button(QDialogButtonBox.StandardButton.Ok).setText(f"Accept {len(sel):,}")
+        conf.valueChanged.connect(lambda _v: update())
+        for c in boxes.values():
+            c.toggled.connect(lambda _on: update())
+        update()
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        st.setValue("modelcheck/bulk_conf", conf.value())
+        for k, c in boxes.items():
+            st.setValue(f"modelcheck/bulk_{k.replace(' ', '_')}", c.isChecked())
+        rows = chosen()
+        if rows:
+            self.accept_rows(rows, ask=False)
+
+    def accept_rows(self, rows=None, ask=True):
+        rows = [r for r in (rows if rows is not None else self.target_rows()) if r.payload]
         if not rows:
             QMessageBox.information(self, self.TITLE, "Tick or select findings first (Enter accepts the selected one).")
             return
@@ -1239,7 +1310,7 @@ class ModelCheckDialog(BaseScanDialog):
             n_kind[f.kind] += 1
         if not used:
             return
-        if len(used) > 1:
+        if len(used) > 1 and ask:
             parts = ", ".join(f"{n} {k}" for k, n in n_kind.items())
             if not self.confirm(f"Accept {len(used):,} finding(s) in {len(fixes):,} file(s)? ({parts})\n\nThe "
                                 "originals are backed up (Undo)."):

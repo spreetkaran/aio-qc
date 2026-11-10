@@ -60,6 +60,8 @@ from AIO_QC.widgets.editor_session_dialog import EditorSessionDialog
 from AIO_QC.widgets.dataset_watcher import DatasetWatcher
 from AIO_QC.widgets.toast import ToastManager
 from AIO_QC.widgets.ocr_dialog import OcrCheckDialog
+from AIO_QC.widgets.text_labels_dialog import TextLabelsDialog
+from AIO_QC.widgets.train_size_dialog import TrainSizeDialog
 from AIO_QC.core.ocr_service import OcrService
 from AIO_QC.widgets.inference_service import FuncWorker, InferenceService
 from AIO_QC.widgets.model_setup_dialog import ModelSetupDialog
@@ -117,6 +119,10 @@ QC_TOOLS = [
     QCTool("guidelines", "Guidelines", "tool-guidelines", "Ctrl+Alt+G", "labels", GuidelinesDialog,
            "Write the labelling rule per class / QC rule with ✓ good and ✗ bad example crops; shown next to the "
            "selected shape and in the tools, exported for annotators"),
+    QCTool("text_labels", "Text Labels", "tool-text-labels", "Ctrl+Alt+T", "labels", TextLabelsDialog,
+           "Check the text stored in your annotations without OCR: formats and known texts learned from the dataset, "
+           "your validators (optional), what other frames of the same object say — with the correction applied in "
+           "one click"),
     QCTool("remove_class", "Remove / Re-order Classes", "tool-remove-class", "Ctrl+Shift+R", "labels", ClassRemovalDialog,
            "Delete classes from every file; YOLO: renumber ids and rewrite the class map"),
     # ---- SHAPES (annotations)
@@ -131,6 +137,9 @@ QC_TOOLS = [
            "position spikes, attribute changes, one-frame objects — missing boxes can be added"),
     QCTool("dim_area", "Dim / Area", "tool-dim-area", "Ctrl+Shift+D", "shapes", DimAreaDialog,
            "Shapes inside width / height / area ranges you define"),
+    QCTool("train_size", "Training Size", "tool-train-size", "Ctrl+Alt+Z", "shapes", TrainSizeDialog,
+           "Every object measured at the training size (longer side = imgsz) and after scale augmentation: objects "
+           "too small to learn, and per class the imgsz that keeps 95 % of them big enough"),
     # ---- MODELS
     QCTool("rules", "Relationship Rules", "tool-rules", "Ctrl+Shift+K", "shapes", RulesDialog,
            "How annotations relate: inside / contains, counts, requires / excludes, overlaps, size, shape type, "
@@ -2287,6 +2296,7 @@ class MainWindow(QMainWindow):
         "crop_gallery": "Whole-label renames → Label Mapping.",
         "outliers": "Ranges you define → Dim / Area.",
         "dim_area": "Statistical outliers → Outliers.",
+        "train_size": "Sizes in the original image (any ranges you define) → Dim / Area.",
         "model_setup": "Running the comparison → Model Check.",
         "model_check": "Setup → Models & Environment.",
         "sampling": "Per-file marks → the review keys S / X.",
@@ -2298,6 +2308,7 @@ class MainWindow(QMainWindow):
         "rules": "Per-class size statistics → Dim / Area and Outliers.",
         "image_quality": "Annotation problems → Validation.",
         "ocr_check": "Class / geometry comparison with a detector → Model Check.",
+        "text_labels": "Reading the text from the image itself → OCR Check.",
         "sequence": "Single images without neighbours → Validation / Model Check.",
         "similarity": "Detector-based comparison (boxes, missed objects) → Model Check.",
         "review_grid": "Editing shapes → on the image (select a shape) or Fix in Editor.",

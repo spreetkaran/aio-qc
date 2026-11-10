@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "aio-qc"                       # the PyPI name: check it is free at https://pypi.org/project/aio-qc/
 dynamic = ["version"]                 # read from AIO_QC/__init__.py (__version__): bump it in one place
-description = "All-in-one quality control for annotated image datasets (LabelMe and YOLO)"
+description = "Find and fix annotation errors in LabelMe and YOLO datasets before training: checks, review and fixes in one desktop app"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }        # MIT (AIO QC's own code); bundled third-party: THIRD_PARTY_NOTICES.md, licenses/
+license = "MIT"                   # SPDX (PEP 639); bundled third-party: THIRD_PARTY_NOTICES.md, licenses/
+license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Preetkaran Singh" }]
 keywords = ["annotation", "quality control", "labelme", "yolo", "dataset", "computer vision", "qc"]
 classifiers = [
@@ -23,7 +24,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Image Recognition",
-    "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
     "PyQt6>=6.5",
@@ -38,6 +38,7 @@ full = ["natsort>=8.0", "Pillow>=9.5", "PyYAML>=6.0", "orjson>=3.9"]
 [project.urls]
 Homepage = "https://github.com/spreetkaran/aio-qc"
 Issues = "https://github.com/spreetkaran/aio-qc/issues"
+Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v1.0.1"
 Changelog = "https://github.com/spreetkaran/aio-qc/blob/main/AIO_QC/CHANGES.md"
 
 [project.gui-scripts]
@@ -47,8 +48,7 @@ aio-qc = "AIO_QC.__main__:main"       # `aio-qc` command (no console window on W
 aio-qc-console = "AIO_QC.__main__:main"   # same app, with a console (logs visible) — handy for troubleshooting
 
 [tool.setuptools]
-include-package-data = true                 # pulls everything from MANIFEST.in file
-license-files = ["LICENSE", "licenses/*"]   # in the wheel's .dist-info, next to the metadata
+include-package-data = true                 # everything MANIFEST.in lists
 
 [tool.setuptools.dynamic]
 version = { attr = "AIO_QC.__version__" }
@@ -59,7 +59,7 @@ include = ["AIO_QC*"]
 
 [tool.setuptools.package-data]
 # the bundled LabelMe / labelImg sources ("Fix in Editor") are not importable packages — ship them as data, whole
-"AIO_QC" = ["validators/*", "validators/**/*", "THIRD_PARTY_NOTICES.md"]
+"AIO_QC" = ["editors/**/*", "icons/**/*", "fonts/**/*", "validators/**/*", "CHANGES.md"]
 "*" = ["*.svg", "*.png", "*.ico", "*.ttf", "*.otf", "*.json", "*.yaml", "*.md", "*.txt", "*.zip", "*.toml",
        "*.qrc", "*.ui", "*.cfg", "*.py"]
 
