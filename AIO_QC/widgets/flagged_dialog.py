@@ -14,7 +14,7 @@ from loguru import logger
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QRadioButton, QVBoxLayout, QWidget,
 )
 
@@ -172,13 +172,15 @@ class FlaggedFilesDialog(QDialog):
         self.status.setText(bad or ("No flagged files." if not n else ""))
 
     def _browse_folder(self):
-        d = QFileDialog.getExistingDirectory(self, "Folder for the flagged files", self.folder.text())
+        from AIO_QC.utils.save_dirs import ask_dir
+        d = ask_dir(self, "Folder for the flagged files", kind="datasets", current=self.folder.text())
         if d:
             self.folder.setText(d)
 
     def _browse_txt(self):
-        p, _ = QFileDialog.getSaveFileName(self, "Text file for the flagged file names", self.txt.text(),
-                                           "Text (*.txt);;All files (*)")
+        from AIO_QC.utils.save_dirs import ask_save
+        p, _ = ask_save(self, "Text file for the flagged file names", self.txt.text(), "Text (*.txt);;All files (*)",
+                        kind="exports", keep_dir=True)
         if p:
             self.txt.setText(p if Path(p).suffix else p + ".txt")
 

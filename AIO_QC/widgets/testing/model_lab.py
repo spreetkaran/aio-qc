@@ -628,8 +628,9 @@ class ModelLab(QMainWindow):
         return s
 
     def _new_testset(self):
-        d = QFileDialog.getExistingDirectory(self, "Folder for the new test set (an empty folder)",
-                                             self.st.value("last_dir", ""))
+        from AIO_QC.utils.save_dirs import ask_dir
+        d = ask_dir(self, "Folder for the new test set (an empty folder)", kind="datasets",
+                    fallback=self.st.value("last_dir", ""))
         if not d:
             return
         from AIO_QC.core.testing.testset import TestSet
@@ -3649,8 +3650,9 @@ class ModelLab(QMainWindow):
         if ask or not path:
             base = self.testset.root if self.testset is not None else self.st.value("project_dir", "")
             name = (self._project_name if self._project_name != "Untitled" else "model_lab") + PJ.EXT
-            path, _ = QFileDialog.getSaveFileName(self, "Save Testing project", os.path.join(base or "", name),
-                                                  f"Testing project (*{PJ.EXT})")
+            from AIO_QC.utils.save_dirs import ask_save
+            path, _ = ask_save(self, "Save Testing project", name, f"Testing project (*{PJ.EXT})", kind="exports",
+                               fallback=base or None)
             if not path:
                 return False
             if not path.endswith(PJ.EXT):

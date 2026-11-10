@@ -87,6 +87,8 @@ class QCTool:
 
 
 # Tabs = groups, in workflow order: integrity → names → shapes → model-assisted → sign-off.
+from AIO_QC.widgets.batch_shots import BatchShotsDialog  # noqa: E402
+
 GROUPS = [   # (key, tab title, question) — tab icon: icons/group-<key>.png
     ("dataset", "Dataset", "Are the files and images sound?"),
     ("labels", "Labels", "Are the label NAMES right?"),
@@ -142,8 +144,9 @@ QC_TOOLS = [
            "too small to learn, and per class the imgsz that keeps 95 % of them big enough"),
     # ---- MODELS
     QCTool("rules", "Relationship Rules", "tool-rules", "Ctrl+Shift+K", "shapes", RulesDialog,
-           "How annotations relate: inside / contains, counts, requires / excludes, overlaps, size, shape type, "
-           "attributes, groups, one class per image — or let AIO QC suggest rules from the data"),
+           "How annotations relate, for any classes: parent / part (inside, not larger, parts per parent), must "
+           "touch, counts, requires, never together, overlaps, size, shape type, tilt, attributes, groups — or let "
+           "AIO QC suggest rules from the data"),
     QCTool("model_setup", "Models & Environment", "tool-model-setup", "Ctrl+Alt+N", "models", None,
            "Python env, models, class maps, device, imgsz, ONNX / TensorRT", action="model_setup"),
     QCTool("ocr_check", "OCR Check", "tool-ocr", "Ctrl+Shift+T", "models", OcrCheckDialog,
@@ -177,6 +180,9 @@ QC_TOOLS = [
     QCTool("views", "Saved Views", "tool-saved-filter", "Ctrl+Shift+B", "review", ViewsDialog,
            "Named file queries (labels, counts, review state, findings, names …) with live counts and a "
            "plain-language explanation; show in the file list or review in the grid"),
+    QCTool("screenshots", "Flagged Screenshots", "screenshot", "Ctrl+Shift+Alt+E", "review", BatchShotsDialog,
+           "A screenshot of every flagged (or selected) file, drawn as Image QC shows it — the same spot as now or "
+           "the whole image, with a caption strip (file, mark, flag note) and sketches — in the background"),
     QCTool("report", "QC Report", "tool-report", "Ctrl+Alt+R", "review", ReportDialog,
            "One click: a self-contained HTML / PDF of class balance, review coverage, findings, the QC sample "
            "estimate, the riskiest files (thumbnails) and what changed since the last report"),
@@ -229,6 +235,8 @@ class MainWindow(QMainWindow):
         self.label_colors: dict[str, QColor] = {}
         self.visible_labels: set[str] = set()
         self.hidden_labels: set[str] = set()      # survives label-list rebuilds
+        self._display_by_key: dict[str, dict] = {}  # image adjustments made per file (this session)
+        self._display_owner = None                # the file a pending slider change belongs to
         self.error_log: list[str] = []
         self.open_dialogs: dict[str, QDialog] = {}
         self.editor_dialog = None                  # active external-editor session window (Fix in Editor)
@@ -288,10 +296,13 @@ class MainWindow(QMainWindow):
     # =====================================================================
     def _build_canvas(self):
         self.canvas = Canvas(self)
+        from AIO_QC.widgets.screenshot import Screenshots
+        self.shots = Screenshots(self)              # E: the canvas as you see it, saved as a picture
         self.setCentralWidget(self.canvas)
         self.canvas.zoomFinished.connect(self.updateZoomSpinbox)
         self.canvas.zoomChanged.connect(self._zoom_live)           # every click / wheel tick / glide frame
         self.canvas.shapeSelected.connect(self.onShapeSelected)
+        self.canvas.imageMenuRequested.connect(lambda pos: self.shots.canvas_menu(pos))
         self.canvas.selectionCleared.connect(self.onSelectionCleared)
         self.canvas.modeChanged.connect(self._on_mode_changed)
 
@@ -304,7 +315,8 @@ class MainWindow(QMainWindow):
 
     def _build_docks(self):
         # Dataset labels (visibility + counts)
-        self.unique_labels = QListWidget()
+        from AIO_QC.widgets.labels_list import LabelsList
+        self.unique_labels = LabelsList()
         self.unique_labels.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.unique_labels.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.unique_labels.itemChanged.connect(self.toggle_label_visibility)
@@ -357,6 +369,8 @@ class MainWindow(QMainWindow):
             open_dir=A("Open &Directory…", self.open_dir, "Ctrl+O", icon="open",
                        tip="Open a LabelMe / YOLO / YOLO-split dataset root"),
             reload=A("&Reload Dataset", self.reload_dataset, "F5", tip="Re-scan the dataset from disk"),
+            check_guide=A("Recommended &Checks…", lambda: self.check_guide.show_dialog(), icon="next",
+                          tip="The QC checks that matter most for this dataset, in order — and which are done"),
             change_class=A("Change &Class…", self.change_class, "C", icon="tool-class", enabled=False,
                            tip="Classification datasets: give the selected image(s) another class "
                                "(class folders: the image is moved; LabelMe flags: the flags are rewritten)"),
@@ -418,6 +432,14 @@ class MainWindow(QMainWindow):
                          checked=self.settings.value("view/pixel_view", False, type=bool),
                          tip="From 300 %: hard pixel squares (nearest neighbour) instead of the smooth, Windows "
                              "Photos-like high-quality enlargement"),
+            keep_zoom=A("Keep Previous Zoom", self._set_keep_zoom, checkable=True,
+                        checked=self.settings.value("view/keep_zoom", False, type=bool),
+                        tip="Open the next images on the same spot at the same magnification (scaled for images of "
+                            "another size) — fit stays fit"),
+            keep_display=A("Keep Previous Brightness/Contrast", self._set_keep_display, checkable=True,
+                           checked=self.settings.value("view/keep_display", False, type=bool),
+                           tip="Carry the Display tab's brightness, contrast, gamma and auto contrast to the next "
+                               "images (off: an image opens unadjusted, or as you adjusted it earlier)"),
             pred_layer=A("Model Predictions", self.set_pred_layer, "Shift+P", icon="tool-model-check",
                          tip="Draw the models' predictions (dashed) on every image — from Model Check's last run, "
                              "at its explorer's thresholds", checkable=True,
@@ -452,6 +474,15 @@ class MainWindow(QMainWindow):
             save_flagged=A("Save Flagged Files…", self.save_flagged, icon="review-flag",
                            tip="Copy the flagged files to a folder, or save their names to a text file"),
             reset=A("Reset View", self.reset_all, "R", icon="undo", tip="All labels visible, filters cleared, fit"),
+            screenshot=A("Save Screenshot", lambda: self.shots.save(), "E", icon="screenshot",
+                         tip="Save the image as you see it — zoom, labels, adjustments, sketch — into the "
+                             "screenshots folder (E; right-click the image for more)"),
+            screenshot_as=A("Save Screenshot As…", lambda: self.shots.save_as(), "Shift+E", icon="save",
+                            tip="Save the image as you see it under a name and folder you choose"),
+            screenshot_copy=A("Copy Screenshot", lambda: self.shots.copy(), icon="copy",
+                              tip="Copy the image as you see it to the clipboard"),
+            screenshot_folder=A("Open Screenshots Folder", lambda: self.shots.open_folder(), icon="open",
+                                tip="Where E saves screenshots (Settings ▸ Screenshots)"),
             logs=A("Logs", self.show_log, "Ctrl+Shift+L", icon="logs", tip="Errors collected during this session",
                    enabled=False),
             sketch=A("Sketch on Image", lambda: self.sketch.toggle(), "P", icon="tool-sketch", checkable=False,
@@ -535,9 +566,10 @@ class MainWindow(QMainWindow):
         utils.addActions(self.toolbar, (self.a.prev, self.a.next, None, self.a.drag, self.a.select, None,
                                         self.zoom_spin, self.a.fit, self.a.actual, self.a.zoom_out,
                                         self.zoom_slider, self.a.zoom_in,
-                                        None, self.a.reset, self.a.logs))
+                                        None, self.a.screenshot, self.a.reset, self.a.logs))
         self.toolbar.visibilityChanged.connect(lambda v: self.a_toolbar.setChecked(v))
         self.canvas.pixmap_item.pixel_view = self.a.pixel_view.isChecked()
+        self.canvas.keep_zoom = self.a.keep_zoom.isChecked()
         from AIO_QC.widgets.zoom_widget import HoldToZoom
         self._hold_zoom = []
         for act, d in ((self.a.zoom_in, 1), (self.a.zoom_out, -1)):      # click = one step · hold = smooth zoom
@@ -547,6 +579,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Display tab
     DISPLAY_DEFAULTS = {"brightness": 0, "contrast": 0, "gamma": 100, "auto": False, "fill": 55, "outline": 100, "tag": 100}
+    IMAGE_KEYS = ("brightness", "contrast", "gamma", "auto")      # per image (the rest is annotation styling)
 
     def _build_display_tab(self) -> QWidget:
         """
@@ -559,6 +592,7 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(w)
         st = self.settings
         self.disp = {}
+        self._disp_fmt = {}
 
         def slider(key, lo, hi, tip, fmt):
             box = QVBoxLayout()
@@ -568,11 +602,14 @@ class MainWindow(QMainWindow):
             sl.setRange(lo, hi)
             sl.setFixedWidth(130)
             sl.setToolTip(tip)
-            sl.setValue(int(st.value(f"display/{key}", self.DISPLAY_DEFAULTS[key])))
+            keep = key not in self.IMAGE_KEYS or self.a.keep_display.isChecked()
+            sl.setValue(int(st.value(f"display/{key}", self.DISPLAY_DEFAULTS[key]) if keep
+                            else self.DISPLAY_DEFAULTS[key]))
             upd = lambda v, l=lab: l.setText(fmt(v))
+            self._disp_fmt[key] = upd
             upd(sl.value())
             sl.valueChanged.connect(upd)
-            sl.valueChanged.connect(lambda _v: self._display_timer.start())
+            sl.valueChanged.connect(lambda _v, k=key: self._display_changed(k))
             box.addWidget(lab)
             box.addWidget(sl)
             lay.addLayout(box)
@@ -585,9 +622,15 @@ class MainWindow(QMainWindow):
         slider("gamma", 30, 300, "Gamma > 1 lifts shadows (low-light frames)", lambda v: f"Gamma {v / 100:.2f}")
         self.disp_auto = QCheckBox("Auto contrast")
         self.disp_auto.setToolTip("Local contrast enhancement (CLAHE) — great for dark / hazy images")
-        self.disp_auto.setChecked(st.value("display/auto", False, type=bool))
-        self.disp_auto.toggled.connect(lambda _v: self._display_timer.start())
+        self.disp_auto.setChecked(st.value("display/auto", False, type=bool) and self.a.keep_display.isChecked())
+        self.disp_auto.toggled.connect(lambda _v: self._display_changed("auto"))
         lay.addWidget(self.disp_auto)
+        self.disp_keep = QCheckBox("Keep for next images")
+        self.disp_keep.setToolTip(self.a.keep_display.toolTip())
+        self.disp_keep.setChecked(self.a.keep_display.isChecked())
+        self.disp_keep.toggled.connect(lambda on: self.a.keep_display.isChecked() != on and self.a.keep_display.trigger())
+        self.a.keep_display.toggled.connect(lambda on: self.disp_keep.isChecked() != on and self.disp_keep.setChecked(on))
+        lay.addWidget(self.disp_keep)
         lay.addWidget(utils.custom_v_separator())
         lay.addWidget(QLabel("<b>Annotations</b>"))
         slider("fill", 0, 255, "Opacity of the shape fill (when Fill Shapes is on)", lambda v: f"Fill opacity {v * 100 // 255}%")
@@ -604,14 +647,74 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._apply_display)
         return w
 
-    def _apply_display(self):
+    def _display_changed(self, key: str):
+        """A slider / Auto contrast moved by the user: re-render soon, and remember the image adjustment for this
+        file (labelme-style: coming back to it shows it adjusted the same way)."""
+        if key in self.IMAGE_KEYS and self.current_key is not None:
+            self._display_owner = self.current_key
+        self._display_timer.start()
+
+    def _image_display_values(self) -> dict:
+        v = {k: self.disp[k].value() for k in self.IMAGE_KEYS if k in self.disp}
+        v["auto"] = self.disp_auto.isChecked()
+        return v
+
+    def _flush_display(self):
+        """Before another image opens: a pending slider change still belongs to the image it was made on."""
+        if self._display_timer.isActive():
+            self._display_timer.stop()
+            self._apply_display()
+
+    def _display_for_next(self, key: str):
+        """labelme's rule for the image about to open: its own adjustment from earlier in this session, else the
+        previous image's (Keep Previous Brightness/Contrast), else none. Set before the pixmap is shown, so it is
+        rendered once, already adjusted."""
+        if not hasattr(self, "disp"):
+            return
+        if key in self._display_by_key:
+            want = self._display_by_key[key]
+        elif self.a.keep_display.isChecked():           # carried over, and from now on this image's own (labelme)
+            cur = self._image_display_values()
+            if cur != {k: self.DISPLAY_DEFAULTS[k] for k in self.IMAGE_KEYS}:
+                self._display_by_key[key] = cur
+            return
+        else:
+            want = {k: self.DISPLAY_DEFAULTS[k] for k in self.IMAGE_KEYS}
+        if want == self._image_display_values():
+            return
+        for k in self.IMAGE_KEYS:
+            if k == "auto":
+                self.disp_auto.blockSignals(True)
+                self.disp_auto.setChecked(bool(want[k]))
+                self.disp_auto.blockSignals(False)
+            else:
+                sl = self.disp[k]
+                sl.blockSignals(True)
+                sl.setValue(int(want[k]))
+                sl.blockSignals(False)
+                self._disp_fmt[k](sl.value())                # its value label
+        self._apply_display(render=False)                    # canvas.loadPixmap renders it
+
+    def _set_keep_zoom(self, on):
+        self.settings.setValue("view/keep_zoom", bool(on))
+        self.canvas.keep_zoom = bool(on)
+
+    def _set_keep_display(self, on):
+        self.settings.setValue("view/keep_display", bool(on))
+
+    def _apply_display(self, render: bool = True):
         v = {k: sl.value() for k, sl in self.disp.items()}
         auto = self.disp_auto.isChecked()
         for k, val in v.items():
             self.settings.setValue(f"display/{k}", val)
         self.settings.setValue("display/auto", auto)
+        owner = getattr(self, "_display_owner", None)
+        if owner is not None:                                  # the user adjusted this image
+            self._display_owner = None
+            self._display_by_key[owner] = self._image_display_values()
         self.canvas.display.update(brightness=v["brightness"], contrast=v["contrast"], gamma=v["gamma"] / 100, auto=auto)
-        self.canvas._render_display()
+        if render:
+            self.canvas._render_display()
         if (self.canvas.fill_alpha, self.canvas.outline_scale, getattr(self.canvas, "tag_scale", 1.0)) != \
                 (v["fill"], v["outline"] / 100, v["tag"] / 100):
             self.canvas.set_annotation_style(fill_alpha=v["fill"], outline_scale=v["outline"] / 100,
@@ -628,6 +731,8 @@ class MainWindow(QMainWindow):
             sl.blockSignals(False)
             sl.valueChanged.emit(sl.value())
         self.disp_auto.setChecked(False)
+        if self.current_key is not None:
+            self._display_owner = self.current_key
         self._apply_display()
 
     def _tool_button(self, action: QAction) -> QToolButton:
@@ -689,7 +794,9 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._build_recent_menu)
         utils.addActions(self.menus.file, (self.a.open_dir,))
         self.menus.file.addMenu(self.recent_menu)
-        utils.addActions(self.menus.file, (self.a.reload, self.a.load_classes, None, self.a.open_trash, None,
+        utils.addActions(self.menus.file, (self.a.reload, self.a.load_classes, None,
+                                           {"menu": "Screenshot", "icon": "screenshot", "actions": self.shots.menu_actions()},
+                                           None, self.a.open_trash, None,
                                            self.a.next_mode, self.a.to_video, self.a.to_studio, self.a.source_video,
                                            None, self.a.exit))
         # preferences (compact toolbar, watch, guideline cards, animations, auto-advance, storage …) live in
@@ -714,7 +821,8 @@ class MainWindow(QMainWindow):
                          (self.qc_dock, "QC Panel"), (self.filmstrip_dock, "Thumbnails"))]
         utils.addActions(self.menus.view, (
             {"menu": "Interaction Mode", "actions": (self.a.drag, self.a.select)},
-            None, self.a.zoom_in, self.a.zoom_out, self.a.fit, self.a.actual, None,
+            None, self.a.zoom_in, self.a.zoom_out, self.a.fit, self.a.actual, self.a.keep_zoom,
+            self.a.keep_display, None,
             self.a.tags, self.a.fill, self.a.all_labels, self.a.pred_layer, None,
             {"menu": "Panels", "actions": (*dock_toggles, None, self.a_toolbar)},
             self.a.pin_qc, self.a.focus,
@@ -727,7 +835,8 @@ class MainWindow(QMainWindow):
             {"menu": title, "actions": [self.qc_actions[t.key] for t in QC_TOOLS if t.group == key]
              + ([None, self.a.rename] if key == "labels" else [])}
             for key, title, _q in GROUPS if key != "review"])
-        utils.addActions(self.menus.review, [self.qc_actions[t.key] for t in QC_TOOLS if t.group == "review"] + [
+        utils.addActions(self.menus.review, [self.a.check_guide, None] +
+                         [self.qc_actions[t.key] for t in QC_TOOLS if t.group == "review"] + [
             None, self.a.change_class, self.a.mark_ok, self.a.mark_flag, self.a.flag_note, self.a.mark_clear, None,
             self.a.next_unreviewed, None, self.a.save_flagged, self.a.export_review])
         utils.addActions(self.menus.tools, (self.a.sketch, self.a.roi, None, self.a.data_prep, self.a.ann_table, None,
@@ -763,6 +872,16 @@ class MainWindow(QMainWindow):
         self.mapping_btn.clicked.connect(lambda _c=False: self.open_label_map())
         self.mapping_btn.setVisible(False)
         self.statusBar().addPermanentWidget(self.mapping_btn)
+        self.flagged_btn = QToolButton()                 # ⚑ N flagged — click: show only them (again: all files)
+        self.flagged_btn.setAutoRaise(True)
+        self.flagged_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        utils.set_icon(self.flagged_btn, "review-flag")
+        self.flagged_btn.clicked.connect(lambda _c=False: self.toggle_flagged_filter())
+        self.flagged_btn.setVisible(False)
+        self.statusBar().addPermanentWidget(self.flagged_btn)
+        from AIO_QC.widgets.check_guide import CheckGuide
+        self.check_guide = CheckGuide(self)              # ▶ Next check: … (recommended checks for this dataset)
+        self.file_dock.review_box.currentIndexChanged.connect(lambda _i: self._update_flagged_count())
         for w in (self.review_badge, self.index_label, self.pos_label, self.mode_label):
             utils.style(w, "color:@muted; padding: 0 6px;")
             self.statusBar().addPermanentWidget(w)
@@ -879,6 +998,8 @@ class MainWindow(QMainWindow):
 
         self._close_session()
         self.session = session
+        self.canvas.forget_view()                    # a new dataset opens at home; adjustments are per file
+        self._display_by_key = {}
         session.annotationsChanged.connect(self._on_annotations_changed)
         session.annotationsChanged.connect(self._note_own_writes)        # our writes are not "outside" changes
         session.samplesRemoved.connect(self._on_samples_removed)
@@ -1106,6 +1227,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "toast"):
             self.toast.reposition()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, "toast"):              # notifications posted while another mode was in front
+            self.toast.reposition()
+
     def _update_title(self):
         """One pattern in every mode: '<mode> — <what is open> — AIO QC App'."""
         s = getattr(self, "session", None)
@@ -1142,7 +1268,9 @@ class MainWindow(QMainWindow):
         self._inflight.clear()
         self.pixmap_cache.clear()
         self.session = None
+        self.check_guide.reset()
         self._update_title()
+        self._update_flagged_count()
         self.current_key = self.current_ann = None
         self.inline.reset()
         self.embed_index = None
@@ -1668,6 +1796,8 @@ class MainWindow(QMainWindow):
         if n_err:
             self.log_errors([f"[index] {Path(k).name}: {e}" for k, e in self.session.index_errors.items()])
         self.refresh_label_list()
+        if not cancelled:
+            self.check_guide.dataset_ready()
         self.statusBar().showMessage(
             f"Indexed {len(self.session.samples):,} files in {time.monotonic() - self._index_started:.1f}s"
             + (f" ({hits:,} from cache)" if hits else "")
@@ -1682,6 +1812,9 @@ class MainWindow(QMainWindow):
             return
         sample = self.session.by_key[key]
         same = key == self.current_key
+        if not same:
+            self._flush_display()
+            self._display_for_next(key)
         self.current_key = key
         shape_to_focus, self._pending_shape = self._pending_shape, None
         extras, self._pending_extras = self._pending_extras, (None, None)
@@ -1704,7 +1837,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"⚠ {msg}", 8000)
             self.log_errors([f"{sample.name}: {msg}"], quiet=True)
         elif not same or self.canvas.pixmap_item.pixmap().cacheKey() != pix.cacheKey():
-            self.canvas.loadPixmap(pix)
+            self.canvas.loadPixmap(pix, same_image=same)       # re-read after an outside change: same view
             self.zoom_spin.setEnabled(True)
         self.statusBar().set_image(None if pix.isNull() else pix.width(), None if pix.isNull() else pix.height())
         self._status_file(sample, ann, pix)
@@ -1865,6 +1998,7 @@ class MainWindow(QMainWindow):
             (self.visible_labels.add if checked else self.visible_labels.discard)(label)
             (self.hidden_labels.discard if checked else self.hidden_labels.add)(label)
         self.unique_labels.blockSignals(False)
+        self.unique_labels.deselect()
         self.load_canvas_shapes()
         self.update_annotations_list()
 
@@ -1873,6 +2007,7 @@ class MainWindow(QMainWindow):
                               for i in range(self.unique_labels.count())} - {label}
         self.visible_labels = {label}
         self.refresh_label_list()
+        self.unique_labels.deselect()
         self.load_canvas_shapes()
         self.update_annotations_list()
 
@@ -1927,6 +2062,8 @@ class MainWindow(QMainWindow):
             self._select_from_list(idx)
 
     def onShapeSelected(self, index: int):
+        if index is not None and index >= 0:
+            self.unique_labels._deselect_now()        # a shape is the selection now, not a Labels dock row
         self.annotations_list.blockSignals(True)
         for r in range(self.annotations_list.count()):
             it = self.annotations_list.item(r)
@@ -2034,6 +2171,8 @@ class MainWindow(QMainWindow):
         if not self.validate_inputs():
             return
         tool = next(t for t in QC_TOOLS if t.key == key)
+        if key in ("fix_editor", "sampling"):            # no scan to finish: opening it counts
+            self.check_guide.record(key)
         if key == "fix_editor":
             self.open_editor_session()
             return
@@ -2131,6 +2270,33 @@ class MainWindow(QMainWindow):
                     dlg._finish()
             return                                  # one at a time
 
+    def open_batch_shots(self, keys=None):
+        """Review ▸ Flagged Screenshots, or File list ▸ Save screenshots of N files (those files preselected)."""
+        self.open_tool("screenshots")
+        dlg = self.open_dialogs.get("screenshots")
+        if dlg is not None:
+            dlg.set_keys(keys)
+        return dlg
+
+    def copy_file_names(self, keys, full: bool = False) -> str:
+        """File list ▸ Copy file name(s) / path(s): one per line, in list order. The name is the file shown in the
+        list (the JSON for LabelMe, the image for YOLO / classification)."""
+        s = self.session
+        if s is None:
+            return ""
+        out = []
+        for k in keys:
+            smp = s.by_key.get(k)
+            if smp is None:
+                continue
+            path = Path(k)
+            out.append(str(path) if full else smp.name if getattr(smp, "name", None) else path.name)
+        text = "\n".join(out)
+        QApplication.clipboard().setText(text)
+        what = ("path" if full else "name") + ("s" if len(out) > 1 else "")
+        self.statusBar().showMessage(f"Copied {len(out):,} file {what}" if len(out) > 1 else f"Copied: {text}", 4000)
+        return text
+
     def _file_list_menu(self, pos):
         """Right-click on the file list: open / review marks / fix in editor for the selected files."""
         view = self.file_dock.view
@@ -2143,12 +2309,16 @@ class MainWindow(QMainWindow):
         n = f"{len(keys)} file(s)" if len(keys) > 1 else "file"
         m = QMenu(self)
         m.addAction(utils.newIcon("eye"), "Open", lambda: self.open_sample(keys[0]))
+        names = "names" if len(keys) > 1 else "name"
+        m.addAction(utils.newIcon("copy"), f"Copy file {names}", lambda: self.copy_file_names(keys))
+        m.addAction(f"Copy file path{'s' if len(keys) > 1 else ''}", lambda: self.copy_file_names(keys, full=True))
         m.addSeparator()
         m.addAction(utils.newIcon("review-flag"), f"Flag {n}", lambda: self.session.set_review(keys, REVIEW_FLAG))
         m.addAction(utils.newIcon("review-ok"), f"Mark {n} OK", lambda: self.session.set_review(keys, REVIEW_OK))
         m.addAction(utils.newIcon("review-clear"), "Clear review mark", lambda: self.session.set_review(keys, None))
         m.addSeparator()
         m.addAction(utils.newIcon("tool-editor"), f"Fix {n} in editor…", lambda: self.open_editor_session(keys))
+        m.addAction(utils.newIcon("screenshot"), f"Save screenshots of {n}…", lambda: self.open_batch_shots(keys))
         if len(keys) == 1:
             m.addSeparator()
             m.addAction(utils.newIcon("mode-video"), "Show source video in Frame Extractor",
@@ -2198,6 +2368,7 @@ class MainWindow(QMainWindow):
         if sw is self.sweep:
             logger.info(f"[image check] {len(self.session.samples) if self.session else 0:,} images checked, "
                         f"{len(self.broken):,} broken")
+            self.check_guide.refresh()
 
     def notify_broken_images(self, keys, source: str = "Image Quality"):
         """One amber notification (updated in place) with the broken images; 'Show' filters the file list."""
@@ -2651,23 +2822,29 @@ class MainWindow(QMainWindow):
         self.refresh_pred_layer()
 
     def refresh_pred_layer(self):
-        if not self.pred_layer_on() or not self.session or not self.current_key:
+        items = self.pred_layer_items(self.current_key, self.canvas.pixmap_item.pixmap().width())
+        if items:
+            self.canvas.set_pred_layer(items)
+        else:
             self.canvas.clear_pred_layer()
-            return
+
+    def pred_layer_items(self, key, pix_width: int) -> list:
+        """The predictions layer of one file (View ▸ Model Predictions) for an image `pix_width` pixels wide —
+        [] when the layer is off or the file has none. Also used by the batch screenshots."""
+        if not self.pred_layer_on() or not self.session or not key:
+            return []
         try:
             from AIO_QC.widgets.explorer import layer_objects
             from AIO_QC.widgets.explorer.paint import object_color, object_text
-            objs, d = layer_objects(self, self.current_key)
+            objs, d = layer_objects(self, key)
         except Exception as exc:                          # the viewer must never break for the layer
             logger.warning(f"predictions layer: {exc}")
             objs, d = [], None
         if not objs:
-            self.canvas.clear_pred_layer()
-            return
-        pix = self.canvas.pixmap_item.pixmap()
-        i = d.index_of(self.current_key)
+            return []
+        i = d.index_of(key)
         W = float(d.img_w[i] or 0) if i is not None else 0.0
-        k = (pix.width() / W) if W and not pix.isNull() else 1.0         # predictions are in image pixels
+        k = (pix_width / W) if W and pix_width else 1.0                  # predictions are in image pixels
         dlg = self.open_dialogs.get("model_check")
         panel = getattr(dlg, "explorer", None)
         mode = panel.view.color if panel is not None and panel.data is d else "match"
@@ -2678,7 +2855,7 @@ class MainWindow(QMainWindow):
                           "poly": None if o.poly is None else [(x * k, y * k) for x, y in o.poly],
                           "kpts": None if o.kps is None else [(x * k, y * k, c) for x, y, c in o.kps],
                           "text": object_text(o, d.model_names, with_tag=True), "color": col.name()})
-        self.canvas.set_pred_layer(items)
+        return items
 
     def _on_mode_changed(self, mode):
         (self.a.select if mode == Canvas.SELECT else self.a.drag).setChecked(True)
@@ -2841,11 +3018,34 @@ class MainWindow(QMainWindow):
             utils.style(self.review_badge, "color:@warn; font-weight:bold; padding: 0 6px;")
             self.review_badge.setToolTip(e.get("note", "") or f"Flagged {e.get('ts', '')}")
 
+    def _update_flagged_count(self, c=None):
+        """Status bar: ⚑ N flagged (dataset-wide, running count)."""
+        if not self.session:
+            self.flagged_btn.setVisible(False)
+            return
+        n = (c if c is not None else self.session.review_totals()).get(REVIEW_FLAG, 0)
+        on = self.file_dock.review_box.currentData() == REVIEW_FLAG
+        self.flagged_btn.setText(f"{n:,} flagged")
+        self.flagged_btn.setVisible(True)
+        self.flagged_btn.setEnabled(n > 0 or on)
+        self.flagged_btn.setToolTip(("Showing only the flagged files — click to show all files" if on else
+                                     "Click to show only the flagged files") + " (file list ▸ review filter)")
+        utils.style(self.flagged_btn, "QToolButton{color:@warn; font-weight:bold; padding:0 6px;}" if n else
+                    "QToolButton{color:@muted; padding:0 6px;}")
+
+    def toggle_flagged_filter(self):
+        box = self.file_dock.review_box
+        want = None if box.currentData() == REVIEW_FLAG else REVIEW_FLAG
+        box.setCurrentIndex(max(0, box.findData(want)))
+        self._update_flagged_count()
+
     def _update_review_progress(self):
         if not self.session:
             self.review_progress.setText("")
+            self._update_flagged_count()
             return
         c = self.session.review_totals()                       # running counts: O(1) per keypress
+        self._update_flagged_count(c)
         n = len(self.session.samples)
         done = c.get(REVIEW_OK, 0) + c.get(REVIEW_FLAG, 0) + c.get(REVIEW_FIXED, 0)
         pct = done * 100 / max(n, 1)
@@ -2865,8 +3065,9 @@ class MainWindow(QMainWindow):
         import csv
         if not self.session:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export review report",
-                                              str(self.session.root / "review_report.csv"), "CSV (*.csv)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export review report", f"{self.session.root.name}_review_report.csv", "CSV (*.csv)",
+                           kind="reports", fallback=self.session.root.parent)
         if not path:
             return
         with open(path, "w", newline="", encoding="utf-8-sig") as f:

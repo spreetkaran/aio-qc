@@ -16,6 +16,11 @@ from AIO_QC.widgets.settings_dialog import (Section, Setting, command, from_acti
 
 
 # ------------------------------------------------------------------ Image QC
+def _saving():
+    from AIO_QC.utils.save_dirs import settings_section
+    return settings_section()
+
+
 def image_sections(win) -> list:
     a, st = win.a, win.settings
     has_ds = lambda: win.session is not None                            # noqa: E731
@@ -27,6 +32,7 @@ def image_sections(win) -> list:
     days = dict(minimum=0, maximum=3650, step=1, suffix=" days")
     return [
         general_section(),
+        _saving(),
         Section("Interface", "layout", [
             from_action("image.compact_toolbar", a.compact_toolbar, "Compact toolbar (icons only)", default=True,
                         aliases=("toolbar", "icons", "text")),
@@ -36,12 +42,58 @@ def image_sections(win) -> list:
             from_store("image.get_started", st, "get_started/at_start", "bool", False, "Show Get Started at start",
                        description="Open the guided overview every time the app starts (it always opens the first "
                                    "time).", aliases=("tour", "welcome")),
+            from_store("image.check_guide", st, "guide/enabled", "bool", True, "Recommend checks when a dataset "
+                       "opens", apply=lambda v: win.check_guide.setting_changed(v),
+                       description="Works out which QC checks matter most for the dataset (unreadable files, label "
+                                   "names that disagree, empty files, video frames, how classes relate …) and "
+                                   "shows where to start, a Next check button in the status bar and the next "
+                                   "check after each one finishes. Review ▸ Recommended Checks… always works.",
+                       aliases=("guide", "recommend", "suggest", "next check", "start here", "checklist")),
         ]),
         Section("Viewer", "zoom", [
             from_action("image.pixel_view", a.pixel_view, "Show pixels when zoomed in", default=False,
                         description="From 300 %, show hard pixel squares (nearest neighbour) for pixel-level work. "
                                     "Off: the image is enlarged smoothly in high quality, like Windows Photos.",
                         aliases=("pixel", "pixelated", "nearest", "smooth", "zoom", "interpolation", "sharp")),
+            from_action("image.keep_zoom", a.keep_zoom, "Keep previous zoom", default=False,
+                        description="The next image opens on the same spot at the same magnification, so you can "
+                                    "step through images while staying zoomed in on one area. Images of another "
+                                    "size show the same part of the image; a fitted view stays fitted.",
+                        aliases=("zoom", "magnification", "remember", "same spot", "pan", "labelme")),
+            from_action("image.keep_display", a.keep_display, "Keep previous brightness/contrast", default=False,
+                        description="The Display tab's brightness, contrast, gamma and auto contrast carry over to "
+                                    "the next images (dark / low-light datasets). Off: each image opens "
+                                    "unadjusted, or as you adjusted it earlier in this session (like labelme).",
+                        aliases=("brightness", "contrast", "gamma", "dark", "low light", "display", "remember")),
+        ]),
+        Section("Screenshots", "screenshot", [
+            from_store("image.screenshot_format", st, "screenshot/format", "choice", "png", "Screenshot format",
+                       choices=[("png", "PNG — exact pixels"), ("jpg", "JPEG — smaller files (quality 92)")],
+                       aliases=("png", "jpg", "jpeg", "screenshot")),
+            from_store("image.screenshot_batch_view", st, "screenshot/batch_view", "choice", "spot",
+                       "Batch screenshots: view",
+                       choices=[("spot", "Same spot as now (current zoom and position)"),
+                                ("whole", "Whole image, full resolution")],
+                       description="Review ▸ Flagged Screenshots and File list ▸ Save screenshots: every file at the "
+                                   "spot you are looking at now (scaled for other image sizes; fit stays fit), or "
+                                   "each whole image with outlines and tags scaled to stay readable.",
+                       aliases=("flagged", "batch", "zoom", "whole", "full resolution")),
+            from_store("image.screenshot_caption", st, "screenshot/caption", "bool", True,
+                       "Batch screenshots: caption strip",
+                       description="A strip under each picture: file, review mark and time, the flag note.",
+                       aliases=("note", "caption", "flag", "batch")),
+            from_store("image.screenshot_sketch", st, "screenshot/sketch", "bool", True,
+                       "Batch screenshots: include sketches",
+                       description="Draw each file's saved sketch (Sketch on Image) on its screenshot.",
+                       aliases=("sketch", "drawing", "batch")),
+            from_store("image.screenshot_existing", st, "screenshot/existing", "choice", "keep",
+                       "Batch screenshots: existing files",
+                       choices=[("keep", "Keep both (name_2.png)"), ("overwrite", "Overwrite"), ("skip", "Skip")],
+                       aliases=("overwrite", "skip", "batch")),
+            command("image.screenshot_open", "Screenshots", "Open folder", win.shots.open_folder,
+                    description="E saves the image as you see it into the screenshots folder (set it in General ▸ "
+                                "Saving), one folder per dataset; Shift+E asks for a name; right-click the image "
+                                "for Copy.", aliases=("screenshot", "folder", "location")),
         ]),
         Section("Dataset", "folders", [
             from_action("image.watch", a.watch, "Watch the dataset for outside changes", default=True,
@@ -112,6 +164,7 @@ def fx_sections(win) -> list:
 
     return [
         general_section(),
+        _saving(),
         Section("Display", "eye", [
             from_actions("fx.renderer", win.renderer_actions, "Video renderer", default="auto",
                          labels={"auto": "Auto (GPU when available)", "gpu": "GPU (OpenGL)", "software": "Software"},
@@ -254,6 +307,7 @@ def studio_sections(win) -> list:
                                suffix=suffix, apply=lambda _v: apply_studio_tunables(st)))
     return [
         general_section(),
+        _saving(),
         Section("Large tables", "data-profile", rows[:2]),
         Section("Profile & charts", "data-chart", rows[2:5]),
         Section("Performance", "sliders", rows[5:]),

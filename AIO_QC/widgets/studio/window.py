@@ -509,9 +509,9 @@ class StudioWindow(QMainWindow):
         return True
 
     def save_as(self) -> bool:
-        d = self.st.value("studio/last_dir", "") or ""
-        p, _ = QFileDialog.getSaveFileName(self, "Save workspace", os.path.join(d, "workspace.aioqc-data.json"),
-                                           WS_FILTER)
+        from AIO_QC.utils.save_dirs import ask_save
+        p, _ = ask_save(self, "Save workspace", "workspace.aioqc-data.json", WS_FILTER, kind="exports",
+                        fallback=self.st.value("studio/last_dir", "") or None)
         if not p:
             return False
         if not p.endswith(".json"):
@@ -968,10 +968,10 @@ class StudioWindow(QMainWindow):
             info = self.ws.info(self.current)
         except Exception:
             pass
-        d = self.st.value("studio/last_dir", "") or ""
-        p, flt = QFileDialog.getSaveFileName(self, "Export data", os.path.join(d, f"{self.current}.csv"),
-                                             "CSV (*.csv);;Parquet (*.parquet);;Excel (*.xlsx);;JSON (*.json);;"
-                                             "JSON lines (*.jsonl)")
+        from AIO_QC.utils.save_dirs import ask_save
+        p, flt = ask_save(self, "Export data", f"{self.current}.csv",
+                          "CSV (*.csv);;Parquet (*.parquet);;Excel (*.xlsx);;JSON (*.json);;JSON lines (*.jsonl)",
+                          kind="exports", fallback=self.st.value("studio/last_dir", "") or None)
         if not p:
             return
         ext = os.path.splitext(p)[1].lower()
@@ -1030,7 +1030,8 @@ class StudioWindow(QMainWindow):
     def export_report(self):
         if self.df is None:
             return
-        p, _ = QFileDialog.getSaveFileName(self, "Profile report", f"{self.current}_profile.html", "HTML (*.html)")
+        from AIO_QC.utils.save_dirs import ask_save
+        p, _ = ask_save(self, "Profile report", f"{self.current}_profile.html", "HTML (*.html)", kind="reports")
         if not p:
             return
         df, name = self.df, self.current

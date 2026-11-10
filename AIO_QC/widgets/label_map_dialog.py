@@ -279,8 +279,9 @@ class LabelMapDialog(QDialog):
 
     def export_file(self):
         import json
-        path, _ = QFileDialog.getSaveFileName(self, "Export mapping", str(self.session.root / "label_map.json"),
-                                              "JSON (*.json)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export mapping", f"{self.session.root.name}_label_map.json", "JSON (*.json)",
+                           kind="exports", fallback=self.session.root.parent)
         if path:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self.mapping(), f, indent=2, ensure_ascii=False)

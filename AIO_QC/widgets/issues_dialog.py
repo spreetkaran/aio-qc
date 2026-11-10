@@ -12,7 +12,7 @@ from collections import Counter
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
 from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QAbstractItemView, QComboBox, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMenu, QSplitter, QStyledItemDelegate, QTableView, QToolButton, QVBoxLayout,
 )
 
@@ -327,7 +327,9 @@ class IssuesDialog(QDialog):
                         lambda t=t: (store.clear_tool(t), self.session.issuesChanged.emit()))
 
     def _export(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export issues", "issues.csv", "CSV (*.csv)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export issues", f"{self.session.root.name}_issues.csv", "CSV (*.csv)",
+                           kind="exports", fallback=self.session.root.parent)
         if not path:
             return
         store = self.session.issues

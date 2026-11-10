@@ -30,7 +30,7 @@ from PyQt6.QtGui import (
     QPolygonF, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QColorDialog, QComboBox, QFileDialog, QFrame, QGraphicsItem, QHBoxLayout,
+    QApplication, QButtonGroup, QColorDialog, QComboBox, QFrame, QGraphicsItem, QHBoxLayout,
     QInputDialog, QLabel, QMessageBox, QScrollArea, QSlider, QToolButton, QWidget,
 )
 
@@ -777,13 +777,12 @@ class SketchMode:
 
     def save_image(self):
         smp = self.app.session.by_key.get(self.key) if self.app.session else None
-        start = self.app.settings.value("sketch/dir", "") or str(Path(smp.key).parent if smp else "")
+        from AIO_QC.utils.save_dirs import ask_save
         name = (Path(smp.name).stem if smp else "image") + "_sketch.png"
-        f, _ = QFileDialog.getSaveFileName(self.app, "Save sketch", str(Path(start) / name),
-                                           "PNG (*.png);;JPEG (*.jpg)")
+        f, _ = ask_save(self.app, "Save sketch", name, "PNG (*.png);;JPEG (*.jpg)", kind="images",
+                        fallback=Path(smp.key).parent if smp else None)
         if not f:
             return
-        self.app.settings.setValue("sketch/dir", str(Path(f).parent))
         img = self.render_view()
         if f.lower().endswith((".jpg", ".jpeg")):
             img = img.convertToFormat(QImage.Format.Format_RGB888)
@@ -1163,8 +1162,10 @@ class RoiMode:
         fmt = self.fmt.currentData()
         self.app.settings.setValue("roi/fmt", fmt)
         root = self.app.session.root
-        f, _ = QFileDialog.getSaveFileName(self.app, "Export ROIs", str(root.parent / f"{root.name}_rois.{fmt}"),
-                                           {"csv": "CSV (*.csv)", "txt": "Text (*.txt)", "json": "JSON (*.json)"}[fmt])
+        from AIO_QC.utils.save_dirs import ask_save
+        f, _ = ask_save(self.app, "Export ROIs", f"{root.name}_rois.{fmt}",
+                        {"csv": "CSV (*.csv)", "txt": "Text (*.txt)", "json": "JSON (*.json)"}[fmt], kind="exports",
+                        fallback=root.parent)
         if not f:
             return
         if fmt == "csv":
@@ -1190,11 +1191,10 @@ class RoiMode:
         if not rows:
             QMessageBox.information(self.app, "ROI", "No ROIs yet.")
             return
-        d = QFileDialog.getExistingDirectory(self.app, "Save the ROI crops into",
-                                             self.app.settings.value("roi/crops", ""))
+        from AIO_QC.utils.save_dirs import ask_dir
+        d = ask_dir(self.app, "Save the ROI crops into", kind="images", fallback=self.app.session.root.parent)
         if not d:
             return
-        self.app.settings.setValue("roi/crops", d)
         root = self.app.session.root
         n = 0
         from AIO_QC.core.io import decode_image

@@ -14,10 +14,10 @@
 </h4>
 
 <div align="center">
-  <a href="https://pypi.org/project/aio-qc/2.2.0/"><img src="https://img.shields.io/badge/pypi-2.2.0-blue.svg"></a>
+  <a href="https://pypi.org/project/aio-qc/2.3.0/"><img src="https://img.shields.io/badge/pypi-2.3.0-blue.svg"></a>
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.2.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.2.0"><img src="https://img.shields.io/badge/release-v2.2.0-informational.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.3.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.3.0"><img src="https://img.shields.io/badge/release-v2.3.0-informational.svg"></a>
 </div>
 
 <div align="center">
@@ -49,7 +49,7 @@ changes, so any change can be undone. Two more modes share the app: the **Frame 
 <i>Validation, Crop Gallery and Review Grid.</i>
 
 <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/stats/.readme/stats.png" width="49%" />\
-<i>Dataset Stats, and switching between the modes.</i>
+<i>Dataset Stats.</i>
 
 <sub>Screenshots are of the current release on <a href="https://cocodataset.org">COCO</a> (COCO128 subset); the look of older releases differs.</sub>
 
@@ -64,14 +64,17 @@ changes, so any change can be undone. Two more modes share the app: the **Frame 
   - **Shapes** — Crop Gallery · Duplicate Shapes · Outliers · Sequence Check (video frames) · Dim / Area · Training Size · Relationship Rules
   - **Models** — Model Check (report card, confusion, label-error estimate, accept by confidence) · OCR Check · Visual Similarity (DINOv3 / SigLIP2 / CLIP) · **Testing** (test sets, leaderboard, A / B, failures, video review, reports), with your models running in their own environment
   - **Review** — Issues Inbox · QC Sampling (error-rate estimate with a verdict) · Review Grid · Saved Views · Coverage Map · Smart Filter · QC Report · Export & Split
+- [x] Recommended checks for each dataset: *Start here* and *Next check* — suggested in order as soon as it opens
 - [x] Fix on the image: move, reshape, relabel, delete or draw shapes, with exact undo / redo
-- [x] Fix in Editor: hand files to LabelMe or labelImg and get them checked again when they are saved
+- [x] Fix in Editor: hand files to LabelMe or labelImg and get them checked again when they are saved — optionally with only the labels you pick
 - [x] Review marks (OK / flag / note) with a next-unreviewed workflow
 - [x] Hand-off batches for annotators, merged back with a three-way compare
 - [x] Per-class labelling guidelines with good and bad example crops, exportable as one HTML page
 - [x] File history: who changed what, when and with which tool — preview any version and revert it
 - [x] Data Prep: unzip, combine and flatten, find orphans, integrity check, exact duplicates, resize, import COCO / Pascal VOC / CVAT / Label Studio, pick the most varied images to label, fix EXIF rotation — each with a preview and undo
 - [x] Sketch on the image and ROI capture with real image coordinates
+- [x] Screenshots of the view (E) and of all flagged files at once, with a caption strip and the flag note
+- [x] Keep previous zoom and brightness / contrast while stepping through images
 - [x] Paint-style status bar and Windows-Photos-style zoom (smooth rendering when zoomed in); label colours that stay apart
 - [x] Export & Split: train / val / test splits that keep duplicates, video frames and OCR identities together, exported as YOLO, LabelMe, COCO or class folders
 - [x] Built for big datasets: cached indexing, background work, virtualised lists — fluid at millions of files and shapes
@@ -103,7 +106,7 @@ There are 2 options to install AIO QC App:
 ### Option 1: Using pip
 
 ```bash
-pip install aio-qc==2.2.0
+pip install aio-qc==2.3.0
 
 # with every optional part (Data Studio, Frame Extractor video engine, ONNX models, faster JSON …):
 pip install "aio-qc[full]"
@@ -112,7 +115,7 @@ pip install "aio-qc[full]"
 
 ### Option 2: Using standalone executable (easiest)
 
-Download the zip for your system from the [v2.2.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.2.0) page — no Python needed.
+Download the zip for your system from the [v2.3.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.3.0) page — no Python needed.
 
 ### Supported Python and platforms
 
@@ -163,7 +166,7 @@ Everything has a key; press **`?`** in the app for the live key map (type to fil
 | `Ctrl+0` / `Ctrl+1` | fit / 100 % | double-click | zoom in ↔ back to fit |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo an edit | `Ctrl+H` | file history |
 | `P` / `O` | sketch / ROI capture | `F1` | user guide |
-| `Ctrl+Alt+M` | next mode | | |
+| `Ctrl+Alt+M` | next mode | `E` | screenshot of the view |
 
 ### Your data is safe
 
@@ -204,7 +207,7 @@ pyinstaller AIO_QC/__main__.py \
 ```bash
 git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
-git checkout v2.2.0
+git checkout v2.3.0
 pip install -e ".[full]"
 aio-qc-console --logger-level debug
 python -m pytest tests                  # the test suite (offscreen Qt)
@@ -227,5 +230,5 @@ AIO QC App is free software, released under the [GNU General Public License v3.0
 Copyright (c) 2026 Preetkaran Singh.
 
 It bundles third-party components that keep their own licenses. See
-[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.2.0/THIRD_PARTY_NOTICES.md); the full license texts
-are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.2.0/licenses).
+[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.3.0/THIRD_PARTY_NOTICES.md); the full license texts
+are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.3.0/licenses).

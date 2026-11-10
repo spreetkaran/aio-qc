@@ -14,7 +14,7 @@ from loguru import logger
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QMessageBox, QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
 )
 
@@ -265,7 +265,8 @@ class StorageDialog(QDialog):
         if len(sel) != 1:
             return
         op = sel[0][1]
-        out = QFileDialog.getExistingDirectory(self, "Export the originals to …", str(self.session.root.parent))
+        from AIO_QC.utils.save_dirs import ask_dir
+        out = ask_dir(self, "Export the originals to …", kind="datasets", fallback=self.session.root.parent)
         if not out:
             return
         target = Path(out) / f"aio_qc_backup_{op['id']}_{time.strftime('%Y%m%d', time.localtime(op['created']))}"

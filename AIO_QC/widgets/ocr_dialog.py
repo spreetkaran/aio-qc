@@ -651,7 +651,9 @@ class OcrCheckDialog(BaseScanDialog):
         if not reads:
             QMessageBox.information(self, self.TITLE, "Run a scan first.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export OCR reads", "ocr_reads.csv", "CSV (*.csv)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export OCR reads", "ocr_reads.csv", "CSV (*.csv)", kind="reports",
+                           fallback=self.session.root.parent)
         if not path:
             return
         cfg = self._collect()

@@ -17,7 +17,7 @@ from pathlib import Path
 from PyQt6.QtCore import QRectF, QSize, Qt, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QProgressBar, QRadioButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -335,7 +335,8 @@ class ExportDialog(QDialog):
         self.train_lbl.setText(f"→ train {tr} %" + ("" if tr >= 50 else " ⚠"))
 
     def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, "Export folder", self.out.text())
+        from AIO_QC.utils.save_dirs import ask_dir
+        d = ask_dir(self, "Export folder", kind="datasets", current=self.out.text())
         if d:
             self.out.setText(d)
 

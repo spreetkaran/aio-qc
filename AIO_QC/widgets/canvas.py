@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Set
 
 import numpy as np
 
-from PyQt6.QtCore import QEasingCurve, QLineF, QPointF, QRectF, Qt, QVariantAnimation, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QLineF, QPoint, QPointF, QRectF, Qt, QVariantAnimation, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QCursor, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem, QGraphicsPixmapItem,
@@ -21,7 +21,8 @@ from AIO_QC.utils import ShapeGroup, distance, distancetoline, is_close, load_fo
 
 
 def _auto_contrast(rgb: np.ndarray) -> np.ndarray:
-    """CLAHE on the lightness channel (OpenCV); percentile stretch as a fallback."""
+    """CLAHE on the lightness channel (OpenCV); percentile stretch as a fallback. Works on 3-channel RGB or BGR
+    (the lightness of both is the same up to the swapped hue, which is swapped back)."""
     try:
         import cv2
         lab = cv2.cvtColor(np.ascontiguousarray(rgb), cv2.COLOR_RGB2LAB)
@@ -30,6 +31,71 @@ def _auto_contrast(rgb: np.ndarray) -> np.ndarray:
     except Exception:
         lo, hi = np.percentile(rgb, (1, 99))
         return np.clip((rgb.astype(np.float32) - lo) * 255.0 / max(hi - lo, 1), 0, 255).astype(np.uint8)
+
+
+def display_lut(brightness: float, contrast: float, gamma: float) -> np.ndarray:
+    """The 256-entry tone curve for brightness / contrast (-100..100) and gamma (0.3..3)."""
+    lut = np.arange(256, dtype=np.float32) / 255.0
+    lut = np.power(lut, 1.0 / max(gamma, 1e-3))                         # gamma
+    c = contrast * 1.28                                                  # -128..128
+    f = (259 * (c + 255)) / (255 * (259 - c))
+    lut = f * (lut * 255 - 128) + 128 + brightness * 1.28              # contrast around mid-grey, brightness
+    return np.clip(lut, 0, 255).astype(np.uint8)
+
+
+def _qimage_array(img: QImage, write: bool = False) -> np.ndarray:
+    """(h, w, 4) uint8 view of a 32-bit QImage's pixels (no copy; keep `img` alive). Read-only unless `write`
+    (bits() would detach a QImage that shares its pixels with a pixmap)."""
+    w, h = img.width(), img.height()
+    ptr = img.bits() if write else img.constBits()
+    ptr.setsize(img.sizeInBytes())
+    return np.frombuffer(ptr, np.uint8).reshape(h, img.bytesPerLine())[:, : w * 4].reshape(h, w, 4)
+
+
+class DisplayRenderer:
+    """Brightness / contrast / gamma / auto contrast for the shown image, fast on any size and any format.
+
+    The source is the image in Qt's native 32-bit layout (RGB32, or ARGB32 when it has transparency) — grey,
+    indexed, 16-bit, CMYK … images are converted once. The tone curve is one multi-threaded cv2.LUT straight into
+    a QImage Qt owns, which becomes the pixmap without another conversion or copy (≈ 8× faster than per-pixel
+    numpy indexing; ~0.1–0.4 s for a 108 MP image). The CLAHE result is cached per image, so moving a slider
+    with Auto contrast on only re-applies the curve."""
+
+    def __init__(self):
+        self._key = None
+        self._src: QImage | None = None
+        self._auto = None
+
+    def reset(self):
+        self._key = self._src = self._auto = None
+
+    def _source(self, pixmap: QPixmap) -> QImage:
+        if self._key != pixmap.cacheKey() or self._src is None:
+            img = pixmap.toImage()
+            want = QImage.Format.Format_ARGB32 if img.hasAlphaChannel() else QImage.Format.Format_RGB32
+            if img.format() != want:
+                img = img.convertToFormat(want)
+            self._key, self._src, self._auto = pixmap.cacheKey(), img, None
+        return self._src
+
+    def render(self, pixmap: QPixmap, d: dict) -> QPixmap:
+        import cv2
+        src = self._source(pixmap)
+        a = _qimage_array(src)
+        if d.get("auto"):
+            if self._auto is None:                                  # B, G, R, A in memory (little-endian)
+                bgr = _auto_contrast(np.ascontiguousarray(a[:, :, 2::-1]))[:, :, ::-1]
+                self._auto = np.dstack([bgr, a[:, :, 3:4]])
+            a = self._auto
+        lut = display_lut(d["brightness"], d["contrast"], d["gamma"])
+        lut4 = np.stack([lut, lut, lut, np.arange(256, dtype=np.uint8)], axis=-1).reshape(1, 256, 4)
+        out = QImage(src.width(), src.height(), src.format())
+        dst = _qimage_array(out, write=True)
+        if dst.flags["C_CONTIGUOUS"] and a.flags["C_CONTIGUOUS"]:
+            cv2.LUT(a, lut4, dst=dst)
+        else:                                                       # padded scan lines (odd widths never are)
+            dst[...] = cv2.LUT(np.ascontiguousarray(a), lut4)
+        return QPixmap.fromImage(out)
 
 
 GEOMETRY_TYPES = ("rectangle", "polygon", "circle", "line", "linestrip", "point", "points")
@@ -52,7 +118,9 @@ class ImageItem(QGraphicsPixmapItem):
         self.canvas = canvas
         self.pixel_view = False
         self.hq = None                           # (device scale, scene QRectF, QImage at device resolution)
-        self._arr = None                         # RGBA copy of the shown pixmap (made on the first refine)
+        self._arr = None                         # view of the shown pixmap's pixels (no copy; first refine)
+        self._src = None                         # the QImage that owns them
+        self._last_view = None                   # the view the pending render is for
         from PyQt6.QtCore import QTimer
         self.timer = QTimer(canvas)
         self.timer.setSingleShot(True)
@@ -60,7 +128,7 @@ class ImageItem(QGraphicsPixmapItem):
         self.timer.timeout.connect(self.refine)
 
     def setPixmap(self, pm):
-        self.hq, self._arr = None, None
+        self.hq, self._arr, self._src = None, None, None
         super().setPixmap(pm)
 
     def _dpr(self) -> float:
@@ -93,7 +161,13 @@ class ImageItem(QGraphicsPixmapItem):
             if self._covers(hq):
                 return
         if not moving:
-            self.timer.start()
+            # Debounce on view changes only: a repaint with the same view (a notification fading or counting down
+            # over the canvas, a blinking caret) must not keep postponing the high-quality render.
+            key = (s, self.canvas.viewportTransform().dx(), self.canvas.viewportTransform().dy(),
+                   self.canvas.viewport().size())
+            if key != self._last_view or not self.timer.isActive():
+                self._last_view = key
+                self.timer.start()
 
     def _view_rect(self) -> QRectF:
         """The visible part of the image, in scene coordinates, snapped to whole viewport pixels."""
@@ -133,12 +207,14 @@ class ImageItem(QGraphicsPixmapItem):
         W, H = max(1, int(round(S.width() * k))), max(1, int(round(S.height() * k))) 
         if W * H > 40_000_000:
             return
-        if self._arr is None:
-            img = pm.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-            ptr = img.constBits()
-            ptr.setsize(img.sizeInBytes())
-            self._arr = np.frombuffer(ptr, np.uint8).reshape(img.height(), img.bytesPerLine())[:, :img.width() * 4] \
-                .reshape(img.height(), img.width(), 4).copy()
+        if self._arr is None:                # the pixmap's own pixels (shared, no copy) in Qt's 32-bit layout
+            img = pm.toImage()
+            if img.format() not in (QImage.Format.Format_RGB32, QImage.Format.Format_ARGB32,
+                                    QImage.Format.Format_ARGB32_Premultiplied):
+                img = img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied if img.hasAlphaChannel()
+                                          else QImage.Format.Format_RGB32)
+            self._src = img
+            self._arr = _qimage_array(img)
         import cv2
         a = self._arr
         ih, iw = a.shape[:2]
@@ -160,8 +236,8 @@ class ImageItem(QGraphicsPixmapItem):
             S = QRectF(math.floor(S.left()), math.floor(S.top()), sub.shape[1], sub.shape[0])
             W, H = max(1, int(round(sub.shape[1] * k))), max(1, int(round(sub.shape[0] * k)))
             out = cv2.resize(sub, (W, H), interpolation=cv2.INTER_AREA)
-        out = np.ascontiguousarray(out)
-        qi = QImage(out.data, W, H, 4 * W, QImage.Format.Format_RGBA8888).copy()
+        qi = QImage(W, H, self._src.format())                   # channel order as in the source (cv2 is agnostic)
+        _qimage_array(qi, write=True)[...] = out
         qi.setDevicePixelRatio(dpr)
         self.hq = (s, S, qi)
         self.update()
@@ -370,6 +446,7 @@ class Canvas(QGraphicsView):
     shapeDeleteRequested = pyqtSignal(int)
     relabelRequested = pyqtSignal(int, int)       # index, class number 1-9 (0 = choose from the list)
     boxDrawn = pyqtSignal(QRectF)                 # new box (image pixels)
+    imageMenuRequested = pyqtSignal(QPoint)      # right-click inside the image (viewport position)
     editRefused = pyqtSignal(str)                 # why an edit gesture was not possible
     cursorMoved = pyqtSignal(object)              # image point under the mouse (QPointF) or None (status bar)
     selectionRect = pyqtSignal(object)            # bounds of the selection / box being drawn (QRectF) or None
@@ -407,6 +484,10 @@ class Canvas(QGraphicsView):
         self.fill_alpha = 55             # 0-255, used when "Fill Shapes" is on
         self.outline_scale = 1.0
         self._original = QPixmap()
+        self._renderer = DisplayRenderer()
+        self.keep_zoom = False                  # View ▸ Keep Previous Zoom
+        self._kept_view: Optional[dict] = None  # what the user zoomed to (carried to the next images)
+        self._applied_view = None               # (zoom, centre) this canvas set itself for the current image
         self.zoom_mode = self.FIT_MODE
         self.current_zoom = 1.0
         self.fit_scale = 1.0
@@ -501,27 +582,10 @@ class Canvas(QGraphicsView):
         if self._original.isNull():
             return
         if self.display_is_neutral():
-            self.pixmap_item.setPixmap(self._original)
+            if self.pixmap_item.pixmap().cacheKey() != self._original.cacheKey():
+                self.pixmap_item.setPixmap(self._original)
             return
-        img = self._original.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-        w, h = img.width(), img.height()
-        ptr = img.constBits()
-        ptr.setsize(img.sizeInBytes())
-        arr = np.frombuffer(ptr, np.uint8).reshape(h, img.bytesPerLine())[:, : w * 4].reshape(h, w, 4)
-        rgb = arr[:, :, :3]
-        d = self.display
-        if d["auto"]:
-            rgb = _auto_contrast(rgb)
-        lut = np.arange(256, dtype=np.float32) / 255.0
-        lut = np.power(lut, 1.0 / max(d["gamma"], 1e-3))                   # gamma
-        c = d["contrast"] * 1.28                                              # -128..128
-        f = (259 * (c + 255)) / (255 * (259 - c))
-        lut = f * (lut * 255 - 128) + 128 + d["brightness"] * 1.28          # contrast around mid-grey, brightness
-        lut = np.clip(lut, 0, 255).astype(np.uint8)
-        out = np.dstack([lut[rgb], arr[:, :, 3:4]])
-        out = np.ascontiguousarray(out)
-        qi = QImage(out.data, w, h, 4 * w, QImage.Format.Format_RGBA8888).copy()
-        self.pixmap_item.setPixmap(QPixmap.fromImage(qi))
+        self.pixmap_item.setPixmap(self._renderer.render(self._original, self.display))
 
     def set_annotation_style(self, fill_alpha: int | None = None, outline_scale: float | None = None,
                              tag_scale: float | None = None):
@@ -533,22 +597,88 @@ class Canvas(QGraphicsView):
             self.outline_scale = float(outline_scale)
         self.drawShapes()
 
-    def loadPixmap(self, pixmap: QPixmap):
+    def loadPixmap(self, pixmap: QPixmap, same_image: bool = False):
+        """Show a new image. Opens at home (fit / 100 %), or — with Keep Previous Zoom, and always when the same
+        file is re-read after an outside change (`same_image`) — on the same spot at the same magnification."""
+        keep = (self.keep_zoom or same_image) and not self._original.isNull()
+        if keep:
+            self._kept_view = self.view_state()
         self.peek_index = None
         self.clear_overlay()
         self.clear_pred_layer()
         self.clearShapes(emit_signal=True)
+        self._renderer.reset()
         self._original = pixmap
-        self.pixmap_item.setPixmap(pixmap)
-        if not self.display_is_neutral():
-            self._render_display()
+        if self.display_is_neutral():
+            self.pixmap_item.setPixmap(pixmap)
+        else:                                   # adjusted once, never shown unadjusted first
+            self.pixmap_item.setPixmap(self._renderer.render(pixmap, self.display))
         self.scene.setSceneRect(QRectF(pixmap.rect()))
-        self.apply_default_zoom()               # synchronous: no flash of the previous zoom
+        if (self.keep_zoom or same_image) and self._kept_view is not None:
+            self.apply_view_state(self._kept_view)
+        else:
+            self.apply_default_zoom()           # synchronous: no flash of the previous zoom
         if self._panning():
             self._pan_cursor()                  # the image under the mouse may have changed size
 
+    # ---- Keep Previous Zoom ----------------------------------------------------------
+    def view_state(self) -> Optional[dict]:
+        """The current view as an intent that transfers to other images: magnification, the image point at the
+        viewport centre (as a fraction of the image) and the image size it was taken on. While a glide runs, its
+        target. Unchanged since this canvas set it itself (the user did not zoom or pan): the previous intent, so
+        a view clamped on a small image never drifts what the next large image shows."""
+        pm = self._original
+        if pm.isNull():
+            return self._kept_view
+        moving = self.is_animating() and self._target_center is not None
+        z = self._target_zoom if moving else self.current_zoom
+        c = self._target_center if moving else self._view_center()
+        if self._applied_view is not None and self._kept_view is not None:
+            az, ac = self._applied_view
+            if abs(z / az - 1) < 1e-3 and QLineF(c, ac).length() * z < 1.0:
+                return self._kept_view
+        home = self.home_zoom()
+        return {"zoom": z, "nx": c.x() / pm.width(), "ny": c.y() / pm.height(), "w": pm.width(), "h": pm.height(),
+                "fit": self.zoom_mode == self.FIT_MODE and not moving,
+                "home": abs(z / home - 1.0) < 0.02 and abs(c.x() / pm.width() - 0.5) < 0.01
+                and abs(c.y() / pm.height() - 0.5) < 0.01}
+
+    def apply_view_state(self, v: dict):
+        """Open the current image on a kept view. Same size: the same zoom and pixel. Another size: the same
+        point (relative to the image) at the magnification that shows the same share of the image (zoom scaled
+        by √(area ratio) — the width ratio for the same aspect), within the zoom limits and the image edges.
+        Fit / home views stay fit / home."""
+        pm = self._original
+        if pm.isNull():
+            return
+        self.stop_zoom_animation()
+        if v.get("home"):
+            self.apply_default_zoom()
+            self._applied_view = (self.current_zoom, self._view_center())
+            return
+        if v.get("fit"):
+            self.fit_scale = self.compute_fit_scale()
+            z, mode = self.fit_scale, self.FIT_MODE
+            c = self._image_center()
+        else:
+            W, H = pm.width(), pm.height()
+            z = v["zoom"] if (W, H) == (v["w"], v["h"]) else v["zoom"] * math.sqrt((v["w"] * v["h"]) / (W * H))
+            z = max(self.MIN_ZOOM, min(z, self.MAX_ZOOM))
+            mode = self.ACTUAL_MODE if abs(z - 1.0) < 1e-6 else self.CUSTOM_MODE
+            c = self.clamp_center(z, QPointF(v["nx"] * W, v["ny"] * H))
+        self._apply_view(z, c)
+        self._finish_zoom(mode)
+        self._applied_view = (self.current_zoom, self._view_center())
+
+    def forget_view(self):
+        """A new dataset starts at home again."""
+        self._kept_view = self._applied_view = None
+
     def clearAll(self):
+        if self.keep_zoom and not self._original.isNull():
+            self._kept_view = self.view_state()     # a broken file in between does not lose the kept view
         self._original = QPixmap()
+        self._renderer.reset()
         self.clear_overlay()
         self.clear_pred_layer()
         self.clearShapes(emit_signal=True)
@@ -1154,6 +1284,7 @@ class Canvas(QGraphicsView):
         home = self.home_zoom()
         self._apply_view(home, self._image_center())
         self._finish_zoom(self.FIT_MODE if home < 1.0 else self.ACTUAL_MODE)
+        self._applied_view = None
 
     def fit_window(self):
         self.fit_scale = self.compute_fit_scale()
@@ -1269,6 +1400,9 @@ class Canvas(QGraphicsView):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.setFocus()
+            # Hover is pre-click feedback only: a press starts a gesture (draw a box, drag a handle, pan, click),
+            # so the shape under the mouse stops being highlighted until the button is released and it moves again.
+            self._set_hover(None)
             if self._drawing and not self._space_pan:
                 self._begin_draw(event.pos())
                 event.accept()
@@ -1306,6 +1440,12 @@ class Canvas(QGraphicsView):
                     and (event.pos() - press).manhattanLength() < 4:
                 self.clearSelection()
             self._apply_mode_cursor()
+
+    def _refresh_hover(self, view_pos):
+        """After a gesture: highlight what is under the mouse now (no move needed to bring it back)."""
+        if self._drawing or self._panning():
+            return
+        self._set_hover(self._group_at(view_pos))
 
     def _set_hover(self, group: Optional[ShapeGroup]):
         if group is self.hover_group:
@@ -1357,7 +1497,8 @@ class Canvas(QGraphicsView):
             self._move_edit(event.pos())
             return
         super().mouseMoveEvent(event)
-        if self._drawing:
+        if self._drawing:                          # placing a new box: shapes underneath are not targets
+            self._set_hover(None)
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
             return
         if not self._panning() and event.buttons() == Qt.MouseButton.NoButton:
@@ -1374,6 +1515,16 @@ class Canvas(QGraphicsView):
         elif self._panning():
             self._set_hover(None)
             self._pan_cursor(event.pos())
+
+    def contextMenuEvent(self, event):
+        """Right-click: a menu only inside the image, and never in the middle of a gesture."""
+        pos = event.pos()
+        if self._draw_start is not None or self._drag_edit is not None or not self._over_image(pos):
+            event.ignore()
+            return
+        self._set_hover(None)
+        self.imageMenuRequested.emit(pos)
+        event.accept()
 
     def leaveEvent(self, event):
         self._set_hover(None)
@@ -1757,6 +1908,7 @@ class Canvas(QGraphicsView):
         if self.mode == self.DRAG:
             self.setMode(self.SELECT)
         self._drawing = True
+        self._set_hover(None)                      # the shape under the mouse when B was pressed
         self.viewport().setCursor(Qt.CursorShape.CrossCursor)
 
     def _stop_drawing(self):
@@ -1786,6 +1938,7 @@ class Canvas(QGraphicsView):
     def _end_draw(self, view_pos):
         rect = self._draw_item.rect() if self._draw_item is not None else QRectF()
         self._stop_drawing()
+        self._refresh_hover(view_pos)
         self.emit_selection()
         if rect.width() * self.current_zoom >= 4 and rect.height() * self.current_zoom >= 4:
             self.boxDrawn.emit(rect)

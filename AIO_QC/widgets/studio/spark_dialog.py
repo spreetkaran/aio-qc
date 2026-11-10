@@ -136,7 +136,8 @@ class SparkDialog(QDialog):
         return self.ws.code(self.table, "pyspark", out, self.fmt.currentData())
 
     def _save_script(self):
-        p, _ = QFileDialog.getSaveFileName(self, "Save PySpark script", f"{self.table}_pyspark.py", "Python (*.py)")
+        from AIO_QC.utils.save_dirs import ask_save
+        p, _ = ask_save(self, "Save PySpark script", f"{self.table}_pyspark.py", "Python (*.py)", kind="exports")
         if p:
             with open(p, "w", encoding="utf-8") as f:
                 f.write(self._code())

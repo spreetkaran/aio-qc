@@ -131,6 +131,7 @@ def test_every_action(shell, qtbot, tmp_path, kind):
     """Trigger every menu action of the image window (dialogs answered automatically) — nothing may raise."""
     w = _open(shell, qtbot, DATASETS[kind](tmp_path / kind))
     w.canvas.select_shape(0) if w.canvas.shape_groups else None
+    toggles = {a: a.isChecked() for a in vars(w.a).values() if hasattr(a, "isCheckable") and a.isCheckable()}
     for name, act in list(vars(w.a).items()):
         if name in SKIP_ACTIONS or not hasattr(act, "trigger"):
             continue
@@ -142,6 +143,9 @@ def test_every_action(shell, qtbot, tmp_path, kind):
             d.close()
         for top in list(qtbot_top_levels(w)):
             top.close()
+    for act, was in toggles.items():                 # stored view options must not leak into later tests
+        if act.isChecked() != was:
+            act.trigger()
     from .conftest import MESSAGES
     print(kind, "messages:", [m for m in MESSAGES if m[0] != "dialog"][:15])
 

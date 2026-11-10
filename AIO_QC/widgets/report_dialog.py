@@ -16,7 +16,7 @@ from loguru import logger
 from PyQt6.QtCore import QMarginsF, QUrl
 from PyQt6.QtGui import QDesktopServices, QImage, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QSpinBox,
+    QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QSpinBox,
     QVBoxLayout,
 )
 
@@ -48,7 +48,8 @@ class ReportDialog(QDialog):
         self.fmt.addItem("PDF — for sharing / printing", "pdf")
         self.fmt.setCurrentIndex(max(0, self.fmt.findData(st.value("report/fmt", "html"))))
         self.fmt.currentIndexChanged.connect(lambda _i: self._ext())
-        self.path = QLineEdit(str(Path(st.value("report/dir", "") or s.root.parent) /
+        from AIO_QC.utils.save_dirs import start_dir
+        self.path = QLineEdit(str(start_dir("reports", fallback=s.root.parent) /        # Settings ▸ Saving
                                   time.strftime(f"{s.root.name}_QC_report_%Y%m%d.html")))
         self.browse = newButton("Browse…", icon="save", slot=self._browse)
         self.worst = QSpinBox()
@@ -103,8 +104,10 @@ class ReportDialog(QDialog):
         self.path.setText(str(p.with_suffix("." + self.fmt.currentData())))
 
     def _browse(self):
-        f, _ = QFileDialog.getSaveFileName(self, "Save report", self.path.text(),
-                                           "HTML (*.html)" if self.fmt.currentData() == "html" else "PDF (*.pdf)")
+        from AIO_QC.utils.save_dirs import ask_save
+        f, _ = ask_save(self, "Save report", self.path.text(),
+                        "HTML (*.html)" if self.fmt.currentData() == "html" else "PDF (*.pdf)", kind="reports",
+                        keep_dir=True)
         if f:
             self.path.setText(f)
             self._ext()
@@ -143,7 +146,8 @@ class ReportDialog(QDialog):
         fmt = self.fmt.currentData()
         st = self.app.settings
         st.setValue("report/fmt", fmt)
-        st.setValue("report/dir", str(out.parent))
+        from AIO_QC.utils.save_dirs import remember
+        remember("reports", out)
         st.setValue("report/worst", self.worst.value())
         st.setValue("report/open", self.open_after.isChecked())
         snap = self._snapshot()

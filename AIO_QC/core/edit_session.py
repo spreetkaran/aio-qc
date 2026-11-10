@@ -126,6 +126,8 @@ class Entry:
     prev_review: list | None = None                # [status, note] before the session (undo)
     backup: str | None = None                      # "db" (backups.sqlite) or a legacy relative path
     writes: int = 0
+    hidden: list | None = None                     # label filter: indices of the shapes kept out of the editor
+    hidden_stale: bool = False                     # the original changed outside: recompute `hidden` from labels
 
 
 @dataclass
@@ -148,6 +150,8 @@ class EditSession:
         self.backup_op: int | None = None     # operation id in backups.sqlite
         self.task = task                      # YOLO: detect | segment | obb | mixed
         self.flags_matter = False             # LabelMe-flag classification: flag changes are edits
+        self.only_labels: list[str] | None = None   # show only these labels in the editor (others kept as they are)
+        self._pending_hidden: dict[str, list] = {}
         self.entries: list[Entry] = []
         self.created = time.strftime("%Y-%m-%d %H:%M:%S")
         self.active = True
@@ -170,7 +174,9 @@ class EditSession:
         s.flags_matter = d.get("flags_matter", False)
         s.source_version = d.get("source_version", "")
         s.backup_op = d.get("backup_op")
-        s.entries = [Entry(**e) for e in d["entries"]]
+        s.only_labels = d.get("only_labels")
+        known = set(Entry.__dataclass_fields__)
+        s.entries = [Entry(**{k: v for k, v in e.items() if k in known}) for e in d["entries"]]
         return s
 
     @staticmethod
@@ -194,11 +200,40 @@ class EditSession:
         cid = shape.get("_class_id")
         return cid is not None and (not self.class_names or cid < len(self.class_names))
 
+    def shown(self, shape: dict) -> bool:
+        """Label filter: does this shape go to the editor? (No filter: every shape.)"""
+        return self.only_labels is None or shape.get("label") in self.only_labels
+
+    def hidden_of(self, e: Entry, shapes: list) -> list[int]:
+        """Indices (in `shapes`, the current original) of the shapes kept out of the editor."""
+        if self.only_labels is None:
+            return []
+        if e.hidden is not None and not e.hidden_stale and all(i < len(shapes) for i in e.hidden):
+            return list(e.hidden)
+        return [i for i, x in enumerate(shapes) if not self.shown(x)]
+
+    @staticmethod
+    def merge_hidden(shapes: list, hidden: list[int], edited: list) -> tuple[list, list[int]]:
+        """Put the edited (shown) shapes back between the hidden ones: hidden shapes keep their order, the edited
+        block goes where the first shown shape was. Returns (shapes, new hidden indices)."""
+        hid = set(hidden)
+        out, new_hidden, placed = [], [], False
+        for i, x in enumerate(shapes):
+            if i in hid:
+                new_hidden.append(len(out))
+                out.append(x)
+            elif not placed:
+                out.extend(edited)
+                placed = True
+        if not placed:
+            out.extend(edited)
+        return out, new_hidden
+
     # ------------------------------------------------------------------ create
     @classmethod
     def create(cls, root: Path, samples, adapter, editor: str, class_names: list[str], image_data: str,
                source_title: str, review=None, source_version: str = "5.0.0",
-               label_hints: list[str] | None = None) -> "EditSession":
+               label_hints: list[str] | None = None, only_labels: list[str] | None = None) -> "EditSession":
         """Build the work folder. `adapter` is the BASE (unmapped) adapter: files are edited with their real labels."""
         root = Path(root)
         work = root / ".aio_qc" / SESSIONS / time.strftime("%Y%m%d_%H%M%S")
@@ -211,6 +246,7 @@ class EditSession:
         s = cls(root, work, editor, "yolo" if is_yolo else "labelme", class_names, image_data, source_title)
         s.source_version = source_version
         s.flags_matter = getattr(adapter.type, "value", "") == "cls_labelme"
+        s.only_labels = sorted(set(only_labels)) if only_labels is not None else None
         loaded = []
         for sample in samples:
             try:
@@ -270,8 +306,16 @@ class EditSession:
                 (work / e.image).write_bytes(blob)
             data["imagePath"] = e.image
             data[IMG_KEY] = None
+            shapes = ann.shapes
+            if self.only_labels is not None:
+                e.hidden = self.hidden_of(e, shapes)
+                hid = set(e.hidden)
+                shapes = [x for i, x in enumerate(shapes) if i not in hid]
+                data["shapes"] = [{k: v for k, v in x.items() if not str(k).startswith("_")} for x in shapes]
+                if e.hidden:
+                    e.message = f"{len(e.hidden)} shape(s) of other labels hidden in the editor and kept unchanged"
             (work / e.mirror).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            e.base = _digest_labelme(ann.shapes, (ann.raw.get("flags") or {}) if self.flags_matter else None)
+            e.base = _digest_labelme(shapes, (ann.raw.get("flags") or {}) if self.flags_matter else None)
             return
         # ---- YOLO
         if e.image is None:
@@ -282,6 +326,10 @@ class EditSession:
         W, H = size
         valid = [x for x in ann.shapes if self.editable(x)]
         bad = len(ann.shapes) - len(valid)
+        if self.only_labels is not None:
+            e.hidden = [i for i, x in enumerate(ann.shapes) if self.editable(x) and not self.shown(x)]
+            hid = set(e.hidden)
+            valid = [x for i, x in enumerate(ann.shapes) if self.editable(x) and i not in hid]
         if self.editor == LABELIMG:
             lines = []
             for x in valid:
@@ -296,9 +344,13 @@ class EditSession:
                     "imageData": None, "imageHeight": H, "imageWidth": W}
             (work / e.mirror).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         e.base = _digest_yolo(valid)
+        notes = []
         if bad:
-            e.message = (f"{bad} line(s) with an invalid format or a class id without a name are not shown in the "
+            notes.append(f"{bad} line(s) with an invalid format or a class id without a name are not shown in the "
                          "editor and are kept unchanged")
+        if e.hidden:
+            notes.append(f"{len(e.hidden)} shape(s) of other labels hidden in the editor and kept unchanged")
+        e.message = "; ".join(notes)
 
     # ------------------------------------------------------------------ polling
     def poll(self) -> list[Entry]:
@@ -369,9 +421,15 @@ class EditSession:
         flags_matter = self.flags_matter
         version = self.source_version or "5"
         ann_path = Path(sample.ann_path) if sample is not None and sample.ann_path else None
+        session = self
 
         def apply(ann):
-            ann.shapes = shapes
+            if session.only_labels is not None:
+                merged, hidden = session.merge_hidden(ann.shapes, session.hidden_of(e, ann.shapes), shapes)
+                ann.shapes = merged
+                session._pending_hidden[e.key] = hidden
+            else:
+                ann.shapes = shapes
             if isinstance(flags, dict):
                 ann.raw["flags"] = flags
                 if flags_matter:              # classification adapters write the flags from the tags
@@ -463,7 +521,11 @@ class EditSession:
             return None
 
         def apply(ann):
-            originals = [s for s in ann.shapes if self.editable(s)]
+            hid = set(self.hidden_of(e, ann.shapes))
+            idx = [i for i, s in enumerate(ann.shapes) if self.editable(s)]
+            editable = [ann.shapes[i] for i in idx]
+            hid_in_editable = [j for j, i in enumerate(idx) if i in hid]
+            originals = [s for j, s in enumerate(editable) if j not in set(hid_in_editable)]
             invalid = [s for s in ann.shapes if not self.editable(s)]
             used, result = set(), []
             for s in new:
@@ -483,6 +545,8 @@ class EditSession:
                     result.append({"label": s["label"], "points": s["points"], "shape_type": s["shape_type"],
                                    "group_id": None, "flags": {}, "_row": None, "_class_id": None,
                                    "_geom_dirty": True, "_new": True})
+            if self.only_labels is not None:       # hidden labels keep their place, the edited block goes in between
+                result, self._pending_hidden[e.key] = self.merge_hidden(editable, hid_in_editable, result)
             ann.shapes = result + invalid                  # invalid lines stay (Validation reports them)
             return True
 
@@ -505,6 +569,8 @@ class EditSession:
         self.save()
 
     def after_write(self, e: Entry, sample, summary: str):
+        if e.key in self._pending_hidden:
+            e.hidden, e.hidden_stale = self._pending_hidden.pop(e.key), False
         e.orig_sig = _sig(Path(sample.ann_path))
         e.status, e.writes = "fixed", e.writes + 1
         e.message = summary + (f" · {e.message}" if e.message and e.message not in summary else "")
@@ -512,7 +578,9 @@ class EditSession:
         if self.dataset_type == "labelme":
             try:
                 d = load_json(sample.ann_path)
-                e.base = _digest_labelme(d.get("shapes") or [], (d.get("flags") or {}) if self.flags_matter else None)
+                hid = set(e.hidden or []) if self.only_labels is not None else set()
+                shapes = [x for i, x in enumerate(d.get("shapes") or []) if i not in hid]
+                e.base = _digest_labelme(shapes, (d.get("flags") or {}) if self.flags_matter else None)
             except Exception:
                 pass
         else:
@@ -523,6 +591,7 @@ class EditSession:
         """use_editor=True: accept the outside change as the new base and write the editor's version on the next
         sync. False: keep the file as it is now and ignore the editor's copy until it is saved again."""
         e.orig_sig = _sig(Path(sample.ann_path)) if sample.ann_path else None
+        e.hidden_stale = self.only_labels is not None      # the hidden shapes are re-read from the new original
         if use_editor:
             e.last_mirror_sig = None            # forces a re-sync of the current editor copy
             e.pending_sig = None
@@ -556,6 +625,7 @@ class EditSession:
             elif not e.orig_existed and target.is_file():
                 target.unlink()
             e.writes, e.status, e.message = 0, "waiting", "undone"
+            e.hidden_stale = self.only_labels is not None
             e.orig_sig = _sig(target)
             restored.append((e.key, e.prev_review))
         store.close()

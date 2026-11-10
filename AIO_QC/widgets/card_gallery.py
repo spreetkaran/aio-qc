@@ -39,6 +39,7 @@ class Shape:
     color: str
     dashed: bool = False
     width: float = 2.5
+    text: str = ""                # tag at the shape's top-left: class and what was measured ("wheel #1 · IoU 0.82")
 
 
 @dataclass
@@ -167,8 +168,44 @@ class PanelTask(QRunnable):
             painter.drawPolygon(poly) if len(s.points) > 2 else painter.drawPolyline(poly)
             painter.setPen(pen)
             painter.drawPolygon(poly) if len(s.points) > 2 else painter.drawPolyline(poly)
+        self._tags(painter, crop, p.shapes, sx, sy, rect, k)
         painter.end()
         return crop
+
+    def _tags(self, painter, crop, shapes, sx, sy, rect, k):
+        """Class + measurements as small pills in the shape's colour, at its top-left corner (above it when there
+        is room), kept inside the crop and never on top of another tag."""
+        from PyQt6.QtGui import QFont, QFontMetrics
+        f = QFont()
+        f.setPixelSize(max(9, round(10.5 * self.scale)))
+        f.setBold(True)
+        fm = QFontMetrics(f)
+        painter.setFont(f)
+        placed = []
+        W, H = crop.width(), crop.height()
+        for s in shapes:
+            if not s.text or not s.points:
+                continue
+            xs = [(x * sx - rect.x()) * k for x, _y in s.points]
+            ys = [(y * sy - rect.y()) * k for _x, y in s.points]
+            text = fm.elidedText(s.text, Qt.TextElideMode.ElideRight, max(40, W - 4))
+            tw, th = fm.horizontalAdvance(text) + 8, fm.height() + 2
+            x = min(max(0.0, min(xs)), W - tw)
+            y = min(ys) - th - 1 if min(ys) - th - 1 >= 0 else max(0.0, min(ys) + 1)
+            r = QRectF(x, y, tw, th)
+            for _ in range(8):                               # step past tags already placed
+                hit = next((q for q in placed if q.intersects(r)), None)
+                if hit is None:
+                    break
+                r.moveTop(hit.bottom() + 1 if hit.bottom() + 1 + th <= H else max(0.0, hit.top() - th - 1))
+            placed.append(r)
+            col = QColor(s.color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(col)
+            painter.drawRoundedRect(r, 3, 3)
+            lum = 0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()
+            painter.setPen(QColor(0, 0, 0) if lum > 150 else QColor(255, 255, 255))
+            painter.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
 
 
 # =============================================================================

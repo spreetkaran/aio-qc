@@ -149,7 +149,8 @@ class ExportBatchDialog(QDialog):
         self.go.setEnabled(not err and self.worker is None)
 
     def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, "Put the batch folder in", self.folder.text())
+        from AIO_QC.utils.save_dirs import ask_dir
+        d = ask_dir(self, "Put the batch folder in", kind="datasets", current=self.folder.text())
         if d:
             self.folder.setText(d)
 

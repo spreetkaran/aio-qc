@@ -6,10 +6,12 @@ Labelling guidelines in the app (core.guidelines):
 GuideCard           compact card — the rule text and ✓ / ✗ example crops. Floats over the image (bottom-left) when a
                     shape whose class has a guideline is selected, and sits above the results of a QC tool that has a
                     guideline for its rule. Click an example to see it large; "Edit" opens the Guidelines window.
-GuidelinesDialog    Labels ▸ Guidelines (Ctrl+Alt+G): every class and every QC rule — write the rule, add the selected
-                    shape as a good / bad example, notes per example, export one HTML page for annotators (also put
-                    into every hand-off batch).
+GuidelinesDialog    Labels ▸ Guidelines (Ctrl+Alt+G): every class, every Relationship Rule (one guideline per rule,
+                    shown above that rule's results) and the checks that find labelling problems — write the rule,
+                    add the selected shape as a good / bad example, notes per example, export one HTML page for
+                    annotators (also put into every hand-off batch).
 add_selected(app, kind)   the selected shape on the image -> example of its class (annotation menu, G / Shift+G).
+shape_example(...)        the one way a shape becomes an example (box from its real extent, its outline drawn).
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from pathlib import Path
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
-    QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu,
+    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu,
     QMessageBox, QPlainTextEdit, QSplitter, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -36,11 +38,42 @@ def _pix(path, side) -> QPixmap:
     return pm.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 
-def scope_title(scope: str, tools: dict | None = None) -> str:
+# QC tools whose findings are labelling mistakes an annotator can learn from (the others — stats, exports,
+# reports, review tools … — have nothing to explain). Relationship Rules get one guideline per rule instead.
+GUIDE_TOOLS = ("validation", "empty", "ambiguity", "text_labels", "duplicates", "outliers", "sequence", "dim_area",
+               "train_size", "ocr_check", "similarity", "model_check")
+
+
+def scope_title(scope: str, tools: dict | None = None, titles: dict | None = None, store=None) -> str:
+    if titles and scope in titles:
+        return titles[scope]
     if scope.startswith("tool:"):
         k = scope[5:]
-        return f"Rule · {(tools or {}).get(k, k)}"
+        return f"Check · {(tools or {}).get(k, k)}"
+    if scope.startswith("rule:") and store is not None:
+        return store.title(scope)
     return scope
+
+
+def shape_example(store, scope: str, kind: str, shape: dict, image_path, note: str = "", src: str = ""):
+    """A shape -> a ✓ / ✗ example crop of `scope` (its real extent — circles by their radius — and its outline)."""
+    pts = shape.get("points") or []
+    if not pts:
+        return None
+    st = shape.get("shape_type") or "polygon"
+    xs, ys = [float(p[0]) for p in pts], [float(p[1]) for p in pts]
+    poly = None
+    if st == "circle" and len(pts) == 2:
+        import math
+        r = math.hypot(xs[1] - xs[0], ys[1] - ys[0])
+        poly = [(xs[0] + r * math.cos(a * math.pi / 16), ys[0] + r * math.sin(a * math.pi / 16)) for a in range(32)]
+        xs, ys = [xs[0] - r, xs[0] + r], [ys[0] - r, ys[0] + r]
+    elif st == "polygon" and len(pts) >= 3:
+        poly = list(zip(xs, ys))
+    elif st in ("line", "linestrip") and len(pts) >= 2:
+        poly = list(zip(xs, ys))
+    return store.add_example(scope, kind, image_path, (min(xs), min(ys), max(xs), max(ys)), note, src=src,
+                             poly=poly)
 
 
 # ====================================================================================================== card
@@ -84,7 +117,7 @@ class GuideCard(QFrame):
         lay.addLayout(self.row)
         self.hide()
 
-    def set_scope(self, store, scope: str | None, tools=None) -> bool:
+    def set_scope(self, store, scope: str | None, tools=None, titles=None) -> bool:
         g = store.get(scope) if (store is not None and scope) else None
         self.scope = scope
         while self.row.count():
@@ -93,7 +126,7 @@ class GuideCard(QFrame):
                 it.widget().deleteLater()
         if g is None:
             return False
-        self.title.setText(scope_title(scope, tools))
+        self.title.setText(scope_title(scope, tools, titles, store))
         t = g.get("text") or ""
         lines = t.splitlines()
         short = "\n".join(lines[:4]) + (" …" if len(lines) > 4 else "") if self.compact else t
@@ -179,14 +212,9 @@ def add_selected(app, kind: str):
     if s is None or g is None or app.current_ann is None:
         app.statusBar().showMessage("Select a shape on the image first", 4000)
         return
-    pts = g.shape_data.get("points") or []
-    if not pts:
+    if not (g.shape_data.get("points") or []):
         return
     label = str(g.shape_data.get("label"))
-    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-    if g.shape_data.get("shape_type") == "circle" and len(pts) == 2:
-        r = ((pts[1][0] - pts[0][0]) ** 2 + (pts[1][1] - pts[0][1]) ** 2) ** 0.5
-        xs, ys = [pts[0][0] - r, pts[0][0] + r], [pts[0][1] - r, pts[0][1] + r]
     smp = s.by_key.get(app.current_key)
     img = app.current_ann.image_path or (smp.image_path if smp else None)
     if img is None or not Path(img).is_file():
@@ -196,8 +224,7 @@ def add_selected(app, kind: str):
                                     "Note (what makes it right / wrong) — optional:")
     if not ok:
         return
-    eid = s.guides.add_example(label, kind, img, (min(xs), min(ys), max(xs), max(ys)), note,
-                               src=s.history.rel(app.current_key))
+    eid = shape_example(s.guides, label, kind, g.shape_data, img, note, src=s.history.rel(app.current_key))
     if eid is None:
         app.statusBar().showMessage("✋ Could not read the image", 5000)
         return
@@ -261,7 +288,7 @@ class GuidelinesDialog(QDialog):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel("Classes and QC rules · ● = has a guideline")
+        hint = QLabel("Classes · relationship rules · checks · ● = has a guideline")
         apply_style(hint, "color:@muted;")
         ll.addWidget(hint)
         ll.addWidget(self.scopes, 1)
@@ -281,13 +308,24 @@ class GuidelinesDialog(QDialog):
         from AIO_QC.app import QC_TOOLS
         return {t.key: t.title for t in QC_TOOLS if t.dialog is not None}
 
+    def _rules(self) -> list:
+        from AIO_QC.core import rules as RL
+        from AIO_QC.core.state import state_dir
+        return RL.load_rules(state_dir(self.session.root) / "rules.json")
+
+    def _titles(self) -> dict:
+        from AIO_QC.core import rules as RL
+        return {f"rule:{r['id']}": f"Rule · {RL.describe(r)}" for r in self._rules()}
+
     def _fill(self, want=None):
         s = self.session
         names = list(s.true_classes or []) or sorted(s.label_totals(), key=str.lower)
-        tools = self._tools()
+        tools, titles = self._tools(), self._titles()
         items = [(n, n) for n in names]
-        items += [(f"tool:{k}", scope_title(f"tool:{k}", tools)) for k in tools]
-        items += [(sc, scope_title(sc, tools)) for sc in self.store.scopes() if sc not in dict(items)]
+        items += [(sc, title) for sc, title in titles.items()]                 # one per relationship rule
+        items += [(f"tool:{k}", scope_title(f"tool:{k}", tools)) for k in GUIDE_TOOLS if k in tools]
+        have = dict(items)
+        items += [(sc, scope_title(sc, tools, titles, self.store)) for sc in self.store.scopes() if sc not in have]
         cur = want or (self.scopes.currentItem().data(ROLE) if self.scopes.currentItem() else None)
         self.scopes.blockSignals(True)
         self.scopes.clear()
@@ -311,7 +349,7 @@ class GuidelinesDialog(QDialog):
 
     def _show(self):
         sc = self.scope()
-        self.header.setText(scope_title(sc, self._tools()) if sc else "")
+        self.header.setText(scope_title(sc, self._tools(), self._titles(), self.store) if sc else "")
         g = self.store.get(sc) if sc else None
         self.text.blockSignals(True)
         self.text.setPlainText((g or {}).get("text", ""))
@@ -323,7 +361,7 @@ class GuidelinesDialog(QDialog):
             it.setData(ROLE, ex)
             it.setToolTip(f"{ex.get('src', '')}\n{time.strftime('%Y-%m-%d', time.localtime(ex.get('ts', 0)))}")
             self.examples.addItem(it)
-        is_class = bool(sc) and not sc.startswith("tool:")
+        is_class = bool(sc) and not sc.startswith(("tool:", "rule:"))
         for b in (self.add_good, self.add_bad):
             b.setEnabled(bool(sc))
             b.setToolTip(b.toolTip() if is_class else "Select a shape on the image: it becomes an example of this rule")
@@ -341,7 +379,8 @@ class GuidelinesDialog(QDialog):
         it = self.scopes.currentItem()
         if it:
             sc = it.data(ROLE)
-            it.setText(("● " if self.store.has(sc) else "    ") + scope_title(sc, self._tools()))
+            it.setText(("● " if self.store.has(sc) else "    ") + scope_title(sc, self._tools(), self._titles(),
+                                                                               self.store))
 
     def _card_refresh(self):
         cg = getattr(self.app, "canvas_guide", None)
@@ -358,12 +397,11 @@ class GuidelinesDialog(QDialog):
             QMessageBox.information(self, self.TITLE, "Select a shape on the image first (Select mode, click it).")
             return
         label = str(g.shape_data.get("label"))
-        if not sc.startswith("tool:") and label != sc:
+        if not sc.startswith(("tool:", "rule:")) and label != sc:
             if QMessageBox.question(self, self.TITLE, f"The selected shape is '{label}', not '{sc}'. Add it as a "
                                     f"{kind} example of '{sc}' anyway?") != QMessageBox.StandardButton.Yes:
                 return
         pts = g.shape_data.get("points") or []
-        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         smp = self.session.by_key.get(app.current_key)
         img = (app.current_ann.image_path if app.current_ann else None) or (smp.image_path if smp else None)
         if not pts or img is None or not Path(img).is_file():
@@ -372,8 +410,7 @@ class GuidelinesDialog(QDialog):
         note, ok = QInputDialog.getText(self, "Example note", "What makes it right / wrong (optional):")
         if not ok:
             return
-        self.store.add_example(sc, kind, img, (min(xs), min(ys), max(xs), max(ys)), note,
-                               src=self.session.history.rel(app.current_key))
+        shape_example(self.store, sc, kind, g.shape_data, img, note, src=self.session.history.rel(app.current_key))
         self._show()
         self._mark()
         self._card_refresh()
@@ -425,13 +462,14 @@ class GuidelinesDialog(QDialog):
         if not self.store.scopes():
             QMessageBox.information(self, self.TITLE, "No guidelines yet.")
             return
-        f, _ = QFileDialog.getSaveFileName(self, "Export guidelines",
-                                           str(self.session.root.parent / f"{self.session.root.name}_guidelines.html"),
-                                           "HTML (*.html)")
+        from AIO_QC.utils.save_dirs import ask_save
+        f, _ = ask_save(self, "Export guidelines", f"{self.session.root.name}_guidelines.html", "HTML (*.html)",
+                        kind="exports", fallback=self.session.root.parent)
         if f:
-            tools = self._tools()
+            tools, titles = self._tools(), self._titles()
             n = self.store.export_html(f, title=f"Labelling guidelines — {self.session.root.name}",
-                                       titles={sc: scope_title(sc, tools) for sc in self.store.scopes()})
+                                       titles={sc: scope_title(sc, tools, titles, self.store)
+                                               for sc in self.store.scopes()})
             self.app.statusBar().showMessage(f"Exported {n} guideline(s) to {f}", 6000)
 
     def closeEvent(self, e):

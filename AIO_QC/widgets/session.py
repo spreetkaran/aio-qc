@@ -111,7 +111,8 @@ class Session(QObject):
     @property
     def folders(self) -> list[str]:
         """Source sub-folders (nesting that is not a split)."""
-        return sorted({s.folder for s in self.samples if s.folder}, key=str.lower)
+        from AIO_QC.core.io import natural_key
+        return sorted({s.folder for s in self.samples if s.folder}, key=natural_key)
 
     def label_totals(self, raw: bool = False) -> Counter:
         """Instances per label — kept as running totals (O(labels), not O(files))."""
@@ -751,6 +752,8 @@ class Session(QObject):
                 ("reshape", shape index, expected box (rel), new box (rel))
                 ("add", label, box (rel))
                 ("delete", shape index, expected box (rel))
+                ("set", shape index, expected box (rel), {"points": [[x, y] (rel)], "type": shape type or None})
+                                                     any new outline (e.g. a part fitted into its parent)
         A target shape is re-identified by its box as it was scanned (the index first, then anywhere in the file):
         if it was moved / removed / reshaped since, the op is skipped and counted in stats["missing"].
         Adds are skipped when the file already has that label there (IoU ≥ 0.7). Rectangles are reshaped as
@@ -784,7 +787,7 @@ class Session(QObject):
                 W, H = self._frame_wh(sample, ann)
                 plan, used = [], set()
                 for op in ops:
-                    if op[0] in ("relabel", "reshape", "delete"):
+                    if op[0] in ("relabel", "reshape", "delete", "set"):
                         j = find(ann, op[1], op[2], W, H, used)
                         if j is None:
                             stats["missing"] += 1
@@ -818,6 +821,13 @@ class Session(QObject):
                         continue
                     if kind == "relabel":
                         ann.shapes[a]["label"] = b
+                    elif kind == "set":
+                        nd = 6 if ann.normalized else 2
+                        ann.shapes[a]["points"] = [[round(float(x) * W, nd), round(float(y) * H, nd)]
+                                                   for x, y in b["points"]]
+                        if b.get("type"):
+                            ann.shapes[a]["shape_type"] = b["type"]
+                        ann.shapes[a]["_geom_dirty"] = True
                     elif kind == "reshape":
                         x1, y1, x2, y2 = b[0] * W, b[1] * H, b[2] * W, b[3] * H
                         st = ann.shapes[a].get("shape_type") or "polygon"

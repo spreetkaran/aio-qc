@@ -10,7 +10,8 @@ Labelling guidelines with picture examples (Qt-free): <root>/.aio_qc/guidelines/
     g.get("car") -> {"text", "examples": [{"id", "kind", "note", "file", "src", "box", "ts"}]}
     g.export_html(path, scopes=None)                # one page for annotators (images embedded)
 
-Scopes: a class name, or "tool:<tool key>" for the rule a QC tool checks. Example crops are small JPEGs
+Scopes: a class name, "rule:<rule id>" for one Relationship Rule (.aio_qc/rules.json), or "tool:<tool key>" for
+the check a QC tool makes. Example crops are small JPEGs
 (≤ 320 px, the object plus some context, the object outlined) — a guide of 100 examples is a few MB at most.
 guidelines.json is written atomically; crops are content-named so nothing is ever overwritten.
 """
@@ -72,6 +73,17 @@ class GuideStore:
     def image(self, ex: dict) -> Path:
         return self.dir / ex["file"]
 
+    def title(self, scope: str) -> str:
+        """Readable name of a scope: the class, "Rule · <what the rule checks>", or "Check · <tool key>"."""
+        if scope.startswith("rule:"):
+            from . import rules as RL
+            rid = scope[5:]
+            r = next((r for r in RL.load_rules(self.root / ".aio_qc" / "rules.json") if r.get("id") == rid), None)
+            return f"Rule · {RL.describe(r)}" if r is not None else "Rule · (deleted rule)"
+        if scope.startswith("tool:"):
+            return f"Check · {scope[5:]}"
+        return scope
+
     # ------------------------------------------------------------------ edits
     def _scope(self, scope: str) -> dict:
         return self.data["scopes"].setdefault(scope, {"text": "", "examples": []})
@@ -81,10 +93,11 @@ class GuideStore:
         self.save()
 
     def add_example(self, scope: str, kind: str, image_path, box, note: str = "", src: str = "",
-                    outline=None) -> str | None:
+                    outline=None, poly=None) -> str | None:
+        """poly: the shape's own outline (image px) — drawn instead of its bounding box."""
         if kind not in KINDS:
             raise ValueError(kind)
-        jpeg = crop(image_path, box, outline=outline)
+        jpeg = crop(image_path, box, outline=outline, poly=poly)
         if jpeg is None:
             return None
         eid = uuid.uuid4().hex[:12]
@@ -141,7 +154,7 @@ class GuideStore:
              f"{len(scopes)} topic(s)</p>"]
         for sc in scopes:
             g = self.get(sc)
-            name = titles.get(sc) or (f"Rule: {sc[5:]}" if sc.startswith("tool:") else sc)
+            name = titles.get(sc) or self.title(sc)
             o.append(f"<h2>{html.escape(name)}</h2>")
             if g.get("text"):
                 o.append(f"<div class=t>{html.escape(g['text'])}</div>")
@@ -159,8 +172,9 @@ class GuideStore:
         return len(scopes)
 
 
-def crop(image_path, box, side: int = CROP_SIDE, context: float = 0.35, outline=None) -> bytes | None:
-    """The object with `context` × its size around it, outlined, at most `side` px. Box in pixels or 0..1."""
+def crop(image_path, box, side: int = CROP_SIDE, context: float = 0.35, outline=None, poly=None) -> bytes | None:
+    """The object with `context` × its size around it, outlined (its own outline when `poly` is given, else its
+    box), at most `side` px. Box in pixels or 0..1."""
     try:
         import cv2
         import numpy as np
@@ -192,7 +206,11 @@ def crop(image_path, box, side: int = CROP_SIDE, context: float = 0.35, outline=
     col = outline or (0, 200, 255)
     p1 = (int((x1 - cx1) * s), int((y1 - cy1) * s))
     p2 = (int((x2 - cx1) * s), int((y2 - cy1) * s))
-    cv2.rectangle(c, p1, p2, (int(col[2]), int(col[1]), int(col[0])), max(1, int(max(c.shape[:2]) / 160)),
-                  cv2.LINE_AA)
+    bgr, thick = (int(col[2]), int(col[1]), int(col[0])), max(1, int(max(c.shape[:2]) / 160))
+    if poly is not None and len(poly) >= 2:
+        pts = np.array([[(float(x) - cx1) * s, (float(y) - cy1) * s] for x, y in poly], np.float32)
+        cv2.polylines(c, [np.round(pts).astype(np.int32)], len(poly) >= 3, bgr, thick, cv2.LINE_AA)
+    else:
+        cv2.rectangle(c, p1, p2, bgr, thick, cv2.LINE_AA)
     ok, buf = cv2.imencode(".jpg", c, [cv2.IMWRITE_JPEG_QUALITY, 86])
     return buf.tobytes() if ok else None

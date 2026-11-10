@@ -195,6 +195,14 @@ class Toast(QWidget):
         self.update(self._bar_rect())                   # repaint only the thin strip, every frame
 
     # ------------------------------------------------------------------ countdown control
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._sync_countdown()          # posted while its window was in the background: count down once seen
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._sync_countdown()
+
     def _should_run(self) -> bool:
         win = self.window()
         return (not self.sticky and not self._closing and not self._hover and not self._expanded and self.isVisible()
@@ -428,7 +436,7 @@ class ToastManager:
         self.toasts.append(t)
         targets = self._targets()
         for other in self.toasts:
-            if other is not t:
+            if other is not t and other in targets:      # one dismissed above is fading out where it is
                 other.glide_to(targets[other])
         t.appear(targets[t])
         return t
@@ -440,7 +448,7 @@ class ToastManager:
 
     def _targets(self) -> dict:
         w = self.window
-        sb = w.statusBar().height() if w.statusBar() and w.statusBar().isVisible() else 0
+        sb = w.statusBar().height() if w.statusBar() and not w.statusBar().isHidden() else 0    # window may be hidden
         y = w.height() - sb - MARGIN
         out = {}
         for t in reversed([t for t in self.toasts if not t._closing]):     # newest at the bottom

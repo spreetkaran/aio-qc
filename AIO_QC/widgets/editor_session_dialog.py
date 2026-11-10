@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from AIO_QC.core.dataset import DETECTION_TYPES, DatasetType
 
+import html
 import time
 from pathlib import Path
 
@@ -19,8 +20,8 @@ from loguru import logger
 from PyQt6.QtCore import QEasingCurve, QProcess, QRect, QSettings, Qt, QTimer
 from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QMenu,
-    QMessageBox, QPlainTextEdit, QProgressBar, QRadioButton, QSplitter, QStackedWidget, QTableWidget,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QRadioButton, QSplitter, QStackedWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -141,6 +142,8 @@ class EditorSessionDialog(QDialog):
         apply_style(self.image_note, "color:@muted;")
         form.addRow("", self.image_note)
 
+        form.addRow("Labels:", self._build_label_filter())
+
         er = QWidget()
         erl = QHBoxLayout(er)
         erl.setContentsMargins(0, 0, 0, 0)
@@ -163,6 +166,89 @@ class EditorSessionDialog(QDialog):
         foot.addWidget(newButton("Close", slot=self.close))
         lay.addLayout(foot)
         return w
+
+    # ------------------------------------------------------------------ label filter
+    def _build_label_filter(self) -> QWidget:
+        """“Show only selected labels”: the editor gets only the shapes of the ticked labels, every other shape is
+        kept out of its way and written back exactly as it was."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.only_sel = QCheckBox("Show only selected labels in the editor")
+        self.only_sel.setToolTip("Only the shapes of the ticked labels are opened in the editor — a less crowded image "
+                                 "and faster fixing when only one or two labels are wrong.\nShapes of the other "
+                                 "labels are not shown and are kept unchanged when the edits are written back.")
+        lay.addWidget(self.only_sel)
+        self.label_box = QWidget()
+        bl = QVBoxLayout(self.label_box)
+        bl.setContentsMargins(18, 0, 0, 0)
+        row = QHBoxLayout()
+        self.label_search = QLineEdit()
+        self.label_search.setPlaceholderText("Filter labels…")
+        self.label_search.setClearButtonEnabled(True)
+        self.label_search.textChanged.connect(self._filter_label_rows)
+        row.addWidget(self.label_search, 1)
+        row.addWidget(newButton("All", slot=lambda: self._tick_labels(True), tip="Tick every listed label"))
+        row.addWidget(newButton("None", slot=lambda: self._tick_labels(False), tip="Untick every listed label"))
+        row.addWidget(newButton("As in Labels dock", slot=self._labels_from_dock,
+                                tip="Tick the labels that are visible in the Labels dock"))
+        bl.addLayout(row)
+        self.label_pick = QListWidget()
+        self.label_pick.setMaximumHeight(150)
+        self.label_pick.itemChanged.connect(lambda _it: self._update_start())
+        bl.addWidget(self.label_pick)
+        lay.addWidget(self.label_box)
+        self.label_box.setVisible(False)
+        self.only_sel.toggled.connect(lambda on: (self.label_box.setVisible(on), self._update_start()))
+        self._fill_label_pick()
+        return w
+
+    def _fill_label_pick(self):
+        counts = self.session.label_totals(raw=True)
+        names = list(getattr(self.session.base_adapter, "class_names", None) or []) if self.session.is_yolo else []
+        names += [n for n in sorted(counts, key=str.lower) if n not in names]
+        hidden = set(getattr(self.app, "hidden_labels", ()) or ())
+        self.label_pick.blockSignals(True)
+        self.label_pick.clear()
+        for n in names:
+            it = QListWidgetItem(f"{n}   ({counts.get(n, 0):,})")
+            it.setData(Qt.ItemDataRole.UserRole, n)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Unchecked if n in hidden else Qt.CheckState.Checked)
+            self.label_pick.addItem(it)
+        self.label_pick.blockSignals(False)
+
+    def _filter_label_rows(self, text: str):
+        text = text.strip().lower()
+        for i in range(self.label_pick.count()):
+            it = self.label_pick.item(i)
+            it.setHidden(bool(text) and text not in str(it.data(Qt.ItemDataRole.UserRole)).lower())
+
+    def _tick_labels(self, on: bool):
+        self.label_pick.blockSignals(True)
+        for i in range(self.label_pick.count()):
+            it = self.label_pick.item(i)
+            if not it.isHidden():
+                it.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+        self.label_pick.blockSignals(False)
+        self._update_start()
+
+    def _labels_from_dock(self):
+        hidden = set(getattr(self.app, "hidden_labels", ()) or ())
+        self.label_pick.blockSignals(True)
+        for i in range(self.label_pick.count()):
+            it = self.label_pick.item(i)
+            n = it.data(Qt.ItemDataRole.UserRole)
+            it.setCheckState(Qt.CheckState.Unchecked if n in hidden else Qt.CheckState.Checked)
+        self.label_pick.blockSignals(False)
+        self._update_start()
+
+    def selected_labels(self) -> list[str] | None:
+        """The label filter (None = every label goes to the editor)."""
+        if not self.only_sel.isChecked():
+            return None
+        return [self.label_pick.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.label_pick.count())
+                if self.label_pick.item(i).checkState() == Qt.CheckState.Checked]
 
     def _scope_options(self) -> list[tuple[str, list[str]]]:
         s = self.session
@@ -233,8 +319,12 @@ class EditorSessionDialog(QDialog):
 
     def _update_start(self):
         keys = self.scope.currentData() or []
-        ok = bool(keys) and self.source is not None
+        only = self.selected_labels() if hasattr(self, "only_sel") else None
+        ok = bool(keys) and self.source is not None and only != []
         self.start_btn.setEnabled(ok)
+        if only == []:
+            self.start_btn.setText("Tick at least one label")
+            return
         self.start_btn.setText(f"Open {len(keys):,} file(s) in {TITLES[self.kind]}" if keys else "No files to open")
 
     # ------------------------------------------------------------------ environment
@@ -426,12 +516,13 @@ class EditorSessionDialog(QDialog):
         policy = "embed" if (self.image_data.isVisible() and self.image_data.isChecked()) else "none"
         samples = [s.by_key[k] for k in self._keys]
         src, kind = self.source, self.kind
+        only = self.selected_labels()
         self._show_session_page(installing=False)
         self.header.setText(f"Preparing {len(samples):,} file(s) …")
 
         def make():
             return EditSession.create(s.root, samples, ad, kind, names, policy, src.title, review=s.review,
-                                      source_version=src.version, label_hints=hints)
+                                      source_version=src.version, label_hints=hints, only_labels=only)
 
         def made(es):
             self._attach(es)
@@ -591,6 +682,10 @@ class EditorSessionDialog(QDialog):
         running = self.proc is not None and self.proc.state() != QProcess.ProcessState.NotRunning
         state = f"{self.es.source_title} is open" if running else "Editor closed"
         parts = [f"<b>{state}</b> · {len(self.es.entries):,} file(s)"]
+        only = getattr(self.es, "only_labels", None)
+        if only is not None:
+            shown = ", ".join(only[:3]) + (f" +{len(only) - 3}" if len(only) > 3 else "")
+            parts[0] += f" · only {html.escape(shown)}"
         for k in ("fixed", "unchanged", "waiting", "rejected", "conflict", "error"):
             if c.get(k):
                 parts.append(f"<span style='color:{hexc(STATUS_UI[k][1])}'>{c[k]:,} {STATUS_UI[k][0]}</span>")

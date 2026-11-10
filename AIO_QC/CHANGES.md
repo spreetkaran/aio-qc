@@ -1,69 +1,85 @@
 # Changelog
 
-## 2.2.0 — AIO QC App: Paint-style status bar and zoom, notifications that open in place, distinct label colours
+## 2.3.0 — Recommended checks, screenshots, Keep previous zoom and brightness / contrast, Relationship Rules reworked
 
-Changes since 2.1.0.
+Changes since 2.2.0.
 
 ### What's new
 
-- **The app is now called AIO QC App** (window title, About, command line).
-- **Status bar** (Image QC): pointer position on the image (`549, 353px`), the size of the selected shape /
-  the box being drawn / the ROI being dragged (`52 × 20px`, exact bounds in its tooltip), the image size, the file type
-  (`JPG`) and the file size (`139.8 KB`, exact bytes in the tooltip) — each with its icon
-  in a fixed slot; messages follow them and no longer hide them.
-- **Zoom:**
-  - zoom in / out buttons: a click is one ×1.25 step; press and hold zooms continuously, easing in to a steady 2.5× per
-    second (computed from the elapsed time on every display frame) and easing out on release; the centre stays put;
-  - zoom levels in 10-point steps to 200 %, 25-point steps to 600 %, 50-point steps above, snapping to that grid;
-  - zoomed-in images are no longer blocky above 300 %: while the view moves the image is smooth-filtered; once it rests
-    the visible part is re-rendered at the screen's real resolution (bicubic enlarged, area-averaged reduced) and drawn
-    1:1 on device pixels;
-  - the zoom box and slider follow every step live; three quick clicks are three steps.
-- **Label colours that stay apart:** a fixed palette built by farthest-point sampling in CIELAB over vivid colours that
-  read on photos (the first 12 at least 30 ΔE apart); each new label takes the most distinct unused colour (class list
-  first, then the most frequent labels); saved per dataset (`.aio_qc/label_colors.json`), so colours never change
-  between sessions.
-- **Notification details open inside the notification:** *Details* grows it in place (taller, and wider when needed)
-  into a scrollable panel, anchored bottom-right; *Hide details* folds it back; its countdown waits while it is open.
-  Used by "Updated from disk", the dataset-layout warning, broken images, storage housekeeping and exports.
+- **Recommended checks.** When a dataset opens, the app works out which checks matter most for *this* dataset and
+  says where to start ("Start here: Label Ambiguities — 'Car ' / 'car' look like one class"). Reasons come from the
+  data: unreadable annotation files, broken images, label names that differ only by case / spaces or are missing from
+  the class list, empty files, splits and rare classes, video-frame names (→ Duplicate Images, Sequence Check), classes
+  that almost always lie inside another (→ Relationship Rules), texts on shapes, models set up, flagged files. A small
+  background sample (≤ 300 files) keeps opening instant. A **Next check** button in the status bar runs the next one;
+  every finished check suggests the one after it; *Review ▸ Recommended Checks…* lists them all (kept per dataset in
+  `.aio_qc/guide.json`).
+- **Screenshots** (Image QC): **E** saves the image exactly as you see it — the part on screen, brightness / contrast,
+  the labels you ticked, the predictions layer, a sketch — at the screen's real resolution, cropped to the image, into
+  the screenshots folder as `<dataset>/<sub-folders>/<file name>.png` (never overwriting). **Shift+E** asks for a name;
+  also a toolbar button, *File ▸ Screenshot* and a right-click menu on the image (save, save as, copy, open folder).
+- **Screenshots of many files** (*Review ▸ Flagged Screenshots*, Ctrl+Shift+Alt+E; *File list ▸ Save screenshots of N
+  files*): all flagged / flagged in the current list / the selected files, each drawn on a hidden canvas exactly as
+  Image QC shows it, in the background with progress and Cancel. View: **the same spot as now** or **the whole image**;
+  a **caption strip** (file, review mark and time, the flag note) and each file's **sketch**; existing files: keep both /
+  overwrite / skip.
+- **View ▸ Keep Previous Zoom**: the next image opens on the same spot at the same magnification — same-size images
+  keep the exact zoom and pixel, other sizes show the same part of the image; fit stays fit, home stays home.
+- **View ▸ Keep Previous Brightness/Contrast** (also *Keep for next images* in the Display tab), labelme's rule: an
+  image opens with its own adjustment from earlier in the session, else the previous image's, else unadjusted
+  (brightness, contrast, gamma, auto contrast; rendered once, already adjusted).
+- **Relationship Rules reworked:** one **Parent / part** rule per relationship (the part lies inside a parent, is not
+  larger than it, min–max parts per parent, parts of one parent do not overlap; a part drawn bigger than its parent is
+  reported with how much bigger); real geometry (actual outlines for convex shapes, sizes from the minimum-area
+  rectangle); every rule takes any class or `*`; **✔ Apply proposed fix** (fit a part inside its parent, delete a stray
+  part or the smaller of two duplicates, polygon ↔ rectangle — one backup, Undo, files marked Fixed).
 
 ### Added
 
-- **Help ▸ About in every mode** (Image QC, Frame Extractor, Data Studio), laid out like LabelMe's: icon, name, a
-  one-line description, *Version*, **Author: Preetkaran Singh** and a *Source : GitHub* link (the author is taken from the installed package's metadata; a
-  test fails if the author in About, pyproject.toml, the README or the notices ever differs).
-- An SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier: GPL-3.0-only`) in every source file — bundled
-  third-party code keeps its own notices; `packaging/add_spdx.py` adds missing headers (`--check` only reports; a test
-  runs it).
-- *Settings ▸ Viewer ▸ Show pixels when zoomed in* brings back hard pixel squares for pixel-level work.
-- A logarithmic zoom slider in the toolbar (every step the same ratio; zooms live while dragged).
-- App icons ship 16–512 px; colour dots, file-list badges, Testing's icons and the eyedropper cursor are drawn at the
-  screen's real resolution (sharp at 125 %, 150 %, 4K, 8K).
+- **Settings ▸ General ▸ Saving** in every mode: a default folder plus one each for Screenshots, Exports & lists,
+  Reports, Images and Dataset outputs; *Start where I saved last*; *Forget the last folders*. Every Save / Export
+  dialog follows these rules.
+- **Fix in Editor ▸ Labels: "Show only selected labels in the editor"**: the editor opens with only those shapes; the
+  others are written back exactly as they were, in their place (LabelMe and YOLO alike).
+- New rules: *Must touch* (every A overlaps a B), *Not more than* (no more A than B per image), *Tilt limit*; Parent /
+  part can require a **minimum size** and the **same orientation**; points / lines can be parts.
+- Rule choices detected from the dataset (in the background, up to 5,000 files): under each field what the data does,
+  with one click to *use* it (or *Use all suggestions*); a pair that does not go together is called out.
+- Rule cards draw the shape at fault, the related shapes dashed and the **proposed fix** in green, with the measured
+  values as tags (*wheel #1 · 107 % size · 87 % inside*); a *Proposed fix* column; filter results by rule (optional
+  short **Name** per rule).
+- *⚑ Flag files* with nothing ticked offers to flag every file found; flag notes name the rule and the exact problem;
+  *Saved Views* get *⚑ Flag files* too.
+- Status bar **⚑ N flagged** for the whole dataset — click it to list only the flagged files.
+- One guideline **per relationship rule** (shown above that rule's results).
+- *File list ▸ Copy file name / Copy file path*.
+- Settings ▸ Interface ▸ *Recommend checks when a dataset opens* (on by default).
 
 ### Changed
 
-- **Window titles follow one pattern:** *Image QC — dataset — AIO QC App*, *Frame Extractor — video — AIO QC App*,
-  *Data Studio — workspace — AIO QC App* (Help and Get Started likewise); no version in any title (it is in About).
-- The Frame Extractor icon is redrawn as a vector (SVG): sharp at every size and scaling.
-- The mode switch shows the AIO QC App icon for Image QC (the Frame Extractor keeps its own), with a little space
-  between icon and name.
-- Zoom controls in the toolbar in Paint's order: after Drag / Select — zoom box, Fit Window, 1:1, zoom out, slider,
-  zoom in.
-- **Everything on the image keeps its screen size together:** outlines (Display ▸ Outline still scales them), point
-  dots, keypoints of the predictions layer, label tags and their dots — zooming in never buries pixels under a thick
-  line, and tags stay attached to thin outlines at every zoom.
-- **Selecting a shape whose label is hidden** (greyed row, or a QC finding pointing at it) shows that shape while it
-  is selected; clicking elsewhere — or the same row — hides it again. The dock and the image always agree.
-- QC panel tabs look selected only while their tools are shown (drawer open or pinned) and hovered only while the mouse
-  is on them.
-- **Faster with many shapes** (same pictures, same tag placement): tags are rendered once and blitted while panning /
-  selecting (≈ 2× faster frames with 1 500 shapes), tag placement ≈ 40 % faster, point shapes no longer rebuild a path
-  for every bounds query, tag text is measured once per name.
-- Get Started, notifications and the editor mini-window paint their icons instead of stretching small bitmaps.
+- **File list in natural order, per folder and split:** `frame_2` before `frame_10`, case-insensitive; each folder lists
+  its files, then its sub-folders; splits as train → val → test.
+- *Never together* takes a list of classes; saved rules are converted automatically and a rule is never added twice;
+  *Suggest from data* proposes one Parent / part rule per pair (also *Must touch* and *Not more than*) and leaves out
+  *Requires* when a stronger rule implies it.
+- Faster scans: files with none of the rules' classes are skipped unopened.
+- **Faster adjustments on huge images:** brightness / contrast is one multi-threaded tone-curve pass (≈ 8×: 2.9 s →
+  0.37 s on a 108 MP image); auto contrast is computed once per image; the high-quality zoomed view reads the
+  pixmap's own pixels (0.37 s → 0.03 s per new 108 MP image).
+- Guidelines list only checks that find labelling mistakes; example crops outline the shape itself.
+- Screenshots saved with E go to the screenshots folder (default *Pictures/AIO QC Screenshots*).
+
+### Removed
+
+- The rules *Must be inside*, *Must contain*, *Children apart* (now one *Parent / part* rule), *Never together* for two
+  classes and *Classes exclusive* (now one *Never together* list) — saved rules are converted automatically.
+- Same-class duplicates as a rule (Duplicate Shapes finds them).
 
 ### Fixed
 
-- Selecting a shape whose label is hidden used to leave its row selected for good; hiding the label of the selected
-  shape (or a shape that cannot be drawn) now clears the selection everywhere.
-- Label colours often landed a few degrees apart (they came from a hash of the name).
-- The old 1200 px Frame Extractor picture turned to mush at 16–96 px.
+- Drawing a box over a shape kept that shape highlighted while dragging.
+- Frame Extractor: a second Settings gear sat over the *File* menu.
+- Windows in the background went stale: the background-task indicator kept showing a finished job; notifications
+  posted while another mode was in front never started their countdown; a panel hidden while its window was in the
+  background came back.
+- Labels dock: turning a label off / on, *Show all labels* or *Show only this label* left the row highlighted.

@@ -59,7 +59,6 @@ def bgr_pixmap(img, max_w=None, max_h=None):
 
 
 from AIO_QC.tools.frame_extractor.core.common import short_time as human_time  # noqa: E402,F401  (one formatter)
-from AIO_QC.utils.fx_settings import testing_settings
 
 
 def safe_name(text, limit=80):
@@ -69,12 +68,15 @@ def safe_name(text, limit=80):
 
 
 def last_dir():
-    d = testing_settings().value("save_dir", "", str)
-    return d if d and os.path.isdir(d) else os.path.expanduser("~")
+    """Where plotted images / charts are saved: Settings ▸ General ▸ Saving ▸ Images (or the last folder used)."""
+    from AIO_QC.utils.save_dirs import start_dir
+    return str(start_dir("images", fallback=os.path.expanduser("~")))
 
 
 def remember_dir(path):
-    testing_settings().setValue("save_dir", os.path.dirname(os.path.abspath(path)) if os.path.splitext(path)[1] else path)
+    from AIO_QC.utils.save_dirs import remember
+    p = os.path.abspath(path)
+    remember("images", p if os.path.splitext(p)[1] else os.path.join(p, "_"))
 
 
 def open_path(path):

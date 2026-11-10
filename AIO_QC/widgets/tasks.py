@@ -125,9 +125,12 @@ class TaskIndicator(QToolButton):
         self.refresh()
 
     def refresh(self):
+        # isHidden(), not isVisible(): the indicator is in every mode's status bar, and a window in the background
+        # is not visible — a job that ended meanwhile must still hide it there (it was left showing "Getting
+        # libmpv …" in Image QC after the Frame Extractor's download had finished).
         ts = self.c.tasks
         on = bool(ts)
-        if on != self.isVisible():
+        if on == self.isHidden():
             self.setVisible(on)
         if not on:
             self._spin.stop()
@@ -139,6 +142,10 @@ class TaskIndicator(QToolButton):
         txt = last.label()
         self.setText(f"{SPIN[self._i]} {txt[:60]}{'…' if len(txt) > 60 else ''}{more}")
         self.setToolTip("Background tasks — click for the list:\n" + "\n".join(f"• {t.label()}" for t in ts))
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.refresh()
 
     def _menu(self):
         m = QMenu(self)

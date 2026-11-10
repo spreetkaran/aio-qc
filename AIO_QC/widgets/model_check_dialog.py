@@ -1360,8 +1360,9 @@ class ModelCheckDialog(BaseScanDialog):
         rows = getattr(self, "_last_report", None)
         if not rows:
             return
-        from PyQt6.QtWidgets import QFileDialog
-        path, _ = QFileDialog.getSaveFileName(self, "Export report card", "model_report.csv", "CSV (*.csv)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export report card", "model_report.csv", "CSV (*.csv)", kind="reports",
+                           fallback=self.session.root.parent)
         if path:
             import csv
             with open(path, "w", newline="", encoding="utf-8-sig") as f:

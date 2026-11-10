@@ -148,7 +148,7 @@ def _axis(main, dock):
     side (stacked in the same column / row), along it, so the column itself does not jump."""
     area = main.dockWidgetArea(dock)
     vertical = area in (Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea)
-    shared = any(d is not dock and d.isVisible() and not d.isFloating() and main.dockWidgetArea(d) == area
+    shared = any(d is not dock and not d.isHidden() and not d.isFloating() and main.dockWidgetArea(d) == area
                  for d in main.findChildren(QDockWidget))
     if shared:
         vertical = not vertical
@@ -161,11 +161,11 @@ def _tabbed(main, dock) -> bool:
 
 def toggle_dock(main, dock: QDockWidget, visible: bool, ms: int = 210):
     """Show / hide a dock with a slide; tabbed or floating docks cross-fade instead."""
-    if dock.isVisible() == visible:
+    if (not dock.isHidden()) == visible:              # isHidden: also right while the window is in the background
         if visible:
             dock.raise_()
         return
-    if not ENABLED or dock.isFloating() or _tabbed(main, dock) or main.dockWidgetArea(dock) == \
+    if not ENABLED or not main.isVisible() or dock.isFloating() or _tabbed(main, dock) or main.dockWidgetArea(dock) == \
             Qt.DockWidgetArea.NoDockWidgetArea:
         if ENABLED and main.centralWidget() is not None:
             crossfade(main)

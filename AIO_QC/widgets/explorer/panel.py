@@ -932,8 +932,8 @@ class ExplorerPanel(QWidget):
     def export_csv(self):
         if self.state is None:
             return
-        from PyQt6.QtWidgets import QFileDialog
-        path, _ = QFileDialog.getSaveFileName(self, "Export the list", "explorer.csv", "CSV (*.csv)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export the list", "explorer.csv", "CSV (*.csv)", kind="exports")
         if not path:
             return
         import csv

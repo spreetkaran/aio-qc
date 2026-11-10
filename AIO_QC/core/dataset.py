@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from .class_map import ClassMap, find_class_map
-from .io import IMAGE_EXTENSIONS, any_file, atomic_write_text, dump_labelme, image_size, load_json, load_json_light, walk_files
+from .io import (IMAGE_EXTENSIONS, any_file, atomic_write_text, dump_labelme, image_size, load_json, load_json_light,
+                 natural_key, walk_files)
 
 SPLIT_ORDER = {"train": 0, "val": 1, "valid": 1, "validation": 1, "test": 2}
 SPLIT_NAMES = frozenset(SPLIT_ORDER)          # the ONLY folder names treated as splits (case-insensitive)
@@ -82,6 +83,36 @@ class SplitResolver:
         split = parts[split_i].lower() if split_i is not None else ""
         folder = next((d for i, d in enumerate(parts) if i != split_i and d.lower() not in CONTAINERS), "")
         return split, folder
+
+
+class PathOrder:
+    """Dataset order — the file list's order, one rule for discovery and for files that appear later:
+    per folder its files, then its sub-folders, both in natural order (frame_2 before frame_10); split folders
+    (the ones SplitResolver accepted) as train → val → test. Keys of folder paths are cached (few distinct)."""
+    FILE = -1                                  # a file sorts before the sub-folders next to it
+
+    def __init__(self, parents=()):
+        self.parents = set(parents or ())
+        self._dirs: dict[tuple, tuple] = {}
+
+    def dirs(self, parts) -> tuple:
+        parts = tuple(parts)
+        k = self._dirs.get(parts)
+        if k is None:
+            k = tuple((SPLIT_ORDER.get(d.lower(), 9) if is_split_name(d) and parts[:i] in self.parents else 9,
+                       natural_key(d)) for i, d in enumerate(parts))
+            self._dirs[parts] = k
+        return k
+
+    def key(self, parts, name: str) -> tuple:
+        return self.dirs(parts) + ((self.FILE, natural_key(name)),)
+
+    def arrange(self, items: list, parts_of) -> list:
+        """Walk order (already natural per folder) -> dataset order: only split folders move, so it is a stable
+        sort by the folder key (nearly sorted input: close to linear), and none at all without splits."""
+        if self.parents:
+            items.sort(key=lambda x: self.dirs(parts_of(x)))
+        return items
 
 
 LABELME_REQUIRED = {"shapes", "imagePath"}
@@ -205,7 +236,9 @@ class LabelMeAdapter:
         resolve = SplitResolver(dirs)
         self.split_note = resolve.note
         self._dirs, self._resolver = set(dirs), resolve      # kept for sample_for_path (live updates)
-        return [self._sample(p, d, resolve) for p, d in zip(paths, dirs)]
+        self._path_order = PathOrder(resolve.parents)
+        pairs = self._path_order.arrange(list(zip(paths, dirs)), lambda x: x[1])
+        return [self._sample(p, d, resolve) for p, d in pairs]
 
     @staticmethod
     def _sample(p: Path, dirs, resolve) -> Sample:
@@ -213,12 +246,13 @@ class LabelMeAdapter:
         return Sample(key=str(p), name=p.name, ann_path=p, image_path=None, split=split, folder=folder)
 
     def order_key(self, sample: Sample) -> tuple:
-        """Sort key reproducing discovery order: per folder level files (0, name) come before sub-folders (1, name)."""
+        """Sort key reproducing discovery order (PathOrder)."""
+        order = getattr(self, "_path_order", None) or PathOrder()
         try:
             parts = Path(sample.ann_path).relative_to(self.root).parts
         except ValueError:
-            parts = (str(sample.ann_path),)
-        return tuple((1, d) for d in parts[:-1]) + ((0, parts[-1]),)
+            return ((9, natural_key(str(sample.ann_path))),)
+        return order.key(parts[:-1], parts[-1])
 
     def sample_for_path(self, path) -> tuple[Sample | None, bool]:
         """
@@ -444,9 +478,9 @@ class ClassFolderAdapter:
         p = Path(sample.image_path)
         b = self._base_of(p)
         if b is None:
-            return (len(self.bases), (0, str(p)))
+            return (len(self.bases), (9, natural_key(str(p))))
         parts = p.relative_to(b[2]).parts
-        return (b[0],) + tuple((1, d) for d in parts[:-1]) + ((0, parts[-1]),)
+        return (b[0],) + PathOrder().key(parts[:-1], parts[-1])
 
     def sample_for_path(self, path) -> tuple[Sample | None, bool]:
         p = Path(path)
@@ -566,6 +600,7 @@ class YoloAdapter:
         out = []
         notes = []
         self._bases_state = []          # (base_name, images_root, labels_root, resolver | None, dir set) — live updates
+        self._path_orders = {}
         for base_name, base in self.bases:
             images_root, labels_root = base / "images", base / "labels"
             imgs = list(walk_files(images_root, IMAGE_EXTENSIONS))
@@ -575,7 +610,9 @@ class YoloAdapter:
             if resolve is not None and resolve.note:
                 notes.append(resolve.note)
             self._bases_state.append((base_name, images_root, labels_root, resolve, set(rels)))
-            for img, dparts in zip(imgs, rels):
+            pairs = PathOrder(resolve.parents if resolve is not None else ()).arrange(list(zip(imgs, rels)),
+                                                                                     lambda x: x[1])
+            for img, dparts in pairs:
                 out.append(self._sample(base_name, images_root, labels_root, img, dparts, resolve))
         self._finish_discover_notes(notes)
         return out
@@ -596,13 +633,17 @@ class YoloAdapter:
     def order_key(self, sample: Sample) -> tuple:
         """Discovery order: base (split / folder) order, then the images walk (files before sub-folders, by name)."""
         img = Path(sample.image_path)
-        for i, (_n, images_root, _l, _r, _d) in enumerate(getattr(self, "_bases_state", [])):
+        for i, (_n, images_root, _l, resolve, _d) in enumerate(getattr(self, "_bases_state", [])):
             try:
                 parts = img.relative_to(images_root).parts
             except ValueError:
                 continue
-            return (i,) + tuple((1, d) for d in parts[:-1]) + ((0, parts[-1]),)
-        return (len(getattr(self, "_bases_state", [])), (0, str(img)))
+            orders = self.__dict__.setdefault("_path_orders", {})
+            order = orders.get(i)
+            if order is None:
+                order = orders[i] = PathOrder(resolve.parents if resolve is not None else ())
+            return (i,) + order.key(parts[:-1], parts[-1])
+        return (len(getattr(self, "_bases_state", [])), (9, natural_key(str(img))))
 
     def sample_for_path(self, path) -> tuple[Sample | None, bool]:
         """An image that appeared after discovery -> (sample, structural). See LabelMeAdapter.sample_for_path."""

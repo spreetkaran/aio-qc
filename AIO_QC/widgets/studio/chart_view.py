@@ -13,7 +13,7 @@ import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QToolTip, QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QToolTip, QVBoxLayout, QWidget,
 )
 
 from AIO_QC.utils import theme_color
@@ -439,7 +439,8 @@ class ChartPanel(QWidget):
         return [(c, df.index[df[by] == c]) for c in top]
 
     def _save(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save chart", "chart.png", "PNG (*.png)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Save chart", "chart.png", "PNG (*.png)", kind="images")
         if path:
             self.canvas.grab().save(path, "PNG")
 

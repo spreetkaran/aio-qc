@@ -22,7 +22,7 @@ from loguru import logger
 from PyQt6.QtCore import QRectF, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QPalette
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QMessageBox, QProgressBar, QPushButton, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem,
     QVBoxLayout,
@@ -294,7 +294,8 @@ class BaseScanDialog(QDialog):
         # review marks from every tool: action, right-click menu, live badges
         if self.REVIEW_ACTIONS:
             self.add_action("⚑ Flag files", self.flag_files,
-                            "Flag the files of the ticked (or selected) rows for review — shown in the file list, "
+                            "Flag the files of the ticked (or selected) rows for review — nothing ticked: every file "
+                            "found (in the current filter). The note says which tool and why; shown in the file list, "
                             "filmstrip, coverage map and every tool")
         if self.REVIEW_ACTIONS:
             self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -442,9 +443,17 @@ class BaseScanDialog(QDialog):
 
     def flag_files(self, rows=None, note: str | None = None):
         rows = rows if rows is not None else self.target_rows()
-        if not rows:
-            QMessageBox.information(self, self.TITLE, "Tick (or select) rows first.")
-            return
+        if not rows:                                       # nothing ticked: every case found (in the filter)
+            rows = [r for r in self.visible_rows() if r.key in self.session.by_key]
+            if not rows:
+                QMessageBox.information(self, self.TITLE, "Nothing found to flag.")
+                return
+            n = len({r.key for r in rows})
+            if QMessageBox.question(self, self.TITLE, f"No rows are ticked. Flag all {n:,} file(s) found"
+                                    + (" (the current filter)" if self.FILTER_COLUMN is not None and
+                                       self.filter_box.currentData() is not None else "") + "?") \
+                    != QMessageBox.StandardButton.Yes:
+                return
         notes = self._flag_note(rows)
         for k, n in notes.items():
             self.session.set_review([k], REVIEW_FLAG, note if note is not None else n)
@@ -557,6 +566,9 @@ class BaseScanDialog(QDialog):
         self.summary.setText(self.summarize())
         if not cancelled:
             self.publish_issues(getattr(self, "_scan_scope", None), self.rows)
+            guide = getattr(self.app, "check_guide", None)
+            if guide is not None:                       # recommended checks: done → suggest the next one
+                guide.record(self.tool_key_name(), len(self.rows))
         if errors:
             self.app.log_errors([f"[{self.TITLE}] {e}" for e in errors])
 
@@ -823,8 +835,9 @@ class BaseScanDialog(QDialog):
         self.app.apply_file_filter(dict.fromkeys(keys), self.TITLE)
 
     def export_csv(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", f"{self.TITLE.lower().replace(' ', '_')}.csv",
-                                              "CSV (*.csv)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export CSV", f"{self.TITLE.lower().replace(' ', '_')}.csv", "CSV (*.csv)",
+                           kind="exports", fallback=self.session.root.parent)
         if not path:
             return
         with open(path, "w", newline="", encoding="utf-8-sig") as f:

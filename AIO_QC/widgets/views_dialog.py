@@ -234,6 +234,8 @@ class ViewsDialog(QDialog):
         acts.addWidget(self.count_lbl, 1)
         acts.addWidget(newButton("👁 Show in file list", slot=self._show, tip="Restrict the main file list to this view"))
         acts.addWidget(newButton("▦ Review in grid", slot=self._grid, tip="Open these files in the Review Grid"))
+        acts.addWidget(newButton("⚑ Flag files", slot=self._flag, tip="Flag every file of this view (the note names "
+                                                                      "the view)"))
         rl.addLayout(acts)
 
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -409,8 +411,9 @@ class ViewsDialog(QDialog):
     def _export(self):
         if self.cur is None:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export view", f"{self.cur['name']}.aioqc-views.json",
-                                              "Views (*.json)")
+        from AIO_QC.utils.save_dirs import ask_save
+        path, _ = ask_save(self, "Export view", f"{self.cur['name']}.aioqc-views.json", "Views (*.json)",
+                           kind="exports", fallback=self.session.root.parent)
         if path:
             self.store.export({self.cur["id"]}, path)
 
@@ -500,6 +503,20 @@ class ViewsDialog(QDialog):
             QMessageBox.information(self, self.TITLE, "No file matches this view right now.")
             return
         self.app.open_review_grid(keys, f"🔖 {self.cur['name']}")
+
+    def _flag(self):
+        if self.cur is None:
+            return
+        keys = self.keys_of(self.cur)
+        if not keys:
+            QMessageBox.information(self, self.TITLE, "No file matches this view right now.")
+            return
+        if QMessageBox.question(self, self.TITLE, f"Flag the {len(keys):,} file(s) of “{self.cur['name']}”?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        from AIO_QC.core.state import REVIEW_FLAG
+        self.session.set_review(list(keys), REVIEW_FLAG, f"Saved view: {self.cur['name']}")
+        self.app.statusBar().showMessage(f"⚑ Flagged {len(keys):,} file(s) of “{self.cur['name']}”", 5000)
 
     def closeEvent(self, e):
         self._save_timer.stop()

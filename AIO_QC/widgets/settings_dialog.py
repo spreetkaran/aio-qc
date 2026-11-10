@@ -488,7 +488,8 @@ class SettingsDialog(QDialog):
         return n, problems
 
     def export_file(self):
-        p, _ = QFileDialog.getSaveFileName(self, "Export settings", "aio_qc_settings.json", "Settings (*.json)")
+        from AIO_QC.utils.save_dirs import ask_save
+        p, _ = ask_save(self, "Export settings", "aio_qc_settings.json", "Settings (*.json)", kind="exports")
         if not p:
             return
         data = {"app": self.app_name, "page": self.windowTitle(), "settings": self.values()}
@@ -707,6 +708,18 @@ def install_settings(win):
     corner = mb.cornerWidget(Qt.Corner.TopRightCorner)
     if corner is not None and corner.objectName() == "settingsCorner":
         return
+    # A corner box from an earlier call that something else replaced as the corner widget (the shell puts the mode
+    # switch into the Frame Extractor's corner after the window installed its gear): QMenuBar does not delete a
+    # replaced corner widget, so it would stay at (0, 0) over the File menu. Its gear goes; anything else it held
+    # moves into the new box.
+    extras = []
+    for old in mb.findChildren(QWidget, "settingsCorner", Qt.FindChildOption.FindDirectChildrenOnly):
+        for w in old.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if w.objectName() != "settingsButton" and w is not corner:
+                extras.append(w)
+        old.hide()
+        old.setObjectName("")
+        old.deleteLater()
     box = QWidget(mb)
     box.setObjectName("settingsCorner")
     h = _H(box)
@@ -723,10 +736,10 @@ def install_settings(win):
     btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     btn.clicked.connect(lambda _c=False: win.open_settings())
     h.addWidget(btn)
-    if corner is not None:
-        corner.setParent(box)
-        h.addWidget(corner)
-        corner.show()
+    for w in ([corner] if corner is not None else []) + extras:
+        w.setParent(box)
+        h.addWidget(w)
+        w.show()
     mb.setCornerWidget(box, Qt.Corner.TopRightCorner)
     box.show()
     win._settings_button = btn

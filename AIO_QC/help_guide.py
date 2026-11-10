@@ -17,7 +17,7 @@ GUIDE_ICONS = ["open", "list", "prev", "next", "hand", "cursor", "fit-window", "
                "tool-dim-area", "tool-model-setup", "tool-model-check", "tool-sampling", "tool-smart-filter", "tool-coverage", "tool-editor", "review-fixed", "tool-ocr", "restore-window", "tool-quality", "tool-rules", "tool-inbox", "tool-export",
                "logs", "delete", "undo", "edit", "tool-testing", "mode-video", "mode-data", "tool-sequence", "tool-similar", "tool-review-grid", "tool-saved-filter",
                "history", "tool-dataprep", "tool-sketch", "tool-roi", "tool-handoff", "import", "tool-report", "tool-guidelines", "tool-splits", "keyboard",
-               "get-started"]
+               "get-started", "screenshot", "next"]
 
 
 def guide_html(version: str) -> str:
@@ -219,12 +219,32 @@ ids and update the class file. Always preview first; backups are made by default
 
 <h3>{_i('group-shapes')} Shapes — are the annotations right?</h3>
 <table>
-<tr><td>{_i('tool-rules')}</td><td><b>Relationship Rules</b> (Ctrl+Shift+K) — how annotations must relate: a child
-inside its parent (a line inside its plate), a parent containing 1–2 children, counts per image, A requires B, A and B
-never together, allowed classes, no overlap / children apart, size and aspect limits, shape type, vertex count, not at the
-border, a required attribute, LabelMe groups, one class per image (classification). <i>Suggest from data…</i> finds the
-rules that already hold for ≥ 97 % of the dataset — tick the ones that describe how the data <i>should</i> be, and the
-files that break them are listed. Rules are saved per dataset and can be exported for similar datasets.</td></tr>
+<tr><td>{_i('tool-rules')}</td><td><b>Relationship Rules</b> (Ctrl+Shift+K) — how annotations must relate, for
+<b>any dataset</b>: every rule takes any class (or <code>*</code> = any class) and any shape type. One <b>Parent /
+part</b> rule covers a whole relationship — wheels on a car, heads on persons, nuclei in cells, text on a sign, any
+object inside a region of interest: the part lies inside a parent (share of its area; points and lines: their
+points), is <b>not larger than it</b> (long / short side of each, so rotated objects compare right — a part drawn
+bigger than its parent is reported with how much bigger), optionally not smaller than a share of it and turned like it
+(angle), each parent has min–max parts, and the parts of one parent do not overlap. Shapes are compared by their real
+outline where it is convex (boxes, 4-point quads, circles), otherwise by their boxes. Also: <b>Must touch</b> (every A
+overlaps a B), <b>Not more than</b> (no more A than B per image), <b>Tilt limit</b>, counts per image, A requires B,
+classes never together, allowed classes, no overlap, size and aspect limits, shape type, vertex count, not at the
+border, a required attribute, LabelMe groups, one class per image (classification). Same-class duplicates are
+<i>Duplicate Shapes</i>' job. <i>Suggest from data…</i> finds the rules that already hold for ≥ 97 % of the dataset
+(one Parent / part rule per pair, with the counts and size limit it learned) — tick the ones that describe how the
+data <i>should</i> be. <b>Choices from your data:</b> while you add or edit a rule, the form reads the dataset (in
+the background, once) and shows under each field what the data does — the likely parent for a part, the class a class
+usually touches or appears with, and limits that ~99.5 % of the data already meets (inside share, size relative to
+the parent, parts per parent, angle, overlaps, counts, sizes, aspect, tilt, vertices, shape types, attributes) — with
+one click to <i>use</i> each value, or <i>Use all suggestions</i>; a pair that does not go together in the data is
+called out. <b>Spotting and fixing:</b> each card shows the shape at fault in yellow with a tag of what was measured (IoU,
+% inside, size, angle, counts …), what it relates to dashed and tagged, and the proposed fix in green; double-click opens the file framed on all of them with the fix drawn.
+<i>Apply proposed fix</i> fits a part inside its parent (keeping its corners and rotation), deletes a stray part or the
+smaller of two duplicates, or turns a polygon into a rectangle (and back) — one backup, <i>Undo</i> puts the files
+back, fixed files are marked 🔧. <i>⚑ Flag files</i> notes the rule and the exact problem
+(nothing ticked: every file found). Results: filter by rule (give a rule a short <i>Name</i>); a rule's guideline shows
+above its results. Only files that contain a rule's classes are opened. Rules are saved per dataset (older rule files
+are converted automatically), can be exported for similar datasets, and are never added twice.</td></tr>
 <tr><td>{_i('tool-crop-gallery')}</td><td><b>Crop Gallery</b> — every instance of a label as a grid. The fastest way to spot
 wrong labels and junk boxes; sort by size, select many, relabel (R) or delete (Del). Built for millions of instances:
 tiles appear while it collects (big datasets use all CPU cores), sorting and Ctrl+A are instant, only visible crops
@@ -367,6 +387,13 @@ At the end of the list marking stays on the last file. With a review filter (e.g
 the list but stays open, and Next continues with the file that came after it.
 <i>Review ▸ Save Flagged Files…</i> copies the flagged files (annotation + image, folder structure kept, with a
 notes CSV) to a folder, <b>or</b> writes their names to a text file.</td></tr>
+<tr><td>{_i('next')}</td><td><b>Recommended checks</b> — when a dataset opens, the app works out which checks matter
+most for it (files that cannot be read, broken images, label names that disagree or are not in the class list, empty
+files, splits, names that look like video frames, classes that lie inside one another, texts, models set up) and
+shows <i>Start here</i> with the reason. The status bar's <b>Next check</b> button runs the next one; after each check
+finishes, the next is suggested (“and so on”). <i>Review ▸ Recommended Checks…</i> lists them all, best first, with
+what the finished ones found (kept per dataset; <i>Start over</i> clears it). Settings ▸ Interface ▸ <i>Recommend
+checks when a dataset opens</i> (on by default) turns the hints off.</td></tr>
 <tr><td>{_i('tool-inbox')}</td><td><b>Issues Inbox</b> (Ctrl+I) — every tool's findings in one place. Each file gets a
 risk score (errors weigh most; one noisy tool cannot dominate); filter by severity, tool and review state, and press
 <i>Review worst first</i> to walk the file list in risk order. A rescan replaces that tool's findings.</td></tr>
@@ -468,8 +495,9 @@ is compared three ways (as sent · as returned · the dataset now): <b>ready</b>
 class id outside the class list, a different image size). Each row says what the annotator changed (“2 added (plate) ·
 1 relabelled (car → truck)”) and what changed here. Double-click shows the returned shapes over the image. Merge backs
 every file up first, keeps the dataset's imagePath / imageData, records it in the file's History and marks it Fixed.</td></tr>
-<tr><td>{_i('tool-guidelines')}</td><td><b>Guidelines</b> (Ctrl+Alt+G) — the labelling rule for each class and each QC
-rule, with ✓ good and ✗ bad example crops. Add examples from the image (select a shape, <span class='key'>G</span> /
+<tr><td>{_i('tool-guidelines')}</td><td><b>Guidelines</b> (Ctrl+Alt+G) — the labelling rule for each class, each
+relationship rule and each check that finds labelling mistakes, with ✓ good and ✗ bad example crops (the shape's own
+outline drawn on them). Add examples from the image (select a shape, <span class='key'>G</span> /
 <span class='key'>Shift+G</span>, or right-click it in Annotations) or from the Crop Gallery. The rule appears in a card
 next to the selected shape and at the top of the matching QC tool; <i>Export for annotators</i> writes one HTML page.
 </td></tr>
@@ -486,6 +514,18 @@ review marks follow), <i>Undo last moves</i> puts them back.</td></tr>
 
 <h3>Sketch and ROI capture (Tools menu)</h3>
 <table>
+<tr><td>{_i('screenshot')}</td><td><b>Screenshot</b> (<span class='key'>E</span>, the toolbar button, File ▸
+Screenshot, or right-click the image) — saves the image exactly as you see it: the part on screen at the current
+zoom, brightness / contrast, the labels you ticked, the predictions layer and a sketch drawing, at your screen's real
+resolution, cropped to the image (no grey bands). The hover highlight, edit handles and floating panels are left
+out. <span class='key'>E</span> saves straight into the screenshots folder (Settings ▸ General ▸ Saving; default
+<i>Pictures/AIO QC Screenshots</i>) as <code>&lt;dataset&gt;/&lt;sub-folders&gt;/&lt;file name&gt;.png</code> and never
+overwrites (<code>_2</code>, <code>_3</code> …); <span class='key'>Shift+E</span> asks for a name; the right-click menu
+also copies it to the clipboard. Works in sketch mode too.<br><b>Many files at once:</b> <i>Review ▸ Flagged
+Screenshots</i> (Ctrl+Shift+Alt+E), or right-click files in the file list ▸ <i>Save screenshots of N files</i> — each
+file drawn as Image QC shows it, in the background (progress and Cancel in the status bar; your view is not touched):
+the same spot as now on every file (default) or the whole image at full resolution, with a caption strip (file,
+review mark, flag note) and each file's sketch. Defaults in Settings ▸ Screenshots.</td></tr>
 <tr><td>{_i('tool-sketch')}</td><td><b>Sketch on Image</b> (<span class='key'>P</span>) — draw on the image to explain
 something: pen, see-through highlighter, a shapes box as in MS Paint (line, arrow, rectangle, ellipse, circle —
 two at a time, scroll it sideways; Shift: 45° / square / circle), text, an
@@ -595,6 +635,7 @@ graphics driver) leaves <code>aio_qc_crash.log</code> with the stack, and the ne
 <tr><td class='key'>Ctrl+Z</td><td>undo an edit on the image</td><td class='key'>Ctrl+Shift+Z</td><td>redo</td></tr>
 <tr><td class='key'>?</td><td>key map</td><td class='key'>F6</td><td>next panel</td></tr>
 <tr><td class='key'>P</td><td>sketch on the image</td><td class='key'>O</td><td>ROI capture</td></tr>
+<tr><td class='key'>E</td><td>save a screenshot of the view</td><td class='key'>Shift+E</td><td>screenshot as …</td></tr>
 <tr><td class='key'>Ctrl+H</td><td>file history</td><td class='key'>G / Shift+G</td><td>guideline example ✓ / ✗</td></tr>
 <tr><td class='key'>F1</td><td>this guide</td><td class='key'>Ctrl+F1</td><td>all shortcuts</td></tr>
 </table>
