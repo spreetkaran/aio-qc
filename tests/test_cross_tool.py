@@ -132,7 +132,8 @@ def test_one_task_indicator_in_every_mode(shell3, qtbot, tmp_path):  # noqa: F81
     t.cancel()
     t.finish()
     qtbot.wait(50)
-    assert cancelled and not cur.isVisible()
+    assert cancelled and "Cancelled" in cur.text()
+    qtbot.waitUntil(lambda: not cur.isVisible(), timeout=4000)
     # a real job reports: the Frame Extractor's batch queue
     sh.switch("video")
     v = sh.video

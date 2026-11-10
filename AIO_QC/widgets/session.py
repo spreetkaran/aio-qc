@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Callable, Iterable
@@ -50,6 +51,7 @@ class Session(QObject):
             self.cache = None
         self.raw_index: dict[str, Counter] = {}    # key -> ORIGINAL label counts
         self.index: dict[str, Counter] = {}        # key -> label counts (after view mapping)
+        self._count_pool: dict[tuple, Counter] = {}   # distinct label counts -> the one shared Counter
         self.index_errors: dict[str, str] = {}     # key -> parse error
         self.index_complete = False
         # ---- running aggregates (O(changed) updates instead of O(dataset) recounts)
@@ -210,7 +212,20 @@ class Session(QObject):
         self.mappingChanged.emit()
         self.indexChanged.emit()
 
+    def _shared(self, raw: Counter) -> Counter:
+        """One Counter object per distinct label count (most files share a handful of patterns, e.g. {car: 1,
+        plate: 1}), label names interned: a million-file index takes a fraction of the memory. Index Counters are
+        never changed in place (update_index replaces them), so sharing is safe."""
+        sig = tuple(sorted(raw.items()))
+        hit = self._count_pool.get(sig)
+        if hit is None:
+            hit = Counter({sys.intern(str(k)): v for k, v in sig})
+            self._count_pool[sig] = hit
+        return hit
+
     def _mapped(self, raw: Counter) -> Counter:
+        if not self.label_map:                       # no mapping: the mapped view IS the raw counts (no copy)
+            return raw
         out = Counter()
         for label, n in raw.items():
             out[self.adapter.map_label(label)] += n
@@ -242,6 +257,7 @@ class Session(QObject):
         if old is not None:
             self._tot.subtract(old)
         if raw is not None:
+            raw = self._shared(raw)
             self.raw_index[key] = raw
             self.index[key] = m = self._mapped(raw)
             self._tot_raw.update(raw)

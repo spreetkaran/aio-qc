@@ -1004,7 +1004,7 @@ class StudioWindow(QMainWindow):
         self.status_lbl.setText("Exporting…")
         job = Job(work, self)
         from AIO_QC.widgets import tasks
-        task = tasks.start(f"Data Studio · export {os.path.basename(p)}")
+        task = tasks.start(f"Data Studio · export {os.path.basename(p)}", owner=self)
         job.finished.connect(task.finish)
         job.done.connect(lambda n: self.statusBar().showMessage(f"Exported {n:,} rows → {p}", 8000))
         job.failed.connect(lambda m, _e: QMessageBox.warning(self, "Export", m))
@@ -1045,7 +1045,7 @@ class StudioWindow(QMainWindow):
             return p
         job = Job(work, self)
         from AIO_QC.widgets import tasks
-        task = tasks.start(f"Data Studio · profile report {os.path.basename(p)}")
+        task = tasks.start(f"Data Studio · profile report {os.path.basename(p)}", owner=self)
         job.finished.connect(task.finish)
         job.done.connect(lambda path: webbrowser.open(Path(path).as_uri()))
         job.failed.connect(lambda m, _e: QMessageBox.warning(self, "Report", m))

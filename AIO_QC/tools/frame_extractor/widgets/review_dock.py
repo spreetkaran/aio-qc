@@ -682,7 +682,7 @@ class ReviewDock(QDockWidget):
         cache_path, specs, backend = self._cache_path, list(pl.specs), getattr(self.win, "backend", "auto")
         from AIO_QC.widgets import tasks
         stop = threading.Event()
-        task = tasks.start("Hard frames → Image QC", cancel=stop.set)
+        task = tasks.start("Hard frames → Image QC", cancel=stop.set, owner=self)
         box = {"done": 0, "total": len(jobs), "paths": [], "error": None}
 
         def work():

@@ -205,7 +205,8 @@ class _Row(QWidget):
             else:
                 lay.addWidget(self.editor, 0, 1, 2, 1, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
         self.reset = QToolButton()
-        self.reset.setText("↺")
+        self.reset.setIcon(newIcon("reset-default"))            # sharp icon (was a ↺ character)
+        self.reset.setIconSize(QSize(18, 18))
         self.reset.setAutoRaise(True)
         self.reset.setToolTip(f"Back to the default ({self._label(s.default)})" if s.has_default else "")
         self.reset.setAccessibleName(f"Reset {s.title}")
@@ -382,6 +383,7 @@ class SettingsDialog(QDialog):
                 gl.addWidget(r)
             if any(s.has_default for s in sec.settings):
                 rs = QPushButton("Reset section to defaults")
+                rs.setIcon(newIcon("reset-default"))
                 rs.setFlat(True)
                 rs.setObjectName(f"reset:{sec.title}")
                 rs.setProperty("section_settings", [x.key for x in sec.settings])
@@ -404,6 +406,8 @@ class SettingsDialog(QDialog):
                                  ("settings_reset_all", "Reset all…", self.reset_all)):
             b = QPushButton(text)
             b.setObjectName(name)
+            if name == "settings_reset_all":
+                b.setIcon(newIcon("reset-default"))
             b.clicked.connect(slot)
             foot.addWidget(b)
         foot.addStretch(1)

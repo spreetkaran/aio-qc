@@ -14,10 +14,10 @@
 </h4>
 
 <div align="center">
-  <a href="https://pypi.org/project/aio-qc/2.3.0/"><img src="https://img.shields.io/badge/pypi-2.3.0-blue.svg"></a>
+  <a href="https://pypi.org/project/aio-qc/2.4.0/"><img src="https://img.shields.io/badge/pypi-2.4.0-blue.svg"></a>
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.3.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.3.0"><img src="https://img.shields.io/badge/release-v2.3.0-informational.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.4.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.4.0"><img src="https://img.shields.io/badge/release-v2.4.0-informational.svg"></a>
 </div>
 
 <div align="center">
@@ -75,7 +75,7 @@ changes, so any change can be undone. Two more modes share the app: the **Frame 
 - [x] Sketch on the image and ROI capture with real image coordinates
 - [x] Screenshots of the view (E) and of all flagged files at once, with a caption strip and the flag note
 - [x] Keep previous zoom and brightness / contrast while stepping through images
-- [x] Paint-style status bar and Windows-Photos-style zoom (smooth rendering when zoomed in); label colours that stay apart
+- [x] Background Tasks: every job of the session with progress, details and Cancel
 - [x] Export & Split: train / val / test splits that keep duplicates, video frames and OCR identities together, exported as YOLO, LabelMe, COCO or class folders
 - [x] Built for big datasets: cached indexing, background work, virtualised lists — fluid at millions of files and shapes
 - [x] Safe by design: confirmations, atomic writes, originals kept in a compressed backup store, deletes are moves to a trash folder
@@ -106,7 +106,7 @@ There are 2 options to install AIO QC App:
 ### Option 1: Using pip
 
 ```bash
-pip install aio-qc==2.3.0
+pip install aio-qc==2.4.0
 
 # with every optional part (Data Studio, Frame Extractor video engine, ONNX models, faster JSON …):
 pip install "aio-qc[full]"
@@ -115,7 +115,7 @@ pip install "aio-qc[full]"
 
 ### Option 2: Using standalone executable (easiest)
 
-Download the zip for your system from the [v2.3.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.3.0) page — no Python needed.
+Download the zip for your system from the [v2.4.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.4.0) page — no Python needed.
 
 ### Supported Python and platforms
 
@@ -207,7 +207,7 @@ pyinstaller AIO_QC/__main__.py \
 ```bash
 git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
-git checkout v2.3.0
+git checkout v2.4.0
 pip install -e ".[full]"
 aio-qc-console --logger-level debug
 python -m pytest tests                  # the test suite (offscreen Qt)
@@ -230,5 +230,5 @@ AIO QC App is free software, released under the [GNU General Public License v3.0
 Copyright (c) 2026 Preetkaran Singh.
 
 It bundles third-party components that keep their own licenses. See
-[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.3.0/THIRD_PARTY_NOTICES.md); the full license texts
-are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.3.0/licenses).
+[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.4.0/THIRD_PARTY_NOTICES.md); the full license texts
+are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.4.0/licenses).

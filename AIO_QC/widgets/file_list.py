@@ -197,6 +197,7 @@ class FileDock(QWidget):
     currentKeyChanged = pyqtSignal(str)
     filterCleared = pyqtSignal()
     parked = pyqtSignal(str)            # the open file left the visible list (it stays open)
+    countChanged = pyqtSignal(int, int)  # shown, total (the status bar shows "i / shown [of total]")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -261,6 +262,7 @@ class FileDock(QWidget):
         self.view.selectionModel().currentChanged.connect(self._on_current)
         self.count_label = QLabel("0 files")
         apply_style(self.count_label, "color:@muted;")
+        self.count_label.setVisible(False)          # the status bar already shows position / count (2.4.0)
 
         # search gets its own full-width row; filters share the second row and never force the dock wider
         for box in (self.split_box, self.folder_box, self.review_box):
@@ -543,6 +545,9 @@ class FileDock(QWidget):
     def _update_count(self):
         total, shown = self.model.rowCount(), self.proxy.rowCount()
         self.count_label.setText(f"{shown:,} / {total:,} files" if shown != total else f"{total:,} files")
+        if (shown, total) != getattr(self, "_last_count", None):
+            self._last_count = (shown, total)
+            self.countChanged.emit(shown, total)
 
     # ------------------------------------------------------------ navigation
     def _on_current(self, current, _previous):

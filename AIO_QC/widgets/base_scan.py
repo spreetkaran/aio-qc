@@ -45,7 +45,7 @@ def TONE(name):
     return theme_color(role) if role else None
 
 
-@dataclass
+@dataclass(slots=True)             # slots: ~2-3x less memory per row (scans of millions of files)
 class ResultRow:
     key: str
     cells: tuple

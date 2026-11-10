@@ -42,6 +42,7 @@ from AIO_QC.widgets.views_dialog import ViewsDialog
 from AIO_QC.widgets.handoff_dialog import ExportBatchDialog, ImportBatchDialog
 from AIO_QC.widgets.split_health_dialog import SplitHealthDialog
 from AIO_QC.widgets import anim
+from AIO_QC.widgets import tasks as bg_tasks
 from AIO_QC.widgets.report_dialog import ReportDialog
 from AIO_QC.widgets.guidelines import CanvasGuide, GuidelinesDialog, add_selected as add_guide_example
 from AIO_QC.widgets.keymap import KeyMapOverlay, PanelCycler
@@ -194,7 +195,7 @@ QC_TOOLS = [
 ]
 MAX_RECENT = 10
 
-PIXMAP_CACHE_BYTES = 768 * 1024 * 1024
+PIXMAP_CACHE_BYTES = 512 * 1024 * 1024     # decoded images kept for instant next / previous (ceiling)
 
 
 def _find_ffmpeg(user_path=""):
@@ -250,7 +251,11 @@ class MainWindow(QMainWindow):
         self.embedder = EmbedService(log=lambda line: logger.debug(f"[embed] {line}"))   # Visual Similarity model
         self.embed_index = None                    # vectors of the last Visual Similarity run (Crop Gallery sorts)
         self._external_log: list = []
-        self.pixmap_cache = utils.LRUCache(capacity=24, max_bytes=PIXMAP_CACHE_BYTES)
+        from AIO_QC.utils import memory as _mem
+        # the preload window (1 back, 3 ahead) + the files just visited; at most 512 MB and never more than ~10 % of
+        # this computer's memory (8 GB: 512 MB, 4 GB: ~410 MB)
+        self.pixmap_cache = utils.LRUCache(capacity=10, max_bytes=_mem.cache_budget(PIXMAP_CACHE_BYTES, share=0.10))
+        self._low_mem_told = 0.0
         self.generation = 0                       # invalidates stale background results
         self._inflight: set[str] = set()
         self.index_worker: IndexWorker | None = None
@@ -301,6 +306,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.canvas)
         self.canvas.zoomFinished.connect(self.updateZoomSpinbox)
         self.canvas.zoomChanged.connect(self._zoom_live)           # every click / wheel tick / glide frame
+        self.canvas.memoryLow.connect(self._on_low_memory)
         self.canvas.shapeSelected.connect(self.onShapeSelected)
         self.canvas.imageMenuRequested.connect(lambda pos: self.shots.canvas_menu(pos))
         self.canvas.selectionCleared.connect(self.onSelectionCleared)
@@ -343,6 +349,7 @@ class MainWindow(QMainWindow):
         self.file_dock.view.customContextMenuRequested.connect(self._file_list_menu)
         self.file_dock.currentKeyChanged.connect(self.show_sample)
         self.file_dock.parked.connect(lambda _k: self._update_position())
+        self.file_dock.countChanged.connect(lambda _s, _t: self._update_position() if self.session else None)
         self.file_list_dock = self._dock("File List", self.file_dock, "file_dock")
 
         # History of the current file (audit trail + saved versions)
@@ -369,6 +376,9 @@ class MainWindow(QMainWindow):
             open_dir=A("Open &Directory…", self.open_dir, "Ctrl+O", icon="open",
                        tip="Open a LabelMe / YOLO / YOLO-split dataset root"),
             reload=A("&Reload Dataset", self.reload_dataset, "F5", tip="Re-scan the dataset from disk"),
+            bg_tasks=A("Background &Tasks…", lambda: bg_tasks.show_viewer(self),
+                       icon="tasks", tip="Background tasks: every job of this session, running and finished — "
+                                         "progress, timings, Cancel"),
             check_guide=A("Recommended &Checks…", lambda: self.check_guide.show_dialog(), icon="next",
                           tip="The QC checks that matter most for this dataset, in order — and which are done"),
             change_class=A("Change &Class…", self.change_class, "C", icon="tool-class", enabled=False,
@@ -549,7 +559,8 @@ class MainWindow(QMainWindow):
         self.load_classes_btn = StatusButton("Load Classes", icon="list", slot=self.load_classes_file)
         self.load_classes_btn.set_base_tooltip("Class list (Ctrl+L): classes.txt (one per line) or .yaml.\n"
                                                "YOLO: dataset.yaml is used automatically; classes.txt only if it is absent.")
-        self.dataset_label = QLabel("  No dataset  ")
+        from AIO_QC.widgets.review_badge import IconText
+        self.dataset_label = IconText("open", "No dataset", 16)
         utils.style(self.dataset_label, "color:@muted;")
 
         self.zoom_spin = ZoomWidget(Canvas.MIN_ZOOM, Canvas.MAX_ZOOM)      # "Zoom" + level to one decimal
@@ -566,7 +577,7 @@ class MainWindow(QMainWindow):
         utils.addActions(self.toolbar, (self.a.prev, self.a.next, None, self.a.drag, self.a.select, None,
                                         self.zoom_spin, self.a.fit, self.a.actual, self.a.zoom_out,
                                         self.zoom_slider, self.a.zoom_in,
-                                        None, self.a.screenshot, self.a.reset, self.a.logs))
+                                        None, self.a.screenshot, self.a.reset, self.a.logs, self.a.bg_tasks))
         self.toolbar.visibilityChanged.connect(lambda v: self.a_toolbar.setChecked(v))
         self.canvas.pixmap_item.pixel_view = self.a.pixel_view.isChecked()
         self.canvas.keep_zoom = self.a.keep_zoom.isChecked()
@@ -840,7 +851,8 @@ class MainWindow(QMainWindow):
             None, self.a.change_class, self.a.mark_ok, self.a.mark_flag, self.a.flag_note, self.a.mark_clear, None,
             self.a.next_unreviewed, None, self.a.save_flagged, self.a.export_review])
         utils.addActions(self.menus.tools, (self.a.sketch, self.a.roi, None, self.a.data_prep, self.a.ann_table, None,
-                                            self.a.palette, None, self.a.storage, None, self.a.reset, self.a.logs))
+                                            self.a.palette, None, self.a.storage, None, self.a.reset, self.a.logs,
+                                            self.a.bg_tasks))
         about = QAction(utils.appIcon(), "About Image QC", self)
         about.setMenuRole(QAction.MenuRole.AboutRole)
         from AIO_QC.widgets.about import show_about
@@ -862,8 +874,10 @@ class MainWindow(QMainWindow):
         self.canvas.selectionRect.connect(sb.set_selection)
         self.pos_label = QLabel("")
         self.index_label = QLabel("")
-        self.mode_label = QLabel("✋ Drag")
-        self.review_badge = QLabel("")
+        from AIO_QC.widgets.review_badge import IconText
+        self.mode_label = IconText("hand", "Drag")
+        from AIO_QC.widgets.review_badge import ReviewBadge
+        self.review_badge = ReviewBadge()                # icon + Pending / OK / Flagged / Fixed, fixed width
         self.mapping_btn = QToolButton()
         self.mapping_btn.setAutoRaise(True)
         self.mapping_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -882,9 +896,11 @@ class MainWindow(QMainWindow):
         from AIO_QC.widgets.check_guide import CheckGuide
         self.check_guide = CheckGuide(self)              # ▶ Next check: … (recommended checks for this dataset)
         self.file_dock.review_box.currentIndexChanged.connect(lambda _i: self._update_flagged_count())
-        for w in (self.review_badge, self.index_label, self.pos_label, self.mode_label):
+        self.statusBar().addPermanentWidget(self.review_badge)
+        for w in (self.index_label, self.pos_label, self.mode_label):
             utils.style(w, "color:@muted; padding: 0 6px;")
             self.statusBar().addPermanentWidget(w)
+        self.pos_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._review_save = QTimer(self, singleShot=True, interval=800, timeout=self._save_review)
 
     def _restore_settings(self):
@@ -1028,7 +1044,7 @@ class MainWindow(QMainWindow):
             utils.update_label_colors(name, self.label_colors)
 
         self.refresh_status_buttons()
-        self.dataset_label.setText(f"  📂 {root.name} · {dtype.title} · {len(session.samples):,} files  ")
+        self.dataset_label.setText(f"{root.name} · {dtype.title} · {len(session.samples):,} files")
         self._update_title()
         self._external_log = []
         self._start_watcher()
@@ -1211,7 +1227,7 @@ class MainWindow(QMainWindow):
     def _on_samples_added(self, keys):
         s = self.session
         self.file_dock.insert_samples(s.last_inserted)        # discovery-order rows, like a reload
-        self.dataset_label.setText(f"  📂 {s.root.name} · {s.type.title} · {len(s.samples):,} files  ")
+        self.dataset_label.setText(f"{s.root.name} · {s.type.title} · {len(s.samples):,} files")
         self._update_position()
 
     def _external_log_text(self) -> str:
@@ -1816,6 +1832,7 @@ class MainWindow(QMainWindow):
             self._flush_display()
             self._display_for_next(key)
         self.current_key = key
+        self._update_review_badge()               # first: the mark must never lag behind the image
         shape_to_focus, self._pending_shape = self._pending_shape, None
         extras, self._pending_extras = self._pending_extras, (None, None)
         try:
@@ -1833,7 +1850,9 @@ class MainWindow(QMainWindow):
             self.canvas.clearAll()
             self.zoom_spin.setEnabled(False)
             self.zoom_spin.set_zoom(None)
-            msg = error or f"Image not found for {sample.name}"
+            from AIO_QC.utils import memory as _mem
+            msg = error or (f"Not enough free memory to open {sample.name} ({_mem.human(_mem.available())} free)"
+                            if _mem.is_low() else f"Image not found for {sample.name}")
             self.statusBar().showMessage(f"⚠ {msg}", 8000)
             self.log_errors([f"{sample.name}: {msg}"], quiet=True)
         elif not same or self.canvas.pixmap_item.pixmap().cacheKey() != pix.cacheKey():
@@ -1908,14 +1927,62 @@ class MainWindow(QMainWindow):
             self.pos_label.setText(f"– / {n:,}")
             self.pos_label.setToolTip("The open file is not in the current list (filtered out after marking)")
             return
-        self.pos_label.setToolTip("")
-        self.pos_label.setText(f"{i:,} / {n:,}" if n else "")
+        total = self.file_dock.model.rowCount()
+        self.pos_label.setToolTip(f"{n:,} of {total:,} files in the list (filtered)" if n != total else
+                                  f"{total:,} files")
+        self.pos_label.setText((f"{i:,} / {n:,}" if n == total else f"{i:,} / {n:,} of {total:,}") if n else "")
+        # as wide as the largest position this list can show: the items to its left stay put from file to file
+        eights = str.maketrans("0123456789", "8888888888")
+        widest = (f"{n:,} / {n:,}" if n == total else f"{n:,} / {n:,} of {total:,}").translate(eights)
+        need = self.pos_label.fontMetrics().horizontalAdvance(widest) + 14
+        if self.pos_label.minimumWidth() != need:
+            self.pos_label.setMinimumWidth(need)
 
     def load_canvas_shapes(self):
         shapes = self.current_ann.shapes if self.current_ann else []
         self.canvas.loadShapes(shapes, self.label_colors, self.visible_labels)
 
+    def release_memory(self, fraction: float = 1.0):
+        """Image QC went to the background (another mode in front) or memory is short: drop the decoded
+        neighbour images (re-read when needed — nothing is lost) and trim the thumbnail / gallery caches."""
+        cur = self.pixmap_cache.get(self.current_key) if self.current_key else None
+        self.pixmap_cache.clear()
+        if cur is not None:
+            self.pixmap_cache.put(self.current_key, cur, cur.width() * cur.height() * 4)
+        utils.io.BUDGET.trim(fraction * 0.5)
+        import gc
+        gc.collect()
+
+    def _on_low_memory(self, what: str):
+        """An image buffer could not be allocated: free what the app can spare (cached images) and say so — once
+        in a while, not for every frame. The image itself stays on screen in the fast view."""
+        from AIO_QC.utils import memory as _mem
+        freed = utils.io.BUDGET.total()
+        self.release_memory()
+        freed -= utils.io.BUDGET.total()
+        logger.warning(f"[memory] low memory: {what} skipped; freed {_mem.human(freed)} of cached images "
+                       f"(available now: {_mem.human(_mem.available())})")
+        self._notify_low_memory(what, freed)
+
+    def _notify_low_memory(self, what: str, freed: int | None = None):
+        from AIO_QC.utils import memory as _mem
+        now = time.monotonic()
+        if now - self._low_mem_told < 120:
+            return
+        self._low_mem_told = now
+        skipped = ("the high-quality view was skipped for this image (it is shown in the fast view)"
+                   if what == "high-quality view" else
+                   "brightness / contrast was skipped for this image (shown unadjusted)"
+                   if what.startswith("brightness") else f"the {what} could not finish")
+        self.toast.show_message(
+            f"<b>Memory is running low</b> — {skipped}. Cached images were freed"
+            + (f" ({_mem.human(freed)})" if freed else "") + f"; free memory: {_mem.human(_mem.available())}. "
+            "Closing other programs or large windows helps.", "warn", key="low_memory")
+
     def preload_neighbors(self):
+        from AIO_QC.utils import memory as _mem
+        if _mem.is_low():                       # memory is short: decode only the image that is opened
+            return
         keys = self.file_dock.visible_keys(around=self.current_key, before=1, after=3)
         pool = QThreadPool.globalInstance()
         for k in keys:
@@ -2156,8 +2223,8 @@ class MainWindow(QMainWindow):
             self.canvas.clearAll()
             self.current_ann = None
             self.update_annotations_list()
-        self.dataset_label.setText(f"  📂 {self.session.root.name} · {self.session.type.title} · "
-                                   f"{len(self.session.samples):,} files  ")
+        self.dataset_label.setText(f"{self.session.root.name} · {self.session.type.title} · "
+                                   f"{len(self.session.samples):,} files")
         self._update_position()
         self.refresh_status_buttons()
 
@@ -2470,10 +2537,15 @@ class MainWindow(QMainWindow):
                                      5000)
 
     def forget_dialog(self, dlg):
+        """A tool window closed: stop its threads and DELETE it. Without the delete a closed window stayed alive as
+        a hidden child of the main window — with its result rows, thumbnails and image caches — and opening the
+        tool again made another one (memory grew with every open / close)."""
         stop_threads(dlg, f"{getattr(dlg, 'TITLE', type(dlg).__name__)} closing")      # before Qt destroys it
         key = getattr(dlg, "tool_key", None)
         if key and self.open_dialogs.get(key) is dlg:
             del self.open_dialogs[key]
+        if not getattr(dlg, "keep_after_close", False):
+            dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)   # Qt deletes it once the close completes
 
     def validate_inputs(self) -> bool:
         if self.session is None:
@@ -2859,7 +2931,9 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self, mode):
         (self.a.select if mode == Canvas.SELECT else self.a.drag).setChecked(True)
-        self.mode_label.setText("🖱 Select" if mode == Canvas.SELECT else "✋ Drag")
+        sel = mode == Canvas.SELECT
+        self.mode_label.setIcon("cursor" if sel else "hand")
+        self.mode_label.setText("Select" if sel else "Drag")
 
     # =====================================================================
     # Zoom
@@ -3001,22 +3075,16 @@ class MainWindow(QMainWindow):
     def _update_review_badge(self):
         e = self.session.review.get(self.current_key) if self.session and self.current_key else None
         if not e:
-            self.review_badge.setText("○ unreviewed")
-            utils.style(self.review_badge, "color:@muted; padding: 0 6px;")
-            self.review_badge.setToolTip("S = OK · X = flag · Shift+X = flag with note")
-        elif e["status"] == REVIEW_FIXED:
-            self.review_badge.setText("🔧 Fixed" + (f": {e['note'][:40]}" if e.get("note") else ""))
-            utils.style(self.review_badge, "color:@info; font-weight:bold; padding: 0 6px;")
-            self.review_badge.setToolTip((e.get("note", "") or "Corrected in an editor") +
-                                         "\nPress S after checking it to mark it OK")
-        elif e["status"] == REVIEW_OK:
-            self.review_badge.setText("✓ OK")
-            utils.style(self.review_badge, "color:@ok; font-weight:bold; padding: 0 6px;")
-            self.review_badge.setToolTip(f"Reviewed {e.get('ts', '')}")
+            self.review_badge.set_status(None, tip="Not reviewed yet · S = OK · X = flag · Shift+X = flag with note")
+            return
+        note, st = e.get("note", "") or "", e["status"]
+        if st == REVIEW_FIXED:
+            tip = (note or "Corrected in an editor") + "\nPress S after checking it to mark it OK"
+        elif st == REVIEW_OK:
+            tip = f"Reviewed {e.get('ts', '')}"
         else:
-            self.review_badge.setText("⚑ Flagged" + (f": {e['note'][:40]}" if e.get("note") else ""))
-            utils.style(self.review_badge, "color:@warn; font-weight:bold; padding: 0 6px;")
-            self.review_badge.setToolTip(e.get("note", "") or f"Flagged {e.get('ts', '')}")
+            tip = (f"Flag note: {note}\n" if note else "") + f"Flagged {e.get('ts', '')}"
+        self.review_badge.set_status(st, note, tip.strip())
 
     def _update_flagged_count(self, c=None):
         """Status bar: ⚑ N flagged (dataset-wide, running count)."""

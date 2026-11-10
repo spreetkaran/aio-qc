@@ -2366,7 +2366,7 @@ class MainWindow(QMainWindow):
         from AIO_QC.widgets import tasks
         if getattr(self, "_mtask", None) is None:
             self._mtask = tasks.start(f"Saving markers · {os.path.basename(self.video_path or '')}",
-                                      cancel=lambda: self.stop_marker_worker())
+                                      cancel=lambda: self.stop_marker_worker(), owner=self)
         self._mtask_total = getattr(self, "_mtask_total", 0) + n
 
     def _marker_task_tick(self):

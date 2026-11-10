@@ -250,6 +250,8 @@ class Toast(QWidget):
             return
         self._expanded = not self._expanded
         if self._expanded:
+            if self._expand_t == 0.0:                   # the collapsed message width: grow from it, return to it
+                self._base_w = max(80, self.text.width())
             self.panel.setHtml(self._details_html())
             fm = self.panel.fontMetrics()
             doc = self.panel.document()
@@ -284,12 +286,26 @@ class Toast(QWidget):
         t = float(t)
         self._expand_t = t
         w, h = self._details_size
+        base = getattr(self, "_base_w", TEXT_W)
+        cur = int(round(base + (max(w, base) - base) * t))
         self.panel.setFixedHeight(int(round(h * t)))
-        self.panel.setFixedWidth(max(TEXT_W - 30, int(round(TEXT_W + (w - TEXT_W) * t))))
-        self.text.setMaximumWidth(int(round(TEXT_W + (w - TEXT_W) * t)))
-        self.adjustSize()
+        self.panel.setFixedWidth(cur)
+        self.text.setMaximumWidth(max(TEXT_W, cur) if t > 0 else TEXT_W)
+        if t > 0:
+            self.text.setMinimumWidth(max(0, cur - 64))  # beside icon + ✕: as wide as the panel, no jump
+        else:
+            self.text.setMinimumWidth(0)
+        self._fit()
         if self.on_resize is not None:
             self.on_resize(self)                                 # stays bottom-right anchored, every frame
+
+    def _fit(self):
+        """Resize to the content — also narrower again (adjustSize keeps the width of a word-wrapped layout)."""
+        for lay in (self.card.layout(), self.layout()):
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+        self.resize(self.sizeHint())
 
     def _expand_done(self, to):
         self._expand_anim = None
@@ -297,8 +313,9 @@ class Toast(QWidget):
             self.panel.setVisible(False)
             self.panel.setMinimumWidth(0)
             self.panel.setMaximumWidth(16777215)
+            self.text.setMinimumWidth(0)
             self.text.setMaximumWidth(TEXT_W)
-            self.adjustSize()
+            self._fit()
             if self.on_resize is not None:
                 self.on_resize(self)
         self._sync_countdown()

@@ -43,11 +43,18 @@ def display_lut(brightness: float, contrast: float, gamma: float) -> np.ndarray:
     return np.clip(lut, 0, 255).astype(np.uint8)
 
 
+def _is_oom(exc) -> bool:
+    from AIO_QC.utils.memory import is_oom
+    return is_oom(exc)
+
+
 def _qimage_array(img: QImage, write: bool = False) -> np.ndarray:
     """(h, w, 4) uint8 view of a 32-bit QImage's pixels (no copy; keep `img` alive). Read-only unless `write`
     (bits() would detach a QImage that shares its pixels with a pixmap)."""
     w, h = img.width(), img.height()
-    ptr = img.bits() if write else img.constBits()
+    ptr = None if img.isNull() else (img.bits() if write else img.constBits())
+    if ptr is None:                       # Qt could not allocate the image (out of memory): no pixels to view
+        raise MemoryError(f"no memory for a {w} × {h} image")
     ptr.setsize(img.sizeInBytes())
     return np.frombuffer(ptr, np.uint8).reshape(h, img.bytesPerLine())[:, : w * 4].reshape(h, w, 4)
 
@@ -90,7 +97,7 @@ class DisplayRenderer:
         lut = display_lut(d["brightness"], d["contrast"], d["gamma"])
         lut4 = np.stack([lut, lut, lut, np.arange(256, dtype=np.uint8)], axis=-1).reshape(1, 256, 4)
         out = QImage(src.width(), src.height(), src.format())
-        dst = _qimage_array(out, write=True)
+        dst = _qimage_array(out, write=True)              # MemoryError when it could not be allocated
         if dst.flags["C_CONTIGUOUS"] and a.flags["C_CONTIGUOUS"]:
             cv2.LUT(a, lut4, dst=dst)
         else:                                                       # padded scan lines (odd widths never are)
@@ -121,6 +128,7 @@ class ImageItem(QGraphicsPixmapItem):
         self._arr = None                         # view of the shown pixmap's pixels (no copy; first refine)
         self._src = None                         # the QImage that owns them
         self._last_view = None                   # the view the pending render is for
+        self._backoff = 0.0                      # monotonic time until which refining is paused (low memory)
         from PyQt6.QtCore import QTimer
         self.timer = QTimer(canvas)
         self.timer.setSingleShot(True)
@@ -165,7 +173,9 @@ class ImageItem(QGraphicsPixmapItem):
             # over the canvas, a blinking caret) must not keep postponing the high-quality render.
             key = (s, self.canvas.viewportTransform().dx(), self.canvas.viewportTransform().dy(),
                    self.canvas.viewport().size())
-            if key != self._last_view or not self.timer.isActive():
+            if time.monotonic() < self._backoff:
+                pass                                       # memory was short: keep the fast view for a while
+            elif key != self._last_view or not self.timer.isActive():
                 self._last_view = key
                 self.timer.start()
 
@@ -191,6 +201,20 @@ class ImageItem(QGraphicsPixmapItem):
         self.update()
 
     def refine(self):
+        """High-quality render of the visible part. Never fatal: when memory runs out the fast view stays (it is
+        already on screen), the memory this item holds is released and the app is told to free its caches."""
+        if time.monotonic() < self._backoff:
+            return
+        try:
+            self._refine()
+        except Exception as exc:                           # MemoryError, cv2.error "Insufficient memory", …
+            if not _is_oom(exc):
+                raise
+            self.hq, self._arr, self._src = None, None, None
+            self._backoff = time.monotonic() + 15.0             # no retry storm while memory is short
+            self.canvas.report_low_memory("high-quality view")
+
+    def _refine(self):
         c = self.canvas
         pm = self.pixmap()
         if pm.isNull() or c.is_animating() or getattr(c, "_holding", False):
@@ -442,6 +466,7 @@ class Canvas(QGraphicsView):
     shapeSelected = pyqtSignal(int)      # index into current shapes list
     selectionCleared = pyqtSignal()
     modeChanged = pyqtSignal(str)
+    memoryLow = pyqtSignal(str)          # an image buffer could not be allocated (what was skipped)
     shapeEdited = pyqtSignal(int, list)          # index, new points (image pixels, as displayed)
     shapeDeleteRequested = pyqtSignal(int)
     relabelRequested = pyqtSignal(int, int)       # index, class number 1-9 (0 = choose from the list)
@@ -585,7 +610,21 @@ class Canvas(QGraphicsView):
             if self.pixmap_item.pixmap().cacheKey() != self._original.cacheKey():
                 self.pixmap_item.setPixmap(self._original)
             return
-        self.pixmap_item.setPixmap(self._renderer.render(self._original, self.display))
+        self.pixmap_item.setPixmap(self._adjusted(self._original))
+
+    def _adjusted(self, pixmap: QPixmap) -> QPixmap:
+        """The image with brightness / contrast applied — or as it is when memory is too short for the copy."""
+        try:
+            return self._renderer.render(pixmap, self.display)
+        except Exception as exc:
+            if not _is_oom(exc):
+                raise
+            self._renderer.reset()
+            self.report_low_memory("brightness / contrast")
+            return pixmap
+
+    def report_low_memory(self, what: str):
+        self.memoryLow.emit(what)
 
     def set_annotation_style(self, fill_alpha: int | None = None, outline_scale: float | None = None,
                              tag_scale: float | None = None):
@@ -612,7 +651,7 @@ class Canvas(QGraphicsView):
         if self.display_is_neutral():
             self.pixmap_item.setPixmap(pixmap)
         else:                                   # adjusted once, never shown unadjusted first
-            self.pixmap_item.setPixmap(self._renderer.render(pixmap, self.display))
+            self.pixmap_item.setPixmap(self._adjusted(pixmap))
         self.scene.setSceneRect(QRectF(pixmap.rect()))
         if (self.keep_zoom or same_image) and self._kept_view is not None:
             self.apply_view_state(self._kept_view)

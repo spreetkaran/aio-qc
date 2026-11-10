@@ -26,6 +26,8 @@ class AppShell(QObject):
     def __init__(self, app: QApplication):
         super().__init__(app)
         self.app = app
+        from AIO_QC.widgets import ui_style
+        ui_style.install(app)                    # centred pressed buttons, one menu arrow (whole app)
         self.st = app_settings()
         self.image = None
         self.studio = None
@@ -235,6 +237,12 @@ class AppShell(QObject):
         new.activateWindow()
         if old is not None:
             old.hide()
+            rel = getattr(old, "release_memory", None)      # in the background: keep only what it shows
+            if rel is not None:
+                try:
+                    rel()
+                except Exception:
+                    pass
         self.mode = mode
         self.st.setValue("shell/mode", mode)
         sw = getattr(new, "mode_switch", None)

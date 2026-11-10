@@ -74,6 +74,20 @@ def _install_excepthook() -> None:
             elif app is not None:
                 app.quit()
             return
+        from AIO_QC.utils import memory as _mem
+        if _mem.is_oom(exc):                                    # out of memory anywhere: free caches, say so once
+            logger.opt(exception=(exc_type, exc, tb)).debug("out of memory (traceback)")
+            logger.warning(f"[memory] out of memory: {exc_type.__name__}: {str(exc)[:200]} — freeing caches "
+                           f"(free memory: {_mem.human(_mem.available())})")
+            _mem.release_everywhere()
+            app = QApplication.instance()
+            img = getattr(getattr(app, "shell", None), "image", None) if app else None
+            if img is not None and hasattr(img, "_on_low_memory"):
+                try:
+                    img._notify_low_memory("last action")
+                except Exception:
+                    pass
+            return
         logger.opt(exception=(exc_type, exc, tb)).error("Unhandled exception")
         app = QApplication.instance()
         win = getattr(app, "main_window", None) if app else None

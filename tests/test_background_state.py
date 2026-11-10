@@ -54,7 +54,8 @@ def test_task_indicator_clears_in_background_windows(shell3, qtbot):  # noqa: F8
     assert not vid._task_indicator.isHidden()                         # the same job shows there too
     t.finish()                                                         # … the job ends meanwhile
     _pump(qtbot, 150)
-    assert vid._task_indicator.isHidden()
+    assert "Done" in vid._task_indicator.text()                       # the green tick for a moment …
+    qtbot.waitUntil(lambda: vid._task_indicator.isHidden(), timeout=4000)     # … then it goes
     _switch(shell3, "image")
     _pump(qtbot)
     assert ind.isHidden() and not ind.isVisible()                     # nothing stale when it comes back
@@ -66,8 +67,7 @@ def test_task_indicator_clears_in_background_windows(shell3, qtbot):  # noqa: F8
     _pump(qtbot)
     assert ind.isVisible() and "Batch extraction" in ind.text()
     t2.finish()
-    _pump(qtbot, 150)
-    assert ind.isHidden()
+    qtbot.waitUntil(lambda: ind.isHidden(), timeout=4000)
 
 
 def test_toast_posted_in_background_counts_down(shell3, qtbot):  # noqa: F811

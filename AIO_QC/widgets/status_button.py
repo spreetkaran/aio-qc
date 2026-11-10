@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from PyQt6.QtCore import QPropertyAnimation
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QGraphicsColorizeEffect, QHBoxLayout, QLabel, QWidget
+from PyQt6.QtWidgets import QGraphicsColorizeEffect, QHBoxLayout, QWidget
 
-from AIO_QC.utils import newButton
+from AIO_QC.utils import IconLabel, newButton
 
-# state -> (icon, background, hover, pressed)
+# state -> (icon file, background, hover, pressed) — sharp SVG icons, not emoji
 STATES = {
     "default": ("", None, None, None),
-    "success": ("✅", "#1e7e34", "#259a41", "#155d27"),
-    "warning": ("⚠️", "#8a6d00", "#a58300", "#6b5500"),
-    "error":   ("❌", "#a4282a", "#bf3234", "#7f1e20"),
+    "success": ("status-ok", "#1e7e34", "#259a41", "#155d27"),
+    "warning": ("status-warning", "#8a6d00", "#a58300", "#6b5500"),
+    "error":   ("status-error", "#a4282a", "#bf3234", "#7f1e20"),
 }
 
 
@@ -24,7 +24,7 @@ class StatusButton(QWidget):
         self._layout = QHBoxLayout(self)          # NOT self.layout: that would shadow QWidget.layout()
         self._layout.setContentsMargins(2, 2, 2, 2)
         self._layout.setSpacing(4)
-        self.status_icon = QLabel()
+        self.status_icon = IconLabel("", 16)
         self.status_icon.setFixedWidth(20)
         self.button = newButton(text, icon=icon, slot=slot)
         self._layout.addWidget(self.status_icon)
@@ -44,7 +44,7 @@ class StatusButton(QWidget):
             state = "default"
         self.state = state
         icon, bg, hover, pressed = STATES[state]
-        self.status_icon.setText(icon)
+        self.status_icon.set_icon(icon)
         self.status_icon.setToolTip(detail)
         self.button.setToolTip(f"{self._base_tip}\n{detail}".strip())
         if bg is None:

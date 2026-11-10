@@ -17,7 +17,7 @@ GUIDE_ICONS = ["open", "list", "prev", "next", "hand", "cursor", "fit-window", "
                "tool-dim-area", "tool-model-setup", "tool-model-check", "tool-sampling", "tool-smart-filter", "tool-coverage", "tool-editor", "review-fixed", "tool-ocr", "restore-window", "tool-quality", "tool-rules", "tool-inbox", "tool-export",
                "logs", "delete", "undo", "edit", "tool-testing", "mode-video", "mode-data", "tool-sequence", "tool-similar", "tool-review-grid", "tool-saved-filter",
                "history", "tool-dataprep", "tool-sketch", "tool-roi", "tool-handoff", "import", "tool-report", "tool-guidelines", "tool-splits", "keyboard",
-               "get-started", "screenshot", "next"]
+               "get-started", "screenshot", "next", "tasks", "reset-default", "review-pending"]
 
 
 def guide_html(version: str) -> str:
@@ -106,9 +106,9 @@ Editor offers the classes as flags).</p>
 <table>
 <tr><td><b>Settings</b></td><td>The gear at the right of the menu bar, File ▸ Settings… (Ctrl+,) or the command
 palette: every preference of Image QC in one searchable window (Ctrl+F) - interface, dataset watching and cache, review,
-storage &amp; backups, models, keyboard. Changes apply at once; ↺ puts a setting back to its default, and Export… /
+storage &amp; backups, models, keyboard. Changes apply at once; {_i('reset-default')} (next to a changed setting) puts it back to its default, and Export… /
 Import… share a set-up. The menus keep the commands.</td></tr>
-<tr><td><b>Toolbar</b></td><td>Open / Load Classes, previous / next image, Drag / Select mode, zoom, reset, logs.
+<tr><td><b>Toolbar</b></td><td>Open / Load Classes, previous / next image, Drag / Select mode, zoom, reset, logs, {_i('tasks')} <b>Background Tasks</b> (every job of this session, running and finished: progress, details, start time, how long it took, Cancel — also when you click the loading ring in the status bar).
 Icons only by default (names in the tooltips); Settings ▸ Interface ▸ Compact toolbar switches the text back on.</td></tr>
 <tr><td><b>QC panel</b> (top)</td><td>A slim tab row: click a tab — or rest the mouse on the tabs for a moment — and
 the tools slide down <b>over</b> the image (the image keeps its size). The drawer is the same size for every tab, so
@@ -382,6 +382,8 @@ AIO QC learn the pattern, or write <code>validate(text)</code> in Python — tes
 <tr><td>{_i('review-ok')} {_i('review-flag')} {_i('review-fixed')}</td><td><b>Review marks</b>: <span class='key'>S</span> OK, <span class='key'>X</span>
 flag, <span class='key'>Shift+X</span> flag with a note, <span class='key'>U</span> clear, <span class='key'>N</span> next
 unreviewed. The next file opens automatically (toggle in the Review tab). Marks are saved in the dataset.
+The status bar shows the open file's mark — {_i('review-pending')} <b>Pending</b> (not reviewed yet), OK, Flagged or
+Fixed, with a note icon when the flag has a note (the note is in its tooltip).
 Files corrected in an editor become <b>Fixed</b> — check them and press S to mark them OK.
 At the end of the list marking stays on the last file. With a review filter (e.g. Unreviewed) the marked file leaves
 the list but stays open, and Next continues with the file that came after it.

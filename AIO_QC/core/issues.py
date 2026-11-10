@@ -26,7 +26,7 @@ SEVERITY_ORDER = {"error": 0, "warn": 1, "info": 2}
 TOOL_CAP = 1.5
 
 
-@dataclass
+@dataclass(slots=True)             # slots: ~2-3x less memory per row (scans of millions of files)
 class Issue:
     tool: str
     severity: str          # error | warn | info

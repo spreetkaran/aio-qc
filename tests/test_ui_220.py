@@ -15,7 +15,7 @@ from .test_aio_image import _open, shell  # noqa: F401
 
 def test_version_and_name():
     import AIO_QC
-    assert AIO_QC.__version__ == "2.3.0" and AIO_QC.__appname__ == "AIO QC App"
+    assert AIO_QC.__version__ == "2.4.0" and AIO_QC.__appname__ == "AIO QC App"
 
 
 def test_status_bar_and_zoom_slider(shell, qtbot, tmp_path):  # noqa: F811
