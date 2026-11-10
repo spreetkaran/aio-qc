@@ -31,6 +31,7 @@ from AIO_QC.core.editors import (
 )
 from AIO_QC.core.state import REVIEW_FIXED, REVIEW_FLAG
 from AIO_QC.utils import hexc, newButton, newIcon, style as apply_style, theme_color
+from AIO_QC.utils import later
 from .inference_service import FuncWorker
 from .process_runner import StepRunner, clean_process_env
 from .mini_session import FrameAnimator, Ghost, MiniSessionWindow, lerp_rect
@@ -802,7 +803,7 @@ class EditorSessionDialog(QDialog):
         self.proc = None
         # two more polls so a save made right before closing is not missed
         QTimer.singleShot(POLL_MS, self._sync_tick)
-        QTimer.singleShot(2 * POLL_MS + 100, lambda: (self._sync_tick(), self._update_header(),
+        later(2 * POLL_MS + 100, self, lambda: (self._sync_tick(), self._update_header(),
                                                       self._set_buttons(running=False)))
         crashed = _status == QProcess.ExitStatus.CrashExit
         if failed or crashed or code not in (0, None):

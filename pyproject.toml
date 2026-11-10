@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aio-qc"                       # the PyPI name: check it is free at https://pypi.org/project/aio-qc/
 dynamic = ["version"]                 # read from AIO_QC/__init__.py (__version__): bump it in one place
-description = "Find and fix annotation errors in LabelMe and YOLO datasets before training, plus Data Studio for tables — one desktop app"
+description = "Find and fix annotation errors in LabelMe and YOLO datasets before training: one desktop app for dataset QC, video frame extraction and table analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-only"          # SPDX (PEP 639); bundled third-party: THIRD_PARTY_NOTICES.md, licenses/
 license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Preetkaran Singh" }]
-keywords = ["annotation", "quality control", "labelme", "yolo", "dataset", "computer vision", "qc"]
+keywords = ["annotation", "quality control", "labelme", "yolo", "dataset", "computer vision", "qc", "video", "frame extraction", "model evaluation"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
@@ -33,13 +33,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-full = ["natsort>=8.0", "Pillow>=9.5", "PyYAML>=6.0", "orjson>=3.9", "pandas>=2.0", "pyarrow>=14", "openpyxl>=3.1"]
+full = ["natsort>=8.0", "Pillow>=9.5", "PyYAML>=6.0", "orjson>=3.9", "pandas>=2.0", "pyarrow>=14", "openpyxl>=3.1",
+        "av>=11", "imageio-ffmpeg>=0.4.9", "onnxruntime>=1.16", "psutil>=5.9"]
 data = ["pandas>=2.0", "pyarrow>=14", "openpyxl>=3.1"]        # Data Studio (tables); PySpark runs in its own env
+video = ["av>=11", "imageio-ffmpeg>=0.4.9", "Pillow>=9.5", "psutil>=5.9", "py7zr>=0.20; sys_platform == 'win32'"]   # Frame Extractor: PyAV decoder (VFR /
+                                                                           # exact seeking), bundled ffmpeg (clips,
+                                                                           # real-time playback, search), CPU budget
+models = ["onnxruntime>=1.16", "PyYAML>=6.0", "Pillow>=9.5"]   # ONNX models in-app (Testing, Frame Extractor);
+                                                                # .pt / .engine run in their own Python environment
+# libmpv (optional playback engine of the Frame Extractor) is not a pip package: Settings ▸ Playback, or put
+# libmpv-2.dll / libmpv.so.2 next to the app (AIO_QC/tools/frame_extractor/lib/README.txt).
 
 [project.urls]
 Homepage = "https://github.com/spreetkaran/aio-qc"
 Issues = "https://github.com/spreetkaran/aio-qc/issues"
-Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v2.0.0"
+Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v2.1.0"
 Changelog = "https://github.com/spreetkaran/aio-qc/blob/main/AIO_QC/CHANGES.md"
 
 [project.gui-scripts]
@@ -60,9 +68,11 @@ include = ["AIO_QC*"]
 
 [tool.setuptools.package-data]
 # the bundled LabelMe / labelImg sources ("Fix in Editor") are not importable packages — ship them as data, whole
-"AIO_QC" = ["editors/**/*", "icons/**/*", "fonts/**/*", "validators/**/*", "CHANGES.md"]
-"*" = ["*.svg", "*.png", "*.ico", "*.ttf", "*.otf", "*.json", "*.yaml", "*.md", "*.txt", "*.zip", "*.toml",
-       "*.qrc", "*.ui", "*.cfg", "*.py"]
+"AIO_QC" = ["editors/**/*", "icons/**/*", "fonts/**/*", "validators/**/*", "CHANGES.md",
+            "INTEGRATION.md", "tools/frame_extractor/docs/**/*", "tools/frame_extractor/icons/**/*",
+            "tools/frame_extractor/lib/**/*"]
+"*" = ["*.svg", "*.png", "*.ico", "*.ttf", "*.otf", "*.woff", "*.json", "*.yaml", "*.md", "*.txt", "*.zip",
+       "*.toml", "*.qrc", "*.ui", "*.cfg", "*.py", "*.html"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.pyc"]

@@ -1,0 +1,25 @@
+<!--title: Troubleshooting-->
+<!--keywords: problem error crash safe mode ffmpeg not found libmpv cuda gpu slow playback dropped frames model fails environment faq help support logs-->
+<h1>Troubleshooting</h1>
+<table class="t">
+<tr><th>Problem</th><th>What to do</th></tr>
+<tr><td>libmpv is not used / “mpv could not play the file”</td><td>Open Settings ▸ Playback ▸ <b>libmpv…</b>: it shows why
+(not found, wrong architecture, <i>undefined symbol</i> = built for a newer system - use your distribution's package)
+and gets a working one (<i>Get libmpv automatically</i>). After a failed automatic download the app waits 3 days
+before trying again by itself; the button works any time. libmpv needs the GPU renderer.</td></tr>
+<tr><td>The app closed while opening or playing a video</td><td>On the next start it switches to <b>safe settings</b> (for example the
+software renderer instead of the GPU one), tells you what changed, and links to the crash report. Help ▸ Open log folder has the details.</td></tr>
+<tr><td>“ffmpeg was not found”</td><td>Install ffmpeg (or <code>pip install imageio-ffmpeg</code>) and set Settings ▸ Playback ▸ ffmpeg.</td></tr>
+<tr><td>Playback drops frames</td><td>Turn on the statistics overlay (<span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">I</span>) to see the cause.
+Install libmpv, keep the GPU renderer, and run Playback ▸ Benchmark decoders.</td></tr>
+<tr><td>Times look wrong on phone / screen recordings</td><td>They are variable-frame-rate: install PyAV and use Decoder ▸ Auto or PyAV.</td></tr>
+<tr><td>A <code>.pt</code> model will not load</td><td>Settings ▸ Models ▸ Python environment ▸ <i>Check</i> lists the versions and GPUs it sees; <i>Find automatically</i>
+looks through all environments; or install into a temporary environment.</td></tr>
+<tr><td>Testing: “no class names in common”</td><td>The dataset's class names differ from the model's. Fix <code>data.yaml</code> / <code>classes.txt</code>, or rename classes consistently.</td></tr>
+<tr><td>Testing scores look too good</td><td>Check that the ground truth is not unreviewed pre-labels from the same model (they are excluded by default).</td></tr>
+<tr><td>Text search says it needs CLIP</td><td>Install <code>open_clip_torch</code> into the environment from Settings ▸ Models, or use the Built-in engine for “find similar”.</td></tr>
+<tr><td>The interface feels busy</td><td>Settings ▸ General ▸ Animations ▸ Reduced or Off.</td></tr>
+</table>
+<h2>Reporting a problem</h2>
+<p>Include the log file (Help ▸ Open log folder), the Frame Extractor version (Help ▸ About) and, for video problems, the output of
+<code>aio-qc probe &lt;video&gt;</code>.</p>

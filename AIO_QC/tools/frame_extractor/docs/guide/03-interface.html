@@ -1,0 +1,43 @@
+<!--title: The interface-->
+<!--keywords: toolbar canvas seekbar timeline strip docks status bar theme layout panels command palette-->
+<h1>The interface</h1>
+
+<h2>Main window</h2>
+<table class="t">
+<tr><th>Area</th><th>What it does</th></tr>
+<tr><td><b>Toolbar</b></td><td>Load video (click; the arrow lists recent videos), output folder, save frame, ROI and tracking, in / out,
+bookmarks, markers, detections, batch, review gallery, Testing — and the output bar (format, quality, naming).</td></tr>
+<tr><td><b>Video canvas</b></td><td>The picture, with ROI, detections and overlays. Wheel = step frames; Ctrl + wheel = zoom
+around the cursor; middle-drag (or drag when zoomed) = pan; double-click toggles fit ↔ 100 %.</td></tr>
+<tr><td><b>Seekbar</b></td><td>Click or drag to jump; hover for a thumbnail preview.</td></tr>
+<tr><td><b>Timeline strip</b></td><td>Under the seekbar: sharpness bars (red = below your blur threshold), motion line, scene cuts,
+an optional model track, and the marker lane. Right-click for options.</td></tr>
+<tr><td><b>Transport row</b></td><td>Rewind / step / play / step / forward, the position display, step size, speed and zoom buttons
+(Fit and 100 % light up while active).</td></tr>
+<tr><td><b>Docks</b> (right)</td><td><i>Marks</i> (bookmarks, in / out), <i>Markers</i> (picked frames, snap, suggest, extract) and
+<i>Search frames</i>. Drag them anywhere; View ▸ Reset window layout restores the default.</td></tr>
+<tr><td><b>Status bar</b></td><td>Pixel under the cursor, ROI, sharpness of the current frame, decoder and playback information.</td></tr>
+</table>
+
+<h2>The position display</h2>
+<p>Shows the current time and frame. <b>Click</b> it to type a position — <code>1:23.5</code>, <code>00:01:23:12</code>,
+<code>1234f</code>, <code>42%</code>, <code>+5s</code>, <code>-30f</code>, <code>in</code>, <code>out</code>, <code>end</code>.
+Scroll on a unit (hours, minutes, seconds, frames) to nudge it, <b>Shift</b> for ×10; drag sideways to scrub. The format chip
+cycles Time · Timecode (SMPTE, drop-frame aware) · Frames · Seconds · Remaining.</p>
+
+<h2>Finding commands</h2>
+<ul>
+<li><b>Command palette</b> — <span class="k">Ctrl</span>+<span class="k">K</span>: type any part of a command name and press Enter.</li>
+<li><b>This guide</b> — <span class="k">F1</span>; <b>shortcut reference</b> — <span class="k">Ctrl</span>+<span class="k">/</span>;
+Help ▸ <b>Customize keyboard shortcuts</b> changes any of them, with conflict checking.</li>
+<li><b>Get Started</b> — Help ▸ Get Started replays the one-minute tour.</li>
+<li><b>Tooltips</b> — hover any control for a short explanation.</li>
+</ul>
+
+<h2>Appearance</h2>
+<ul>
+<li><b>Theme</b> — the whole of AIO QC follows your system's light or dark setting.</li>
+<li><b>Renderer</b> — Settings ▸ Display ▸ Video renderer: GPU (OpenGL, recommended) or Software.</li>
+<li><b>Animations</b> — Settings ▸ General ▸ Animations: Full, Reduced (shorter, gentler) or Off. Animations run at your
+display's refresh rate and never faster.</li>
+</ul>

@@ -1,0 +1,25 @@
+<!--title: Command line-->
+<!--keywords: cli command line terminal headless script extract probe testset eval clip automation server-->
+<h1>Command line</h1>
+<p>Everything heavy also runs without the window — on a server, in a script, or overnight:</p>
+<pre>aio-qc &lt;command&gt; [options]</pre>
+<table class="t">
+<tr><th>Command</th><th>Does</th></tr>
+<tr><td><code>extract</code></td><td>Batch extraction (same settings and presets as the batch queue)</td></tr>
+<tr><td><code>probe</code></td><td>Decoder, frame-rate, VFR and rotation information for videos</td></tr>
+<tr><td><code>testset</code></td><td>Build or extend a Testing test set of unique frames</td></tr>
+<tr><td><code>eval</code></td><td>Score weights on a test set / dataset / videos and write the HTML report</td></tr>
+<tr><td><code>clip</code></td><td>Cut a clip (fast lossless, or <code>--exact</code>)</td></tr>
+</table>
+<h2>Examples</h2>
+<pre># one sharp frame per second, skip near-duplicates, 4 workers
+aio-qc extract D:/videos -o D:/frames --mode sharpest --every 1s --dedup 2 -w 4
+
+# test set from two videos and a folder, then compare two models
+aio-qc testset testsets/gate --add cam1.mp4 cam2.mp4 frames/ --every 1s
+aio-qc eval testsets/gate -m old.pt -m new.onnx --env yolo --report comparison
+
+# cut 1:00 - 1:30 frame-exactly
+aio-qc clip cam1.mp4 1:00 1:30 -o clip.mp4 --exact</pre>
+<h2>Full reference</h2>
+<!--@cli-->

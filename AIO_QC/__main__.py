@@ -82,7 +82,51 @@ def _install_excepthook() -> None:
     sys.excepthook = hook
 
 
+def _process_setup_before_qt():
+    """Process-wide pieces that must exist before QApplication — owned here, exactly once for the whole app."""
+    import multiprocessing
+    multiprocessing.freeze_support()            # Frame Extractor batch workers in frozen (PyInstaller) builds
+    if sys.platform == "win32":                 # every child process dies with the app, however it ends
+        from AIO_QC.core import procs
+        procs.install_job_object()
+    try:                                        # vsync + compatibility context for the Frame Extractor's GL canvas
+        from PyQt6.QtGui import QSurfaceFormat
+        fmt = QSurfaceFormat.defaultFormat()
+        fmt.setSwapInterval(1)
+        fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+        QSurfaceFormat.setDefaultFormat(fmt)
+    except Exception:
+        pass
+
+
+def _process_setup_after_qt(app):
+    """After QApplication: C numeric locale (Qt sets the user's on Unix; libmpv refuses to start without "C"), and
+    the one app-wide motion filter (dialog fades, smooth wheel scrolling, every window kept on its screen)."""
+    if sys.platform != "win32":
+        import locale
+        try:
+            locale.setlocale(locale.LC_NUMERIC, "C")
+        except locale.Error:
+            pass
+    from AIO_QC.widgets import motion
+    motion.install(app)
+
+
+CLI_COMMANDS = ("extract", "probe", "testset", "eval", "clip")
+VIDEO_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm", ".wmv", ".flv", ".mpg", ".mpeg", ".ts", ".mts",
+              ".m2ts", ".3gp")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in CLI_COMMANDS:
+        # the Frame Extractor's command line (Qt-free): aio-qc extract|probe|testset|eval|clip ...
+        import multiprocessing
+        multiprocessing.freeze_support()
+        if sys.platform == "win32":
+            from AIO_QC.core import procs
+            procs.install_job_object()
+        from AIO_QC.tools.frame_extractor.core.cli import main as cli_main
+        sys.exit(cli_main(sys.argv[1:]))
     parser = argparse.ArgumentParser(prog="aio-qc", description=f"{__appname__} — quality control for annotated "
                                                                  "image datasets (LabelMe / YOLO)")
     parser.add_argument("--version", "-V", action="store_true", help="show version")
@@ -92,9 +136,12 @@ def main():
         choices=["debug", "info", "warning", "fatal", "error"],
         help="logger level",
     )
-    parser.add_argument("--mode", choices=["image", "data"], default=None,
-                        help="start in Image QC or Data Studio (default: the mode used last)")
-    parser.add_argument("files", nargs="*", help="data files to open in Data Studio (CSV, Excel, Parquet, JSON …)")
+    parser.add_argument("--mode", choices=["image", "video", "data"], default=None,
+                        help="start in the Frame Extractor (video), Image QC or Data Studio (default: Image QC)")
+    parser.add_argument("files", nargs="*", help="a video to open in the Frame Extractor, or data files to open in "
+                                                 "Data Studio (CSV, Excel, Parquet, JSON …)")
+    parser.epilog = ("Frame Extractor command line: aio-qc extract | probe | testset | eval | clip ...  "
+                     "(aio-qc extract -h for its options)")
     args = parser.parse_args()
 
     if args.version:
@@ -132,7 +179,9 @@ def _run(args) -> int:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"AIO_QC.{__version__}")
         except Exception:
             pass
+    _process_setup_before_qt()
     app = QApplication(sys.argv)
+    _process_setup_after_qt(app)
     app.setApplicationName(__appname__)
     app.setApplicationVersion(__version__)
     app.setWindowIcon(appIcon())
@@ -143,13 +192,26 @@ def _run(args) -> int:
     shell = AppShell(app)
     app.shell = shell
     app.main_window = shell                  # Ctrl+C / crash hooks: request_quit / log_errors reach both modes
-    mode = "data" if args.files else shell.start_mode(args.mode)
-    logger.info(f"starting in {'Data Studio' if mode == 'data' else 'Image QC'}")
+    videos = [f for f in args.files if f.lower().endswith(VIDEO_EXTS)]
+    tables = [f for f in args.files if f not in videos]
+    mode = "video" if videos else "data" if tables else shell.start_mode(args.mode)
+    from AIO_QC.shell import NAMES
+    logger.info(f"starting in {NAMES.get(mode, mode)}")
 
     with contextlib.redirect_stderr(new_target=_LoggerIO()):
         window = shell.show(mode)
-        for f in args.files:
-            window._open_path(os.path.abspath(f))
+        if videos and shell.mode == "video":
+            window.load_video(os.path.abspath(videos[0]))
+            if len(videos) > 1:                          # several: straight into the batch queue, like a drop
+                window.open_batch_queue(add_current=False)
+                for v in videos[1:]:
+                    window.batch_dialog.add_job(os.path.abspath(v))
+        if tables:
+            if shell.mode != "data":
+                window = shell.window("data")
+                shell.switch("data")
+            for f in tables:
+                window._open_path(os.path.abspath(f))
         code = app.exec()
     logger.debug(f"event loop finished (code {code})")
     return code

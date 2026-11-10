@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import threading
+import types
 from pathlib import Path
 
 from loguru import logger
@@ -42,9 +43,10 @@ from AIO_QC.core.prep import pick as PK
 from AIO_QC.core.prep import tasks as T
 from AIO_QC.utils import newButton, newIcon, style as apply_style
 from . import anim
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 
-class Job(QThread):
+class Job(RetainedThread, QThread):
     progress = pyqtSignal(int, int, str)
     done = pyqtSignal(object)
     failed = pyqtSignal(str)
@@ -62,6 +64,64 @@ class Job(QThread):
         except Exception as exc:
             logger.exception("data prep")
             self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+_READS = ("text", "isChecked", "value", "currentData", "currentText", "toPlainText", "currentIndex")
+
+
+class _FrozenItem:
+    def __init__(self, it):
+        self._text, self._data = it.text(), {r: it.data(r) for r in (Qt.ItemDataRole.UserRole,)}
+
+    def text(self):
+        return self._text
+
+    def data(self, role):
+        return self._data.get(role)
+
+
+class _Frozen:
+    """Values of one input widget, read on the UI thread, readable from a worker (no Qt calls)."""
+
+    def __init__(self, w):
+        self._v = {}
+        for name in _READS:
+            f = getattr(w, name, None)
+            if callable(f):
+                try:
+                    self._v[name] = f()
+                except TypeError:
+                    pass
+        if isinstance(w, QListWidget):
+            it = w.currentItem()
+            self._v["currentItem"] = None if it is None else _FrozenItem(it)
+        for name, val in self._v.items():
+            setattr(self, name, (lambda v: lambda *_a: v)(val))
+
+
+_INPUTS = (QLineEdit, QCheckBox, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QListWidget)
+
+
+class PageSnapshot:
+    """A page whose input widgets are frozen copies: make_plan / run execute in a worker thread and must never
+    touch a live widget (Qt objects are not thread-safe). Built on the UI thread right before the job starts."""
+
+    def __init__(self, page):
+        self.__dict__["_page"] = page
+        self.__dict__["_vals"] = {k: _Frozen(v) for k, v in vars(page).items() if isinstance(v, _INPUTS)}
+
+    def __getattr__(self, k):
+        vals = self.__dict__["_vals"]
+        if k in vals:
+            return vals[k]
+        page = self.__dict__["_page"]
+        f = getattr(type(page), k, None)
+        if isinstance(f, types.FunctionType):
+            return types.MethodType(f, self)
+        return getattr(page, k)
+
+    def __setattr__(self, k, v):
+        setattr(self.__dict__["_page"], k, v)
 
 
 def _folder_row(parent, text, setting_key, settings, save=False, tip=""):
@@ -866,6 +926,8 @@ class DataPrepDialog(QDialog):
     # ------------------------------------------------------------------ background
     def _start(self, fn, done, label):
         self.job = Job(fn, self)
+        from AIO_QC.widgets import tasks
+        self._task = tasks.start(f"Data Prep · {self.page().TITLE} · {label.lower()}", cancel=self._stop)
         self.job.progress.connect(self._on_progress)
         self.job.done.connect(lambda r: (self._idle(), done(r)))
         self.job.failed.connect(lambda m: (self._idle(), self.status.setText(f"⚠ {m}")))
@@ -879,6 +941,8 @@ class DataPrepDialog(QDialog):
         self.job.start()
 
     def _on_progress(self, d, t, label):
+        if getattr(self, "_task", None) is not None:
+            self._task.update(d / t if t else None, label)
         if t > 0:
             self.progress.setRange(0, t)
             self.progress.setValue(d)
@@ -889,6 +953,9 @@ class DataPrepDialog(QDialog):
 
     def _idle(self):
         self.job = None
+        if getattr(self, "_task", None) is not None:
+            self._task.finish()
+            self._task = None
         self.progress.setVisible(False)
         self.preview_btn.setEnabled(True)
         self.stop_btn.setVisible(False)
@@ -908,7 +975,8 @@ class DataPrepDialog(QDialog):
         self.details.clear()
         for b in (self.open_btn, self.ds_btn, self.log_btn, self.undo_btn):
             b.setVisible(False)
-        self._start(lambda cancel, progress: pg.make_plan(cancel, progress), self._planned, "Working out the plan")
+        snap = PageSnapshot(pg)
+        self._start(lambda cancel, progress: snap.make_plan(cancel, progress), self._planned, "Working out the plan")
 
     def _planned(self, P):
         self.plan = P
@@ -956,7 +1024,8 @@ class DataPrepDialog(QDialog):
                                     "can be undone (Undo This Run / the Undo page).") != QMessageBox.StandardButton.Yes:
                 return
         P = self.plan
-        self._start(lambda cancel, progress: pg.run(P, cancel, progress), lambda st: self._ran(pg, P, st),
+        snap = PageSnapshot(pg)
+        self._start(lambda cancel, progress: snap.run(P, cancel, progress), lambda st: self._ran(pg, P, st),
                     "Running")
 
     def _ran(self, pg, P, st):

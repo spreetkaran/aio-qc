@@ -532,10 +532,14 @@ class EmptyDialog(BaseScanDialog):
                         "Moves annotation files (and optionally images) to <root>/.aio_qc_trash")
 
     def make_context(self):
-        return {"adapter": self.session.adapter}
+        return {"adapter": self.session.adapter, "cls": self.session.is_classification}
 
     def scan_sample(self, ctx, s):
         ann = ctx["adapter"].load(s, light=True)
+        if ctx["cls"]:                                   # classification: an image is empty without a class
+            if not (ann.tags or []):
+                return [ResultRow(s.key, ("no class", s.split))]
+            return []
         if not ann.exists:
             return [ResultRow(s.key, ("no label file", s.split), tone="muted")]
         if not ann.shapes:

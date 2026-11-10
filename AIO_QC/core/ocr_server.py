@@ -16,6 +16,17 @@ Each image is decoded ONCE and all of its boxes are cropped here (no pixels cros
 holds every text line found with its box in IMAGE coordinates (for truncated / loose / merged-line checks).
 Standard library + the OCR engine; numpy and Pillow come with every engine.
 """
+import os as _os
+import sys as _sys
+
+# Started as `python <this file>`, Python puts this folder first on sys.path - and the app's own modules here
+# (profile.py, io.py, imageio.py …) would shadow the standard library / packages the models need:
+# torch imports cProfile, which imports `profile`, and got AIO QC's instead ("cannot import name 'YOLO' from
+# 'ultralytics'"). This server needs nothing from its folder: take it off the path before anything else is imported.
+_HERE = _os.path.normcase(_os.path.dirname(_os.path.abspath(__file__)))
+_sys.path[:] = [p for p in _sys.path if _os.path.normcase(_os.path.abspath(p or _os.curdir)) != _HERE]
+del _HERE
+
 import json
 import sys
 import time

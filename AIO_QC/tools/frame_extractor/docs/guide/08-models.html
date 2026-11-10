@@ -1,0 +1,35 @@
+<!--title: Models & pre-annotations-->
+<!--keywords: yolo onnx pt engine environment conda venv ultralytics gpu cuda device sahi half detections overlay timeline model track-->
+<h1>Models &amp; pre-annotations</h1>
+<p>Settings ▸ Models holds one model configuration shared by the detection overlay, the timeline model track,
+marker pre-annotations, batch mining and Testing.</p>
+
+<h2>Model files</h2>
+<table class="t">
+<tr><th>Weights</th><th>Run where</th><th>Setup</th></tr>
+<tr><td><code>.onnx</code></td><td>Inside the app (ONNX Runtime, or OpenCV DNN)</td><td>None</td></tr>
+<tr><td><code>.pt</code>, <code>.engine</code>, <code>.torchscript</code></td><td>In a Python environment with <i>ultralytics</i> + <i>torch</i>, through a
+small server process (the app itself never loads torch)</td><td>Pick the environment — or let the dialog find one; with none available,
+one click builds a temporary environment (optionally reusing an existing PyTorch) that is removed on exit</td></tr>
+</table>
+<p>Class names and the training image size come from the model file; GPU devices come from the environment.
+<b>Test load</b> and <b>Test on current frame</b> check a model before you rely on it; <b>Export .pt → ONNX</b> converts
+a <code>.pt</code> through ultralytics.</p>
+
+<h2>Options</h2>
+<ul>
+<li><b>Confidence / IoU</b> — detection threshold and NMS overlap.</li>
+<li><b>Uncertainty band</b> — confidences in this range count as “uncertain” (timeline track, mining).</li>
+<li><b>Image size</b> — 0 = the size the model was trained at.</li>
+<li><b>Device</b>, <b>half precision</b> (FP16 on the GPU), <b>SAHI</b> sliced inference for small objects in large frames
+(needs <code>sahi</code> in the environment).</li>
+</ul>
+
+<h2>Where models are used</h2>
+<ul>
+<li><span class="k">D</span> — detections on the paused frame, one colour per model.</li>
+<li>Tools ▸ <b>Run models in timeline analysis</b> — a model row on the timeline strip (purple = detections, amber = uncertain or
+disagreeing models); <span class="k">F</span> jumps to flagged samples.</li>
+<li>Markers and batch — <b>pre-annotations</b> (LabelMe / YOLO) and <b>mining</b>.</li>
+<li>The <b>Testing</b> — measuring and comparing models.</li>
+</ul>

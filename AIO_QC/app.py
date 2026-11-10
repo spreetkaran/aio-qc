@@ -144,7 +144,7 @@ QC_TOOLS = [
     QCTool("rules", "Relationship Rules", "tool-rules", "Ctrl+Shift+K", "shapes", RulesDialog,
            "How annotations relate: inside / contains, counts, requires / excludes, overlaps, size, shape type, "
            "attributes, groups, one class per image — or let AIO QC suggest rules from the data"),
-    QCTool("model_setup", "Models & Environment", "tool-model-setup", "Ctrl+Alt+M", "models", None,
+    QCTool("model_setup", "Models & Environment", "tool-model-setup", "Ctrl+Alt+N", "models", None,
            "Python env, models, class maps, device, imgsz, ONNX / TensorRT", action="model_setup"),
     QCTool("ocr_check", "OCR Check", "tool-ocr", "Ctrl+Shift+T", "models", OcrCheckDialog,
            "Read the text in text-class boxes (PaddleOCR / RapidOCR / EasyOCR / Tesseract from your environment) and "
@@ -154,6 +154,10 @@ QC_TOOLS = [
            "mislabels, atypical objects, look-alikes with different labels"),
     QCTool("model_check", "Model Check", "tool-model-check", "Ctrl+Shift+M", "models", ModelCheckDialog,
            "Findings + analysis: report card, confusion, error types, box quality, slices, label-error estimate"),
+    QCTool("testing", "Testing", "tool-testing", "Ctrl+Alt+L", "models", None,
+           "Measure and compare detection models (formerly the Frame Extractor's Model Lab): this dataset, a test "
+           "set from videos, or videos only — leaderboard, charts, confusion, per class, failures, plots, A/B, "
+           "video behaviour, reports; label fixes go through AIO QC", action="testing"),
     # ---- REVIEW
     QCTool("inbox", "Issues Inbox", "tool-inbox", "Ctrl+I", "review", IssuesDialog,
            "Every tool's findings in one place, a risk score per file, and one review queue — worst first"),
@@ -187,6 +191,15 @@ MAX_RECENT = 10
 PIXMAP_CACHE_BYTES = 768 * 1024 * 1024
 
 
+def _find_ffmpeg(user_path=""):
+    """ffmpeg for Testing's annotated-video export (the Frame Extractor's lookup: its setting, PATH, bundled)."""
+    try:
+        from AIO_QC.tools.frame_extractor.core.preview_pipe import find_ffmpeg
+        return find_ffmpeg(user_path)
+    except Exception:
+        return None
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -196,7 +209,8 @@ class MainWindow(QMainWindow):
         w = int(screen.width() * 0.75)
         self.resize(w, int(w * 0.55))
         self.settings = utils.app_settings()
-        anim.ENABLED = self.settings.value("ui/animations", True, type=bool)
+        from AIO_QC.widgets import motion
+        anim.ENABLED = motion.enabled()                    # one switch for every animation (ui/animations)
         from AIO_QC.core import backups as _backups
         _backups.EXACT_IMAGE_DATA = self.settings.value("storage/exact_image_data", False, type=bool)
         self.inference = InferenceService(self.settings, self)       # shared model server (Model Setup / Check)
@@ -370,7 +384,7 @@ class MainWindow(QMainWindow):
                               checked=self.settings.value("ui/compact_toolbar", True, type=bool),
                               tip="Icons without text in the toolbar — more room for the image (names in tooltips)"),
             animations=A("Animations", self._set_animations, checkable=True,
-                         checked=self.settings.value("ui/animations", True, type=bool),
+                         checked=anim.ENABLED,
                          tip="Smooth motion for panels, drawers, dialogs and the tour (off = everything changes at once)"),
             focus=A("Focus Mode", self.toggle_focus_mode, ["F11", "Ctrl+Alt+F"], checkable=True,
                     tip="Only the image: hide every panel and the toolbar; the same key restores your layout"),
@@ -408,7 +422,7 @@ class MainWindow(QMainWindow):
             # tools
             rename=A("Rename / Merge Label…", self._rename_selected_label, "Ctrl+R", icon="edit",
                      tip="Opens Label Mapping focused on the selected label (the single place for renames)"),
-            model_setup=A("Models & Environment…", self.open_model_setup, "Ctrl+Alt+M", icon="tool-model-setup",
+            model_setup=A("Models & Environment…", self.open_model_setup, "Ctrl+Alt+N", icon="tool-model-setup",
                           tip="Python environment, models, class mapping, device and image size for Model Check"),
             label_map=A("Label Mapping…", self.open_label_map, "Ctrl+M", icon="tool-label-map",
                         tip="Map labels to other names for viewing and checking (files unchanged)"),
@@ -419,8 +433,10 @@ class MainWindow(QMainWindow):
             mark_clear=A("Clear mark", lambda: self.mark_review(None), "U", icon="review-clear", tip="Remove the review mark"),
             next_unreviewed=A("Next unreviewed", self.goto_next_unreviewed, "N", icon="review-next",
                               tip="Jump to the next file without a review mark"),
-            auto_advance=A("Auto-advance after marking", None, tip="Go to the next file after ✓ / ⚑",
-                           checkable=True, checked=True),
+            auto_advance=A("Auto-advance after marking",
+                           lambda on: self.settings.setValue("review/auto_advance", bool(on)),
+                           tip="Go to the next file after ✓ / ⚑", checkable=True,
+                           checked=self.settings.value("review/auto_advance", True, type=bool)),
             export_review=A("Export Review Report…", self.export_review, icon="export", tip="CSV of every file's review state"),
             save_flagged=A("Save Flagged Files…", self.save_flagged, icon="review-flag",
                            tip="Copy the flagged files to a folder, or save their names to a text file"),
@@ -436,7 +452,16 @@ class MainWindow(QMainWindow):
             data_prep=A("Data Prep…", self.open_data_prep, "Ctrl+Alt+P", icon="tool-dataprep",
                         tip="Raw data → dataset: unzip, combine & flatten, orphans, integrity, exact duplicates, resize "
                             "(no dataset needed; every run can be undone)"),
-            to_studio=A("Switch to Data Studio", lambda: self._shell_call("switch", "data"), "Ctrl+Alt+M",
+            testing=A("Testing…", lambda: self.open_testing(), "Ctrl+Alt+L", icon="tool-testing",
+                      tip="Measure and compare detection models on this dataset, a test set or videos"),
+            next_mode=A("Next Mode", lambda: self._shell_call("cycle"), "Ctrl+Alt+M",
+                        tip="Frame Extractor → Image QC → Data Studio"),
+            to_video=A("Switch to Frame Extractor", lambda: self._shell_call("switch", "video"),
+                       icon="mode-video", tip="The video mode of AIO QC: play, mark and extract frames for annotation"),
+            source_video=A("Show Source Video in Frame Extractor", lambda: self.show_source_video(),
+                           icon="mode-video", tip="The video this image was extracted from, at its frame, in the "
+                                                  "Frame Extractor"),
+            to_studio=A("Switch to Data Studio", lambda: self._shell_call("switch", "data"),
                         icon="mode-data", tip="The table-data mode of AIO QC: CSV / Excel / Parquet analysis, "
                                               "cleaning, features, charts, PySpark"),
             ann_table=A("Annotations → Data Studio", lambda: self._shell_call("annotations_to_studio"),
@@ -642,21 +667,23 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._build_recent_menu)
         utils.addActions(self.menus.file, (self.a.open_dir,))
         self.menus.file.addMenu(self.recent_menu)
-        utils.addActions(self.menus.file, (self.a.reload, self.a.load_classes, None, self.a.open_trash,
-                                           self.a.clear_cache, self.a.storage, None, self.a.to_studio, None,
-                                           self.a.exit))
+        utils.addActions(self.menus.file, (self.a.reload, self.a.load_classes, None, self.a.open_trash, None,
+                                           self.a.next_mode, self.a.to_video, self.a.to_studio, self.a.source_video,
+                                           None, self.a.exit))
+        # preferences (compact toolbar, watch, guideline cards, animations, auto-advance, storage …) live in
+        # File ▸ Settings… (widgets.settings_pages.image_sections); their actions stay for shortcuts / handlers
+        for act in (self.a.compact_toolbar, self.a.watch, self.a.guide_cards, self.a.animations,
+                    self.a.auto_advance, self.a.clear_cache):
+            self.addAction(act)
         from AIO_QC.widgets.mode_switch import ModeSwitch
         self.mode_switch = ModeSwitch("image", self)
         self.mode_switch.switched.connect(lambda m: self._shell_call("switch", m))
         mb.setCornerWidget(self.mode_switch, Qt.Corner.TopRightCorner)
         self.mode_switch.setVisible(getattr(QApplication.instance(), "shell", None) is not None)
+        from AIO_QC.widgets.settings_dialog import install_settings
+        install_settings(self)                              # gear in the corner + File ▸ Settings… (Ctrl+,)
         utils.addActions(self.menus.edit, (self.a.undo_edit, self.a.redo_edit, None, self.a.new_box, None,
                                            self.a.guide_good, self.a.guide_bad, None, self.a.history))
-        hint = QAction("Select a shape (V, click) — drag handles or the shape · arrows nudge · Del · 1–9 / L relabel ·"
-                       " Ctrl+click outline adds a vertex · Alt+click vertex removes it", self)
-        hint.setEnabled(False)
-        self.menus.edit.addSeparator()
-        self.menus.edit.addAction(hint)
         A = functools.partial(utils.newAction, self)
         self.a_toolbar = A("Toolbar", lambda c: self.toolbar.setVisible(c), checkable=True, checked=True)
         dock_toggles = [self._panel_action(d, t) for d, t in
@@ -668,7 +695,7 @@ class MainWindow(QMainWindow):
             None, self.a.zoom_in, self.a.zoom_out, self.a.fit, self.a.actual, None,
             self.a.tags, self.a.fill, self.a.all_labels, None,
             {"menu": "Panels", "actions": (*dock_toggles, None, self.a_toolbar)},
-            self.a.pin_qc, self.a.compact_toolbar, self.a.focus, None, self.a.watch, self.a.guide_cards, self.a.animations,
+            self.a.pin_qc, self.a.focus,
         ))
         utils.addActions(self.menus.go, (self.a.next, self.a.prev, self.a.next_unreviewed, None,
                                          self.a.next_shape, self.a.prev_shape, self.a.clear_selection, None,
@@ -680,7 +707,7 @@ class MainWindow(QMainWindow):
             for key, title, _q in GROUPS if key != "review"])
         utils.addActions(self.menus.review, [self.qc_actions[t.key] for t in QC_TOOLS if t.group == "review"] + [
             None, self.a.change_class, self.a.mark_ok, self.a.mark_flag, self.a.flag_note, self.a.mark_clear, None,
-            self.a.next_unreviewed, self.a.auto_advance, None, self.a.save_flagged, self.a.export_review])
+            self.a.next_unreviewed, None, self.a.save_flagged, self.a.export_review])
         utils.addActions(self.menus.tools, (self.a.sketch, self.a.roi, None, self.a.data_prep, self.a.ann_table, None,
                                             self.a.palette, None, self.a.storage, None, self.a.reset, self.a.logs))
         utils.addActions(self.menus.help, (self.a.get_started, None, self.a.guide, self.a.tool_map, self.a.shortcuts,
@@ -721,7 +748,7 @@ class MainWindow(QMainWindow):
         if not self.settings.value("ui/ribbon_v1", False, type=bool):
             self.settings.setValue("ui/ribbon_v1", True)     # the panel is slim now: show it once after the update
             self.qc_dock.show()
-            QTimer.singleShot(1200, lambda: self.statusBar().showMessage(
+            utils.later(1200, self, lambda: self.statusBar().showMessage(
                 "The QC Panel is now a slim tab row — click a tab for its tools, 📌 to keep them open, "
                 "Ctrl+K to run any command, F11 for focus mode", 12000))
 
@@ -756,6 +783,9 @@ class MainWindow(QMainWindow):
         self._stop_index()
         for d in list(self.open_dialogs.values()):
             d.close()
+        if getattr(self, "testing", None) is not None:
+            self.testing._dirty = False                  # its session is autosaved (with the dataset)
+            self.testing.close()
         stop_everything(self, "app closing")             # nothing left running when Qt tears the window down
         logger.info("state saved, background work stopped")
         super().closeEvent(event)
@@ -858,6 +888,8 @@ class MainWindow(QMainWindow):
             self.log_errors([f"[class map] {p}" for p in adapter.class_map.problems])
         self.file_dock.set_samples(session.samples, session.splits, session.folders)
         self.set_dataset_actions_enabled(True)
+        if getattr(self, "testing", None) is not None and self.testing.isVisible():
+            utils.later(0, self.testing, self.testing.use_qc_dataset)     # Testing follows the open dataset
         self._update_mapping_indicator()
         self._update_review_progress()
         if session.label_map:
@@ -1437,8 +1469,17 @@ class MainWindow(QMainWindow):
         return act
 
     def _set_animations(self, on: bool):
-        anim.ENABLED = bool(on)
-        self.settings.setValue("ui/animations", bool(on))
+        from AIO_QC.widgets import motion
+        motion.set_mode("full" if on else "off")           # also sets anim.ENABLED
+
+    # ------------------------------------------------------------------ settings
+    def settings_sections(self):
+        from AIO_QC.widgets.settings_pages import image_sections
+        return image_sections(self)
+
+    def open_settings(self, key=None):
+        from AIO_QC.widgets.settings_dialog import open_settings
+        return open_settings(self, self.settings_sections(), "Settings — Image QC", key)
 
     def toggle_focus_mode(self, on=None):
         """Only the image: every dock and the toolbar hidden; the exact layout comes back on the second press.
@@ -1641,7 +1682,7 @@ class MainWindow(QMainWindow):
         self.history_panel.set_key(key)
         self._update_position()
         if shape_to_focus is not None or any(e is not None for e in extras):
-            QTimer.singleShot(30, lambda: self._apply_extras(shape_to_focus, *extras))
+            utils.later(30, self, lambda: self._apply_extras(shape_to_focus, *extras))
         self.preload_neighbors()
         self._update_review_badge()
         self._update_filmstrip()
@@ -1908,6 +1949,9 @@ class MainWindow(QMainWindow):
     # QC tools
     # =====================================================================
     def open_tool(self, key: str):
+        if key == "testing":                     # works without a dataset too (test sets, videos only)
+            self.open_testing()
+            return
         if not self.validate_inputs():
             return
         tool = next(t for t in QC_TOOLS if t.key == key)
@@ -2026,6 +2070,10 @@ class MainWindow(QMainWindow):
         m.addAction(utils.newIcon("review-clear"), "Clear review mark", lambda: self.session.set_review(keys, None))
         m.addSeparator()
         m.addAction(utils.newIcon("tool-editor"), f"Fix {n} in editor…", lambda: self.open_editor_session(keys))
+        if len(keys) == 1:
+            m.addSeparator()
+            m.addAction(utils.newIcon("mode-video"), "Show source video in Frame Extractor",
+                        lambda: self.show_source_video(keys[0]))
         m.exec(view.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------ image integrity (background + viewer)
@@ -2334,11 +2382,68 @@ class MainWindow(QMainWindow):
         "handoff_import": "Files changed by another program in the dataset itself → picked up live (History shows them).",
     }
 
+    def show_source_video(self, key=None):
+        """QC -> Frame Extractor: the video an image was extracted from, at its frame. Only on the user's click."""
+        s = self.session
+        key = key or self.current_key
+        smp = s.by_key.get(key) if s is not None and key else None
+        if smp is None:
+            return
+        img = smp.image_path
+        if img is None and hasattr(s.adapter, "resolve_image"):
+            try:
+                img = s.adapter.resolve_image(smp, None)
+            except Exception:
+                img = None
+        if img is None:
+            QMessageBox.information(self, "Source video", "This file has no image.")
+            return
+        from AIO_QC.tools.frame_extractor.core.frame_sources import lookup
+        from AIO_QC.utils.fx_settings import fx_settings
+        recent = fx_settings().value("recent/files", []) or []
+        r = lookup(str(img), recent if isinstance(recent, list) else [recent])
+        if r is None:
+            QMessageBox.information(self, "Source video",
+                                    f"No source video is known for\n{img}\n\nFrames saved by the Frame Extractor "
+                                    "record their video; older frames named <video>_frame_<n> are matched against "
+                                    "the Frame Extractor's recent videos.")
+            return
+        self._shell_call("show_in_frame_extractor", r["video"], r["frame"], r.get("time"))
+
+    def open_testing(self, video=None, start=None, end=None):
+        """Testing (Models tab) - one window per app, on the dataset open here when there is one. Never opens or
+        drives the Frame Extractor's player."""
+        from AIO_QC.widgets.testing.model_lab import ModelLab
+        from AIO_QC.widgets.testing.qc_bridge import QCBridge
+        lab = getattr(self, "testing", None)
+        if lab is None:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                ff = self.settings.value("fx/playback/ffmpeg", "") or ""
+                lab = ModelLab(self, {}, lambda: _find_ffmpeg(ff), __version__, qc=QCBridge(self))
+                lab.setWindowFlag(Qt.WindowType.Window, True)
+                lab.setWindowIcon(utils.newIcon("tool-testing"))
+                lab.help_requested.connect(lambda page: self.show_help_page(page or "09-model-lab.html"))
+            finally:
+                QApplication.restoreOverrideCursor()
+            self.testing = lab
+        else:
+            lab.use_qc_dataset()
+        if video:
+            lab.add_video(video, start, end)
+        fresh = not lab.isVisible()
+        lab.show()
+        if fresh:
+            anim.window_fade_in(lab)
+        lab.raise_()
+        lab.activateWindow()
+        return lab
+
     def _shell_call(self, name, *args):
         """The app shell (both modes) — absent when the window runs on its own (tests, embedding)."""
         shell = getattr(QApplication.instance(), "shell", None)
         if shell is None:
-            QMessageBox.information(self, "AIO QC", "Data Studio is available when AIO QC is started normally.")
+            QMessageBox.information(self, "AIO QC", "The other modes are available when AIO QC is started normally.")
             return
         getattr(shell, name)(*args)
 
@@ -2372,37 +2477,14 @@ class MainWindow(QMainWindow):
         dlg.activateWindow()
 
     def show_guide(self):
-        """User guide in a browser-style window with a clickable table of contents and the app's icons."""
-        from PyQt6.QtWidgets import QTextBrowser
-        from AIO_QC.help_guide import GUIDE_ICONS, guide_html
-        dlg = self.open_dialogs.get("guide")
-        if dlg is None:
-            dlg = QDialog(self)
-            dlg.setWindowTitle("AIO QC — User Guide")
-            dlg.setWindowIcon(utils.newIcon("info"))
-            dlg.tool_key = "guide"
-            lay = QVBoxLayout(dlg)
-            view = QTextBrowser()
-            view.setOpenLinks(True)
-            view.setOpenExternalLinks(False)
-            doc = view.document()
-            dpr = self.devicePixelRatioF()
-            for name in GUIDE_ICONS:
-                doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(f"aio-icon:{name}"),
-                                utils.newIcon(name).pixmap(QSize(20, 20), dpr).toImage())
-            view.setHtml(guide_html(__version__))
-            lay.addWidget(view)
-            row = QHBoxLayout()
-            row.addStretch(1)
-            row.addWidget(utils.newButton("Which tool for what?", icon="question", slot=self.show_tool_map))
-            row.addWidget(utils.newButton("Close", slot=dlg.close))
-            lay.addLayout(row)
-            dlg.resize(860, 820)
-            dlg.finished.connect(lambda _r: self.open_dialogs.pop("guide", None))
-            self.open_dialogs["guide"] = dlg
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
+        """F1: the app's one Help Center, at the Image QC guide."""
+        from AIO_QC.widgets.help_center_bridge import open_help
+        open_help(self, "image")
+
+    def show_help_page(self, page=None):
+        """Help for one feature. Frame Extractor and Testing chapters live in the shared Help Center."""
+        from AIO_QC.widgets.help_center_bridge import open_help
+        open_help(self, page)
 
     def show_tool_map(self):
         html = []

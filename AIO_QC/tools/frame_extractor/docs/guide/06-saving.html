@@ -1,0 +1,25 @@
+<!--title: Saving frames-->
+<!--keywords: save frame output folder format jpeg png webp avif quality naming template tokens collisions-->
+<h1>Saving frames</h1>
+<p><span class="k">Ctrl</span>+<span class="k">S</span> saves the current frame (cropped to the ROI when one is set);
+<span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">S</span> saves the full frame. Frames are always saved
+from the exact, full-resolution decoder — never from the scaled playback picture.</p>
+
+<h2>Format and quality</h2>
+<p>Choose on the toolbar's output bar or in Settings ▸ Output ▸ Format &amp; file names (<span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">N</span>),
+which also estimates the file size on the current frame. One quality value (0–100, default 95) is mapped to each format.
+The same settings are used by markers, batch extraction and the command line.</p>
+<!--@formats-->
+
+<h2>File names</h2>
+<p>A naming template is a path relative to the output folder, without extension. Tokens in braces are replaced; a
+<code>/</code> creates sub-folders; format specs work as in Python (<code>{frame:06d}</code>, <code>{sec:.2f}</code>).
+Characters that are not allowed in file names are replaced, so every template is safe on Windows.</p>
+<!--@tokens-->
+<h3>Presets</h3>
+<!--@naming_presets-->
+<h3>When a file already exists</h3>
+<p>Overwrite it, keep both (adds <code>_1</code>, <code>_2</code> …), or skip the frame — your choice in the naming dialog.</p>
+<div class="note"><b>Note</b> — a template without <code>{frame}</code>, <code>{time}</code>, <code>{tc}</code>,
+<code>{sec}</code>, <code>{ms}</code> or <code>{counter}</code> would give every frame the same name, so <code>_{frame}</code>
+is appended automatically.</div>

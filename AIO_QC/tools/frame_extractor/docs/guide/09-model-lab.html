@@ -1,0 +1,159 @@
+<!--title: Testing-->
+<!--keywords: review videos playlist player real-time detections interpolate balanced best quality look-ahead image qc models tab this dataset open dataset send to review registry shared cache model check videos only reference agreement plots plotted save image png jpg evaluate test compare models weights map precision recall f1 confusion matrix test set unique frames labels reference report leaderboard failures threshold yolo val labelme dataset data.yaml video stability flicker agreement project fxlab start page drag drop fix labels edit exclude a/b viewer side by side click chart long video-->
+<h1>Testing</h1>
+<p><b>Testing</b> (formerly the Frame Extractor's Model Lab) measures and compares YOLO weights on <b>your</b> data. It is a tool
+of Image QC's <i>Models</i> tab (<span class="k">Ctrl</span>+<span class="k">Alt</span>+<span class="k">L</span>), not of the Frame Extractor, and it
+never controls the player (6 · Review videos only hands a playlist over). It works in five steps, shown as a stepper across the top of the window. Each step shows a ✓, a
+warning or an error icon, and a bar under its title explains any problem with a button that fixes it.</p>
+
+<h2>Testing and Image QC</h2>
+<ul>
+<li><b>This dataset</b> — the dataset open in Image QC is the default test data: its files, labels and classes, exactly as Image QC sees
+them. Opening another dataset in Image QC switches Testing to it.</li>
+<li><b>Models</b> — the dataset's models from Models &amp; Environment are the default models, with their class maps (model class →
+dataset label). <i>Add AIO QC's models</i> offers every model added anywhere in the app; weights you add here are added to AIO QC's
+models too. One Python environment runs .pt / .engine models everywhere.</li>
+<li><b>One prediction cache</b> per dataset (<code>.aio_qc/predictions.db</code>): Model Check uses Testing's predictions of the same weights
+(same image size and SAHI setting) instead of running the model again.</li>
+<li><b>Label fixes</b> made in Testing's viewer go through AIO QC: the original is backed up (History ▸ revert, or Backups), the change
+is in the file's history, a flagged file becomes Fixed, and Image QC shows the new labels at once.</li>
+<li><b>Leave out of scoring</b> is stored with the dataset (<code>.aio_qc/testing_excluded.json</code>).</li>
+<li><b>Send to review</b> on the Failures and Compare A / B tabs flags those images in Image QC and filters its file list to them.</li>
+<li>The <b>project</b> of the open dataset is part of its AIO QC session (<code>.aio_qc/testing.fxlab</code>) and comes back when
+Testing opens on it; any other <code>.fxlab</code> (also from the standalone FrameExtractor) still opens with Project ▸ Open.</li>
+</ul>
+
+<h2>Projects</h2>
+<p>A <b>project</b> (<code>.fxlab</code>) remembers the whole set-up — test data, videos, models and their colours, run options and
+report settings. The <b>start page</b> (⌂ Projects) lists recent projects with their best model and score; reopening one shows its
+results again in seconds, because predictions are cached. The open session is saved automatically, so closing the window never
+loses work. Project ▸ New (<span class="k">Ctrl</span>+<span class="k">N</span>), Open (<span class="k">Ctrl</span>+<span class="k">O</span>),
+Save (<span class="k">Ctrl</span>+<span class="k">S</span>).</p>
+<div class="tip"><b>Drag and drop</b> — drop weights, videos, image folders, a <code>data.yaml</code> or an <code>.fxlab</code> file anywhere on the
+window; each goes where it belongs.</div>
+
+<h2>1 · Test data</h2>
+<p>Choose what every model is measured on:</p>
+<table class="t">
+<tr><th>Option</th><th>When to use it</th></tr>
+<tr><td><b>This dataset (Image QC)</b></td><td>The dataset open in Image QC (the default when one is open).</td></tr>
+<tr><td><b>Test set from videos</b></td><td>Build a reusable set of frames from any number of videos (each with an optional time range such as
+<code>1:00-4:30</code>) and image folders. Sampling: a frame every N seconds, every N-th frame, N per video or all frames; at most N per
+video; minimum sharpness. <b>Unique frames</b> removes duplicates inside each video <i>and across all of them</i> — a scene that
+repeats an hour later, or in another camera's video, is kept once. The folder opens in any YOLO tool (it has a <code>data.yaml</code>),
+and next month's model can be measured on exactly the same frames.</td></tr>
+<tr><td><b>Labelled dataset</b></td><td>An existing YOLO folder (<code>images/</code> + <code>labels/</code>), LabelMe JSON next to the images, or a
+<code>data.yaml</code> (its <i>val</i> split).</td></tr>
+<tr><td><b>Videos only</b></td><td>No accuracy on images — analyse whole videos for behaviour (below).</td></tr>
+</table>
+<h3>Labels</h3>
+<p>Labels are optional. To measure true accuracy: <b>Pre-label with a model</b> → open the folder in your labelling tool and fix the
+boxes → the files you edit count as ground truth automatically. <b>Mark pre-labels reviewed</b> accepts the rest. Until then,
+unreviewed pre-labels are left out of scoring — otherwise a model would be scored against its own predictions.</p>
+<h3>Videos for behaviour analysis</h3>
+<p>Each model also runs over whole videos (a frame every N seconds) to show how it behaves where nobody has labelled anything:
+detections over time, <b>flicker</b> (an object disappears for a frame or two), <b>blips</b> (an object seen for one or two
+samples), agreement between models, and the moments they disagree most. Long videos stay fast: at most 20,000 samples
+are taken per video (the interval grows automatically), and frames far apart are reached by seeking rather than decoding everything —
+an hour of video with two models takes about a minute, and is instant from the cache afterwards.</p>
+
+<h2>2 · Models</h2>
+<p>Add any number of weights (<code>.pt</code>, <code>.onnx</code>, <code>.engine</code>). Each keeps its colour in every chart, image,
+report and annotated video. Classes are matched to the test data <b>by name</b>, so models trained with different class orders
+compare correctly; <b>Check models</b> shows the match and any classes that will be ignored.</p>
+
+<h2>3 · Run</h2>
+<p>Every model runs on every image in batches. Predictions are <b>cached</b>: stop at any time and continue later; a model already run on
+these images costs nothing, even after you rename its file.</p>
+<ul>
+<li><b>Ground truth</b> — labels, or (with no labels) a <b>reference model</b>: the others are scored on how closely they reproduce it.
+This compares a candidate with the model in production; it is not true accuracy.</li>
+<li><b>Confidence threshold</b> — <i>best F1 per model</i> (the fair way to compare) or one fixed value.</li>
+</ul>
+
+<h2>4 · Results</h2>
+<table class="t">
+<tr><th>Tab</th><th>Shows</th></tr>
+<tr><td><b>Overview</b></td><td>A plain-language verdict, headline numbers and the leaderboard (double-click a model to see its failures).</td></tr>
+<tr><td><b>Charts</b></td><td>Precision–recall and F1 curves, AP per class, error types, recall by object size, speed vs accuracy, class balance.
+Hover for values; <b>Save</b> on a chart saves it as PNG or SVG, <b>Save all charts…</b> saves the whole tab into a folder.</td></tr>
+<tr><td><b>Confusion matrix</b></td><td>Per model: rows = what is really there, columns = what the model said; <i>background</i> collects false
+detections (row) and missed objects (column).</td></tr>
+<tr><td><b>Per class</b></td><td>AP50, AP50-95, precision, recall, F1, correct / false / missed for every class, weakest first.</td></tr>
+<tr><td><b>Failures</b></td><td>The images with the most errors, drawn and zoomed to the errors, filtered by error type and class. Double-click
+to view full size; right-click to save the plotted image.</td></tr>
+<tr><td><b>Plots</b></td><td>Every test image with a model's detections drawn — boxes in the model's colour with <i>class 0.87</i>
+labels (in Inter), optionally the ground truth or the errors in red. Filter by class, sort by detections, pick the thumbnail size.
+Double-click to view full size; <b>Save image…</b>, <b>Save selected…</b> or <b>Save all…</b> write full-resolution PNG / JPG files.</td></tr>
+<tr><td><b>Compare A / B</b></td><td>Two models head to head: difference per class, curves, both confusion matrices and the images where each wins.</td></tr>
+<tr><td><b>Videos</b></td><td>Detections over time, agreement between models, stability table and a list of moments — double-click one (or click the timeline) to see that frame plotted. Testing never opens videos in the main player, so it can't interfere with your playback.</td></tr>
+</table>
+<h3>Videos only</h3>
+<p>With <i>No images - videos only</i>, the frames sampled from your videos fill every tab (up to 6,000 frames, spread
+evenly over all videos). With two or more models and a <b>reference model</b> chosen on the Run page, the others are
+scored against it: Overview, Charts, Confusion matrix, Per class and Failures show where each one disagrees with the
+reference, and <b>Compare A / B</b> shows a model next to the reference (what it misses, what it finds that the
+reference does not). This is agreement, not true accuracy. With one model, or no reference, the tabs that need
+an answer key say so, and Plots and Videos still show everything.</p>
+<p>The <b>threshold</b> control at the top updates the error counts, confusion matrices and galleries live. Results are
+calculated in the background and only for the tab you are looking at, so the window stays responsive with large test sets.</p>
+<h3>Click a chart to see the images</h3>
+<p>Click a confusion-matrix cell, a class bar or an error-type bar and the <b>Failures</b> tab opens filtered to exactly those
+images (for example <i>person predicted as car</i>). The filter shows as a chip at the top — <b>✕ Clear filter</b> removes it.
+Clicking a moment on a video timeline shows that frame plotted.</p>
+<h3>Fix labels on the spot</h3>
+<p>When a “failure” is really a labelling mistake, double-click it in Failures (or right-click ▸ <b>Fix labels…</b>) and correct it: delete a box
+(<span class="k">Del</span>), change its class, draw a missing box, or <b>accept a detection</b> as ground truth. <b>Leave this image out of
+scoring</b> excludes a bad image without touching the dataset. Changes are saved to the label files (YOLO lines and LabelMe shapes keep
+everything else they contain) and the scores update at once.</p>
+<h3>A / B viewer</h3>
+<p>Plotted images and chart labels use the Inter typeface; the rest of the window uses the app's font. Saved plots look
+exactly like what you see, and annotated videos use the same labels.</p>
+<p><b>Side by side…</b> on the Compare tab (or right-click a failure ▸ <i>Compare with another model…</i>) shows the same image for two models side by side. Zoom and pan are linked; toggle ground truth, use each model's
+own threshold or one fixed value, and step through the images with the arrow keys. <b>Save image…</b> saves both plots side by side.</p>
+
+<h2>5 · Report</h2>
+<p>One HTML file with every chart, table and image inside — it opens in any browser, supports light and dark, and prints well.
+<b>Summary</b> is one page for a decision; <b>Detailed</b> has everything; <b>Comparison</b> puts two models head to head;
+<b>Video behaviour</b> covers the label-free analysis. <i>metrics.json</i>, <i>per_class.csv</i> and <i>per_image.csv</i> are written next to it
+for your own analysis. <b>Export annotated video</b> draws up to four models on a video.</p>
+<div class="tip"><b>Tip</b> — to analyse a video you are watching in the Frame Extractor, add the same file under <i>Videos for behaviour
+analysis</i> (with a time range such as <code>1:00-4:30</code> to limit it).</div>
+<h2>6 · Review videos</h2>
+<p>Watch the models at work on whole videos: <b>Review in player</b> plays the videos one after another in the Frame
+Extractor with every model's boxes drawn on the video. Testing only sends the playlist (videos, models, settings) -
+the player does the rest and never interferes with Testing.</p>
+<ul>
+<li><b>Videos</b> - Add videos…, Add folder…, or <i>Use step 1's videos</i>. Double-click <i>In</i> / <i>Out</i> to play only
+part of a video (<code>1:30</code>, <code>90</code>). ↑ ↓ set the order.</li>
+<li><b>Models</b> - the models of step 2, each with its colour and a card: format, size, input size, task, batch,
+number of classes and their names. A <code>.pt</code> file new to the app is flagged (it can run code when loaded);
+an <code>.engine</code> runs only on the GPU / TensorRT it was built for.</li>
+<li><b>Analysis</b> - <b>Balanced</b> (recommended): smooth real-time playback. When the models keep up, every frame
+gets its own detections live. When they can't (CPU only, large models, SAHI, many models, 60 fps 4K), the frame step
+adapts so playback never stalls, the frames in between are interpolated from the analysed frames on both sides, and
+spare time fills them in afterwards - replay, seek or pause and every frame has its own detections. <b>Best quality</b>:
+every frame; playback briefly waits when needed, like video buffering. <b>Fixed step</b>: every N-th frame.
+<i>Look-ahead</i> is how far ahead detections are kept ready; <i>Show boxes from confidence</i> is the starting
+threshold. The defaults are in Settings ▸ Video review.</li>
+</ul>
+<p>In the player, the <b>Review playlist</b> panel shows each video's state, what the analysis is doing ("every frame",
+"every 2nd frame + interpolated · backfilling 63 %", "4.2 s ahead"), Previous / Next, Loop, a switch per model and a
+live confidence slider (nothing is re-run). A paused frame always gets its own detections. Boxes on frames the models
+did not see themselves (interpolated) are dashed. Frames are decoded on the CPU with the player's own decoder, so the
+boxes belong to the exact frame on screen - with the built-in engine and with libmpv. Detections are saved in the
+prediction cache: a second review, Testing's video analysis and the annotated export reuse them.</p>
+<p><b>Over time.</b> A strip under the seek bar shows each model's detections per frame (one lane per model, grey where
+nothing is analysed yet) with the <b>events</b> as coloured ticks: <span style='color:#e53935'>models disagree</span>
+(a box of one model has no same-class box of another), <span style='color:#fb8c00'>flicker</span> (a model loses an
+object for one frame) and <span style='color:#c9a800'>uncertain</span> (a box just below the threshold). Classes are
+compared by name, so models with different class orders compare correctly. Click the strip to seek; the event list and
+<span class="k">Alt</span>+<span class="k">[</span> / <span class="k">Alt</span>+<span class="k">]</span> jump between events.
+<b>Classes</b> hides classes in the player; <b>CSV…</b> saves every detection of the video.</p>
+<p><b>Send hard frames to Image QC…</b> picks the frames worth labelling - where the models disagree, flicker or
+hesitate, strongest first and spread out (at most N per video, at least S seconds apart) - saves them in the output
+folder with LabelMe pre-labels from the model you choose, remembers each frame's video (Image QC ▸ Show Source Video)
+and opens them in Image QC: from a review to the next training round in one step. <b>End review</b>
+(or the end of the playlist) brings back the video that was open before, at its frame; opening another video by hand
+ends the review too.</p>
+<p>See <a href="13-metrics.html">Metrics explained</a> for what every number means.</p>

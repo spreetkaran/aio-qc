@@ -15,3 +15,14 @@ pandas>=2.0         # tables, steps, profiling
 pyarrow>=14         # Parquet / Feather files
 openpyxl>=3.1       # Excel files
 # PySpark is NOT installed here: Data Studio runs Spark jobs in a Python environment you choose
+
+# Frame Extractor (the video mode) — optional, features switch on when present   (pip install "aio-qc[video]")
+av>=11              # PyAV decoder: exact seeking on VFR videos, rotation
+imageio-ffmpeg>=0.4.9  # bundled ffmpeg: clip export, real-time playback pipe, frame search
+psutil>=5.9         # CPU budget for batch extraction
+# opencv-contrib-python (instead of opencv-python) adds the CSRT / KCF ROI trackers; MIL works without it
+py7zr>=0.20; sys_platform == "win32"   # unpacks the libmpv download on Windows (Windows' tar.exe is the fallback)
+# libmpv itself is downloaded automatically when missing (Settings ▸ Playback ▸ libmpv… in the Frame Extractor)
+
+# Models in the app (Testing, Frame Extractor detections)   (pip install "aio-qc[models]")
+onnxruntime>=1.16   # .onnx models in-process; .pt / .engine run in their own Python environment

@@ -26,6 +26,7 @@ from AIO_QC.core.geometry import shape_metrics, to_polygon
 from AIO_QC.core.shape_ops import fingerprint
 from AIO_QC.core.state import REVIEW_FLAG
 from AIO_QC.utils import hexc, style as apply_style, theme_color
+from AIO_QC.utils import later
 from .base_scan import BaseScanDialog, ResultRow, dspin, ispin
 from .charts import ScatterBrush, StripChart
 from .card_gallery import Card, CardView, Panel, Shape, box_points
@@ -132,8 +133,7 @@ class DimAreaDialog(BaseScanDialog):
         split.setChildrenCollapsible(False)
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, lambda: split.setSizes([max(1, split.width() // 2)] * 2))     # half / half
+        later(0, split, lambda: split.setSizes([max(1, split.width() // 2)] * 2))     # half / half
         self.tabs = QTabWidget()
         self.table_host.removeWidget(self.table)
         self.tabs.addTab(split, "Visual")

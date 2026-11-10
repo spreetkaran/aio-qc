@@ -11,6 +11,7 @@ from PyQt6.QtGui import QImage, QImageReader
 
 from AIO_QC.core import AnnotationError
 from AIO_QC.core.io import decode_image
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 
 def load_qimage(path, image_data_b64: str | None = None) -> QImage:
@@ -45,7 +46,7 @@ def load_qimage(path, image_data_b64: str | None = None) -> QImage:
     return QImage()
 
 
-class IndexWorker(QThread):
+class IndexWorker(RetainedThread, QThread):
     """Builds key -> Counter(ORIGINAL labels) for the whole dataset, in batches."""
     batch = pyqtSignal(list)          # [(key, Counter | None, error | None), ...]
     progress = pyqtSignal(int, int)

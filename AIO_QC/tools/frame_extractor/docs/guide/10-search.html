@@ -1,0 +1,23 @@
+<!--title: Search frames-->
+<!--keywords: search find text clip describe similar example roi index-->
+<h1>Search frames</h1>
+<p><span class="k">Ctrl</span>+<span class="k">F</span> opens the <b>Search frames</b> panel. Click a result to jump there; right-click it to
+add an extraction marker or to find more like it.</p>
+<h2>Two ways to search</h2>
+<table class="t">
+<tr><th>Search</th><th>How</th></tr>
+<tr><td><b>By description</b></td><td>Type what you are looking for — <i>white van</i>, <i>person on a bike</i>, <i>night</i> — and press Enter.
+Words starting with <code>-</code> push results away: <code>truck -night</code>.</td></tr>
+<tr><td><b>By example</b></td><td><i>Find similar to this frame</i> uses the current frame — or only the ROI with <i>ROI only</i> ticked.</td></tr>
+</table>
+<h2>Engines</h2>
+<ul>
+<li><b>CLIP</b> understands what is in the picture and supports both kinds of search. It runs in the same Python environment as
+<code>.pt</code> models: install it there once with <code>pip install open_clip_torch</code> (or <code>transformers</code>);
+the weights download on first use, then everything works offline.</li>
+<li><b>Built-in</b> needs nothing and compares colour, layout and edges — good for finding the same scene or camera view.</li>
+</ul>
+<h2>Indexing</h2>
+<p>The first search of a video indexes it — one frame every N seconds (GPU-decoded in ffmpeg; very long videos are sampled more
+sparsely, at most about 6000 frames). Indexes are kept on disk, so later searches are instant, and an interrupted index continues where
+it stopped. Choose <i>This video + other videos</i> to search several videos at once.</p>

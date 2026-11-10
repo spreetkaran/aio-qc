@@ -59,10 +59,11 @@ def _fmt(v):
     return str(v)
 
 
-def profile(df, sample_rows: int = STAT_ROWS, seed: int = 7) -> dict:
+def profile(df, sample_rows: int | None = None, seed: int = 7) -> dict:
     import numpy as np
     import pandas as pd
     n = len(df)
+    sample_rows = sample_rows or STAT_ROWS                 # read now: Settings ▸ Profile can change it
     sdf = df.sample(sample_rows, random_state=seed) if n > sample_rows else df
     cols = []
     for name in df.columns:

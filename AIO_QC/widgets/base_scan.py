@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from AIO_QC.utils import theme_color, style as apply_style
 from AIO_QC.core.state import REVIEW_FLAG, REVIEW_OK
 from AIO_QC.utils import newIcon, emphasis_bg, get_color_icon, newButton
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 ROW_ID = Qt.ItemDataRole.UserRole + 10
 BAR_ROLE = Qt.ItemDataRole.UserRole + 20     # (fraction 0..1, "#rrggbb") -> drawn as a data bar
@@ -128,7 +129,7 @@ def ispin(lo, hi, value):
     return s
 
 
-class ScanWorker(QThread):
+class ScanWorker(RetainedThread, QThread):
     rows_ready = pyqtSignal(list)
     progress = pyqtSignal(int, int)
     completed = pyqtSignal(list, list, bool)   # final rows, errors, cancelled
@@ -378,6 +379,10 @@ class BaseScanDialog(QDialog):
         self.stop_btn.setEnabled(True)
         self.params_box.setEnabled(False)
         self._scan_started = time.monotonic()
+        from AIO_QC.widgets import tasks
+        if getattr(self, "_task", None) is not None:
+            self._task.finish()
+        self._task = tasks.start(f"{self.TITLE} · {len(samples):,} files", cancel=self.stop_scan)
         self.worker = ScanWorker(samples, self.scan_sample, self.finalize, self.ctx)
         self.worker.rows_ready.connect(self._append_rows)
         self.worker.progress.connect(self._on_progress)
@@ -519,11 +524,16 @@ class BaseScanDialog(QDialog):
             self.stop_btn.setEnabled(False)
 
     def _on_progress(self, i, total):
+        if getattr(self, "_task", None) is not None:
+            self._task.update(i / total if total else None)
         self.progress.setMaximum(total)
         self.progress.setValue(i)
         self.status.setText(f"{len(self.rows):,} found")
 
     def _on_completed(self, final_rows, errors, cancelled):
+        if getattr(self, "_task", None) is not None:
+            self._task.finish()
+            self._task = None
         cols = self.columns_for(self.ctx)
         if cols is not None:
             self._set_headers(cols)

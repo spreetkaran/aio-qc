@@ -15,12 +15,13 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from AIO_QC.core.env_manager import missing_packages, remove_env
 from AIO_QC.core.inference import InferenceClient, InferenceError
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 DEFAULTS = {"mode": "standard", "device": "cpu", "half": False, "batch": 8, "slice": 640, "overlap": 0.2,
             "nms_iou": 0.6}
 
 
-class FuncWorker(QThread):
+class FuncWorker(RetainedThread, QThread):
     """Run fn() off the GUI thread; result / error come back as signals."""
     done = pyqtSignal(object)
     failed = pyqtSignal(str)

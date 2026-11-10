@@ -13,7 +13,6 @@ import itertools
 import json
 import os
 import subprocess
-import sys
 import threading
 from pathlib import Path
 
@@ -45,10 +44,10 @@ class InferenceClient:
         env["PYTHONUNBUFFERED"] = "1"
         env.pop("PYTHONHOME", None)            # never leak the GUI's interpreter settings into the env
         env.pop("PYTHONPATH", None)
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        self.proc = subprocess.Popen([self.python, "-u", str(self.server)], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                                     errors="replace", bufsize=1, env=env, creationflags=flags)
+        from AIO_QC.core import procs            # dies with the app however it ends (Job Object / PDEATHSIG)
+        self.proc = procs.popen([self.python, "-u", str(self.server)], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                errors="replace", bufsize=1, env=env)
         self._dead = None
         threading.Thread(target=self._read_stdout, daemon=True).start()
         threading.Thread(target=self._read_stderr, daemon=True).start()

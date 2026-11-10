@@ -1,0 +1,40 @@
+<!--title: Settings & performance-->
+<!--keywords: settings preferences options gear ctrl+, search import export reset performance gpu cpu workers memory cache logs folders files decoder renderer animations reduce motion-->
+<h1>Settings &amp; performance</h1>
+<h2>The Settings window</h2>
+<p>Every preference is in one window: the <b>gear</b> at the right of the menu bar, <b>File ▸ Settings…</b>
+(<span class="k">Ctrl</span>+<span class="k">,</span>) or the command palette. Image QC and Data Studio have the same window
+with their own settings. Type in <b>Search settings</b> (<span class="k">Ctrl</span>+<span class="k">F</span>) to find one by
+name or by what it does; the sections on the left follow the page as you scroll. Changes apply at once. A setting that is
+not at its default shows <b>↺</b> to put it back; each section can be reset, and <b>Export… / Import…</b> save and load
+all settings as a file (for example to give a team the same set-up).</p>
+<table class="t">
+<tr><th>Section</th><th>Contains</th></tr>
+<tr><td>General</td><td>Animations: Full / Reduced / Off - one setting for all of AIO QC</td></tr>
+<tr><td>Display</td><td>Video renderer: Auto / GPU / Software</td></tr>
+<tr><td>Playback</td><td>Engine (libmpv / built-in), automatic libmpv install, <b>libmpv…</b> status, real-time pipeline, ffmpeg</td></tr>
+<tr><td>Decoding</td><td>Exact decoder (Auto / OpenCV / PyAV) and in-app hardware decoding</td></tr>
+<tr><td>Output</td><td>Output folder; image format, quality and file-naming template</td></tr>
+<tr><td>Models</td><td>Model files, thresholds, devices, the Python environment; models in timeline analysis</td></tr>
+<tr><td>Keyboard</td><td>Customise every shortcut; the shortcut reference</td></tr>
+</table>
+<p>The menus keep what you <i>do</i> (open, play, mark, extract, export); what you <i>set</i> is here.
+<b>Playback ▸ Benchmark decoders for this video</b> stays in the Playback menu.</p>
+
+<h2>Performance tips</h2>
+<ul>
+<li>Install <b>libmpv</b> and keep the <b>GPU renderer</b> for the smoothest playback; install <b>PyAV</b> for fast timeline analysis.</li>
+<li>Batch: leave workers on <i>Auto</i> — they adapt to your CPU, memory and current load. Lower <i>Use of this PC</i> to keep working while it runs.</li>
+<li>Testing: a larger batch size is faster on a GPU; <code>.onnx</code> models with a dynamic batch axis run whole batches in one pass.</li>
+<li>Every background task runs at reduced priority, and all helper processes stop with the app — even if it crashes.</li>
+</ul>
+
+<h2>Files and folders</h2>
+<table class="t">
+<tr><th>Path (in your user folder)</th><th>Holds</th></tr>
+<tr><td>AIO QC's log folder</td><td><code>aio_qc_tool.log</code> and crash reports (Help ▸ Open log folder)</td></tr>
+<tr><td><code>&lt;AIO QC data&gt;/testing</code></td><td>Testing's prediction cache and project autosave (outside test sets; the dataset open in Image QC keeps its own in <code>.aio_qc/</code>)</td></tr>
+<tr><td><code>&lt;AIO QC data&gt;/frame_extractor</code></td><td>Per-video sessions (markers, in / out, ROI) and frame-search indexes. Moved there once from <code>~/.frame_extractor</code> of the standalone app.</td></tr>
+<tr><td>test set folder <code>/cache</code>, <code>/reports</code></td><td>A test set's own cache and reports — it travels with the folder</td></tr>
+</table>
+<p>All caches can be deleted at any time; they are rebuilt when needed.</p>

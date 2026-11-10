@@ -37,12 +37,13 @@ from .chart_view import ChartPanel
 from .profile_view import ProfileView
 from .step_form import StepDialog, _mono
 from .table_model import FrameModel
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 WS_FILTER = "Data Studio workspace (*.aioqc-data.json);;JSON (*.json)"
 GROUPS = ["Columns", "Rows", "Clean", "Reshape", "Features"]
 
 
-class Job(QThread):
+class Job(RetainedThread, QThread):
     done = pyqtSignal(object)
     failed = pyqtSignal(str, object)
 
@@ -63,6 +64,8 @@ class StudioWindow(QMainWindow):
         super().__init__()
         self.shell = shell
         self.st = app_settings()
+        from AIO_QC.widgets.settings_pages import apply_studio_tunables
+        apply_studio_tunables(self.st)                      # large-file / profile / chart / memory settings
         self.ws = Workspace()
         self.current: str | None = None
         self.at_step: int | None = None              # show the data after this many steps (None = all)
@@ -109,8 +112,12 @@ class StudioWindow(QMainWindow):
         a.redo = A("Redo", self.redo, ["Ctrl+Shift+Z", "Ctrl+Y"], "redo")
         a.add = A("Add Step…", self._add_step_menu, "Ctrl+T", "data-add-step", "Add a step to the recipe")
         a.reload = A("Reload Source", self.reload_source, "F5", None, "Read the file again")
-        a.switch = A("Switch to Image QC", lambda: self.shell and self.shell.switch("image"), "Ctrl+Alt+M",
+        a.switch = A("Switch to Image QC", lambda: self.shell and self.shell.switch("image"), None,
                      "mode-image", "The image-dataset mode of AIO QC")
+        a.next_mode = A("Next Mode", lambda: self.shell and self.shell.cycle(), "Ctrl+Alt+M", None,
+                        "Frame Extractor → Image QC → Data Studio")
+        a.to_video = A("Switch to Frame Extractor", lambda: self.shell and self.shell.switch("video"), None,
+                       "mode-video", "The video mode of AIO QC: play, mark and extract frames for annotation")
         a.quit = A("Quit", self.close, "Ctrl+Q")
         mb = self.menuBar()
         f = mb.addMenu("&File")
@@ -125,7 +132,9 @@ class StudioWindow(QMainWindow):
         for x in (a.export, a.code_pd, a.code_sp, a.report, a.spark):
             f.addAction(x)
         f.addSeparator()
+        f.addAction(a.next_mode)
         f.addAction(a.switch)
+        f.addAction(a.to_video)
         f.addAction(a.quit)
         e = mb.addMenu("&Edit")
         for x in (a.undo, a.redo):
@@ -155,13 +164,14 @@ class StudioWindow(QMainWindow):
         h = mb.addMenu("&Help")
         h.addAction(A("Data Studio Guide", self.show_help, "F1"))
         h.addAction(A("Formula Reference", lambda: QMessageBox.information(self, "Formulas", S.OPS["derive"].help)))
-        h.addAction(A("Switch to Image QC", lambda: self.shell and self.shell.switch("image")))
 
         from AIO_QC.widgets.mode_switch import ModeSwitch
         self.mode_switch = ModeSwitch("data", self)
         self.mode_switch.switched.connect(lambda m: self.shell and self.shell.switch(m))
         mb.setCornerWidget(self.mode_switch, Qt.Corner.TopRightCorner)
         self.mode_switch.setVisible(self.shell is not None)
+        from AIO_QC.widgets.settings_dialog import install_settings
+        install_settings(self)                              # gear in the corner + File ▸ Settings… (Ctrl+,)
 
         tb = QToolBar("Main")
         tb.setObjectName("studioToolbar")
@@ -988,6 +998,9 @@ class StudioWindow(QMainWindow):
             return len(df)
         self.status_lbl.setText("Exporting…")
         job = Job(work, self)
+        from AIO_QC.widgets import tasks
+        task = tasks.start(f"Data Studio · export {os.path.basename(p)}")
+        job.finished.connect(task.finish)
         job.done.connect(lambda n: self.statusBar().showMessage(f"Exported {n:,} rows → {p}", 8000))
         job.failed.connect(lambda m, _e: QMessageBox.warning(self, "Export", m))
         job.finished.connect(lambda j=job: self.jobs.remove(j) if j in self.jobs else None)
@@ -1025,6 +1038,9 @@ class StudioWindow(QMainWindow):
                 f.write(html)
             return p
         job = Job(work, self)
+        from AIO_QC.widgets import tasks
+        task = tasks.start(f"Data Studio · profile report {os.path.basename(p)}")
+        job.finished.connect(task.finish)
         job.done.connect(lambda path: webbrowser.open(Path(path).as_uri()))
         job.failed.connect(lambda m, _e: QMessageBox.warning(self, "Report", m))
         job.finished.connect(lambda j=job: self.jobs.remove(j) if j in self.jobs else None)
@@ -1066,9 +1082,18 @@ class StudioWindow(QMainWindow):
             if u.isLocalFile():
                 self._open_path(u.toLocalFile())
 
+    # ------------------------------------------------------------------ settings
+    def settings_sections(self):
+        from AIO_QC.widgets.settings_pages import studio_sections
+        return studio_sections(self)
+
+    def open_settings(self, key=None):
+        from AIO_QC.widgets.settings_dialog import open_settings
+        return open_settings(self, self.settings_sections(), "Settings — Data Studio", key)
+
     def show_help(self):
-        from .guide import show_guide
-        show_guide(self)
+        from AIO_QC.widgets.help_center_bridge import open_help
+        open_help(self, "data")
 
     def shutdown(self):
         self.st.setValue("studio/geometry", self.saveGeometry())

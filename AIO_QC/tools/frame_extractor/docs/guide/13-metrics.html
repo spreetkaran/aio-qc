@@ -1,0 +1,44 @@
+<!--title: Metrics explained-->
+<!--keywords: map map50 map50-95 precision recall f1 confidence threshold iou confusion matrix error types false detection missed duplicate localisation background stability flicker blip agreement glossary-->
+<h1>Metrics explained</h1>
+<p>Testing follows the YOLO (Ultralytics) validation method, so its numbers match <code>yolo val</code> on the same data.</p>
+<table class="t">
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td><b>IoU</b></td><td>Overlap of two boxes: intersection ÷ union. 1 = identical, 0 = no overlap.</td></tr>
+<tr><td><b>Precision</b></td><td>Of the boxes the model drew, the share that are correct. Low precision = false alarms.</td></tr>
+<tr><td><b>Recall</b></td><td>Of the real objects, the share the model found. Low recall = misses.</td></tr>
+<tr><td><b>F1</b></td><td>The balance of precision and recall (harmonic mean). Its best value picks the <b>best confidence threshold</b>.</td></tr>
+<tr><td><b>AP</b></td><td>Area under the precision–recall curve of one class: how good the model is across all thresholds.</td></tr>
+<tr><td><b>mAP50</b></td><td>AP averaged over classes, counting a detection as correct at IoU ≥ 0.5.</td></tr>
+<tr><td><b>mAP50-95</b></td><td>The same, averaged over IoU 0.50 … 0.95 — also rewards precise boxes. The main ranking number.</td></tr>
+<tr><td><b>Operating threshold</b></td><td>The confidence at which counts, error types, confusion matrices and galleries are computed
+(best F1 per model, or the value you choose).</td></tr>
+</table>
+
+<h2>Error types</h2>
+<table class="t">
+<tr><th>Error</th><th>Meaning</th><th>Usually fixed by</th></tr>
+<tr><td><b>Wrong class</b></td><td>Right place, wrong label</td><td>More examples of the confused classes</td></tr>
+<tr><td><b>Poor localisation</b></td><td>Right object, box too loose or tight (IoU 0.1–0.5)</td><td>Consistent box labelling; larger image size</td></tr>
+<tr><td><b>Duplicate</b></td><td>A second box on an object already found</td><td>NMS settings</td></tr>
+<tr><td><b>Background</b></td><td>A box where there is nothing</td><td>Hard negatives in training</td></tr>
+<tr><td><b>Missed</b></td><td>A real object with no box</td><td>More (and harder) examples</td></tr>
+<tr><td><b>Missed (found below threshold)</b></td><td>The model saw it, but with low confidence</td><td>A lower threshold, or more training</td></tr>
+</table>
+
+<h2>Confusion matrix</h2>
+<p>Rows are what is really there, columns what the model said, colour is the share of the row. The diagonal is correct;
+the <i>background</i> row holds false detections and the <i>background</i> column missed objects. Computed at the operating threshold
+with IoU &gt; 0.45, like YOLO.</p>
+
+<h2>Recall by object size</h2>
+<p>COCO sizes: small &lt; 32×32 px, medium &lt; 96×96 px, large above. Weak small-object recall often improves with a larger image size or SAHI.</p>
+
+<h2>Video behaviour (no labels)</h2>
+<table class="t">
+<tr><td><b>Flicker</b></td><td>A tracked object disappears for one or two samples and comes back — likely missed detections.</td></tr>
+<tr><td><b>Blip</b></td><td>An object that exists for at most two samples — likely false detections.</td></tr>
+<tr><td><b>Stability</b></td><td>Share of detections involved in neither.</td></tr>
+<tr><td><b>Agreement</b></td><td>F1 between two models' boxes on the same frame (1.0 = they found the same objects).</td></tr>
+</table>
+<div class="note"><b>Small classes</b> — with fewer than about 30 objects, a class's numbers can swing a lot from a few images. The verdict warns you.</div>

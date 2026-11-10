@@ -1,8 +1,8 @@
 # conda-forge recipe for AIO QC — submit to https://github.com/conda-forge/staged-recipes as recipes/aio-qc/meta.yaml
 # (after the release is on PyPI: the source is the PyPI sdist). Fill the sha256 with:
-#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-2.0.0.tar.gz | sha256sum
+#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-2.1.0.tar.gz | sha256sum
 {% set name = "aio-qc" %}
-{% set version = "2.0.0" %}
+{% set version = "2.1.0" %}
 
 package:
   name: {{ name|lower }}
@@ -38,6 +38,7 @@ requirements:
     - pillow
     - pyyaml
     - orjson
+    # optional (pip extras [video] / [models] / [data]): av, imageio-ffmpeg, psutil, onnxruntime, pandas, pyarrow
 
 test:
   imports:
@@ -52,7 +53,7 @@ test:
 
 about:
   home: https://github.com/spreetkaran/aio-qc
-  summary: All-in-one quality control for annotated image datasets (LabelMe and YOLO)
+  summary: All-in-one quality control for annotated image datasets (LabelMe and YOLO), video frame extraction and model testing
   description: |
     Desktop app to find and fix problems in LabelMe / YOLO datasets before training: broken files, label names,
     sloppy or duplicate shapes, split leakage, probable mislabels — with backups, history and undo.

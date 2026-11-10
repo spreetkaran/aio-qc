@@ -1,0 +1,42 @@
+<!--title: Welcome-->
+<!--keywords: overview introduction what is new features workflow-->
+<h1>Welcome to the Frame Extractor</h1>
+<p class="lead">The Frame Extractor — AIO QC's video mode — turns hours of video into a clean, annotation-ready image dataset — and then tells you how
+well your detection models really perform on that footage.</p>
+
+<h2>What you can do</h2>
+<table class="cards">
+<tr><td><b>Play anything, exactly</b><br>Smooth real-time playback up to 8K and 60+ fps, frame-exact stepping and
+seeking, original-quality zoom to the pixel, timecode in every format.</td>
+<td><b>Pick the right frames</b><br>Drop markers while the video plays, snap them to the sharpest frame, let the
+timeline suggest scene starts or the sharpest frame per window, crop to a region of interest.</td></tr>
+<tr><td><b>Extract at scale</b><br>Batch-process many videos in parallel with blur, duplicate and scene filters,
+cross-video de-duplication, model-based mining and pre-annotations — interrupt and resume any time.</td>
+<td><b>QC the frames</b><br>Send what you extracted straight to Image QC (Tools ▸ Open output in Image QC) to review labels,
+run Model Check, and measure models in Image QC ▸ Models ▸ Testing.</td></tr>
+<tr><td><b>Find moments</b><br>Search every frame of your videos by description (“white van at night”) or by example.</td>
+<td><b>Share results</b><br>Export lossless or frame-exact clips and annotated videos with every model's detections.</td></tr>
+</table>
+
+<h2>The typical workflow</h2>
+<ol>
+<li><b>Open</b> a video (<span class="k">Ctrl</span>+<span class="k">O</span> or drag it onto the window).</li>
+<li><b>Pick</b> frames with markers (<span class="k">M</span>), or set up a <b>batch</b> job for many videos
+(<span class="k">Ctrl</span>+<span class="k">B</span>).</li>
+<li><b>Review</b> the extracted frames and reject the bad ones (<span class="k">Ctrl</span>+<span class="k">G</span>).</li>
+<li><b>Annotate</b> in your labelling tool — the Frame Extractor can pre-annotate with your models.</li>
+<li><b>Evaluate</b> new model weights in Image QC ▸ Models ▸ Testing (<span class="k">Ctrl</span>+<span class="k">Alt</span>+<span class="k">L</span>)
+and share the report.</li>
+</ol>
+
+<h2>New in 1.0</h2>
+<ul>
+<li><b>Testing</b> (now in Image QC's Models tab) — test sets of unique frames from many videos, multi-model comparison,
+YOLO-val compatible metrics, confusion matrices, failure browser, video behaviour analysis, HTML reports.</li>
+<li><b>Frame search</b> by text (CLIP) or by example.</li>
+<li><b>Clip export</b> (lossless or frame-exact) and <b>annotated video</b> export.</li>
+<li><b>Help</b> — this guide, a live shortcut reference and the Get Started tour.</li>
+<li><b>Motion</b> — smooth, display-rate animations throughout (Settings ▸ General ▸ Animations to reduce or turn off).</li>
+</ul>
+<div class="tip"><b>Tip</b> — press <span class="k">Ctrl</span>+<span class="k">K</span> anywhere to search and run any
+command by name.</div>

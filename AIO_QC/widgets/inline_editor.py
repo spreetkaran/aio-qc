@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 
 from loguru import logger
-from PyQt6.QtCore import QObject, QTimer
+from AIO_QC.utils import later
+from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QInputDialog
 
 from AIO_QC.core.inline_edit import (
@@ -127,7 +128,7 @@ class InlineEditor(QObject):
         self._update_actions()
         self._say(f"✓ {what} — Ctrl+Z to undo")
         if select_after is not None:
-            QTimer.singleShot(0, lambda: self.app.canvas.select_shape(select_after))
+            later(0, self.app.canvas, lambda: self.app.canvas.select_shape(select_after))
         return True
 
     # ------------------------------------------------------------------ gestures

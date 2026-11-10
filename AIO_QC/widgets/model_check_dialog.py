@@ -14,6 +14,8 @@ Optimisations
 """
 from __future__ import annotations
 
+import os
+
 from AIO_QC.core.dataset import DETECTION_TYPES
 
 import random
@@ -493,8 +495,24 @@ class ModelCheckDialog(BaseScanDialog):
                "model_names": Counter(), "gt_names": Counter(), "cached": 0, "ran": 0, "load_error": None,
                "rejected": self.ledger.keys(), "show_rejected": self.show_rejected.isChecked(),
                "root": self.session.root}
+        ctx["shared"] = self._shared_predictions(models, specs)
         ctx.update(self._thr())
         return ctx
+
+    def _shared_predictions(self, models, specs):
+        """{model id: (PredCache, key)} - Testing's predictions of the same weights / size / SAHI in the dataset's
+        shared cache (one prediction cache per dataset); read-only here."""
+        from AIO_QC.core import model_registry as R
+        out = {}
+        by_id = {m["id"]: m for m in models}
+        for sp in specs:
+            m = by_id.get(sp["id"])
+            if m is None or os.path.abspath(sp["path"]) != os.path.abspath(m.get("path", "")):
+                continue                                   # running an ONNX / TensorRT export: other numbers
+            hit = R.shared_lookup(self.session.root, m["path"], sp.get("imgsz"), sp.get("sahi"))
+            if hit is not None:
+                out[sp["id"]] = hit
+        return out
 
     # ------------------------------------------------------------- worker side
     def _prefetch(self, ctx, start_key):
@@ -519,6 +537,10 @@ class ModelCheckDialog(BaseScanDialog):
             wh = None
             for mid in ctx["ids"]:
                 hit = cache.get_preds(ctx["sigs"][mid], img) if cache is not None else None
+                if hit is None and mid in ctx.get("shared", {}):
+                    hit = self._from_shared(ctx, mid, img)
+                    if hit is not None and cache is not None:
+                        cache.put_preds(ctx["sigs"][mid], img, hit)
                 if hit is None:
                     missing.append(mid)
                 else:
@@ -554,6 +576,25 @@ class ModelCheckDialog(BaseScanDialog):
         for key, v in per.items():
             if v is not None:
                 ctx["buffer"][key] = ("ok", v)
+
+    @staticmethod
+    def _from_shared(ctx, mid, img):
+        """A Testing prediction (stored down to conf 0.001) as Model Check's {w, h, boxes} (conf >= 0.05, only the
+        mapped classes)."""
+        from AIO_QC.core.model_registry import qc_image_key
+        from AIO_QC.core.testing.dataset import image_size
+        pc, key = ctx["shared"][mid]
+        got = pc.get_many(key, [qc_image_key(str(img), str(ctx["root"]))])
+        if not got:
+            return None
+        arr = next(iter(got.values()))[0]
+        w, h = image_size(str(img))
+        if not w or not h:
+            return None
+        keep = set(ctx["classes"].get(mid) or [])
+        boxes = [[float(a), float(b), float(c), float(d), float(cf), int(k)] for a, b, c, d, cf, k in arr.tolist()
+                 if cf >= 0.05 and (not keep or int(k) in keep)]
+        return {"w": w, "h": h, "boxes": boxes}
 
     def scan_sample(self, ctx, s):
         if ctx["load_error"]:

@@ -1,0 +1,19 @@
+<!--title: Clips & annotated video-->
+<!--keywords: export clip cut trim lossless exact re-encode annotated video detections overlay side by side encoder nvenc-->
+<h1>Clips &amp; annotated video</h1>
+<h2>Export clip</h2>
+<p>File ▸ Export clip (<span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">X</span>) cuts the in → out range
+(set with <span class="k">I</span> and <span class="k">O</span>).</p>
+<table class="t">
+<tr><th>Mode</th><th>Result</th></tr>
+<tr><td><b>Fast</b></td><td>No re-encoding: original quality and instant. A clip can only begin on a keyframe, so it may start a little
+before your in point — the dialog shows exactly where.</td></tr>
+<tr><td><b>Exact</b></td><td>Re-encoded, starting and ending on the exact frames. Uses the GPU encoder when one works on this PC (NVENC,
+Quick Sync, AMF, VideoToolbox), else x264.</td></tr>
+</table>
+<h2>Export annotated video</h2>
+<p>File ▸ Export annotated video draws one to four models on the video — on one picture or <b>side by side</b> (two models left / right,
+three or four in a 2×2 grid) — with track IDs and a small information overlay. Predictions are cached and shared with Testing,
+so re-exports are fast.</p>
+<p>Both exports run in the background, can be cancelled, and write to a temporary file that is renamed only when complete — a cancelled
+export never leaves a broken file behind.</p>

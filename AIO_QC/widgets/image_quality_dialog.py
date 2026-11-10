@@ -20,6 +20,7 @@ from AIO_QC.core import image_quality as IQ
 from AIO_QC.utils import hexc
 from .base_scan import BaseScanDialog, ResultRow, dspin
 from .card_gallery import Card, CardView, Panel
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 SIG_INTEGRITY = "integrity|v1"          # structural + EXIF header (cache key)
 SIG_FULL = "iq|v1"                      # full decode + metrics
@@ -49,7 +50,7 @@ def integrity_findings(cache, path, ann_w, ann_h) -> list[tuple]:
     return out
 
 
-class IntegritySweep(QThread):
+class IntegritySweep(RetainedThread, QThread):
     """Low-priority background check of every image (cached): emits findings in batches."""
     batch = pyqtSignal(dict, list)          # {key: [(code, severity, message)]}, keys checked
     progress = pyqtSignal(int, int)

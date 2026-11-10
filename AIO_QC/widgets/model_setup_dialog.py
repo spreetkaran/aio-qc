@@ -650,6 +650,13 @@ class ModelSetupDialog(QDialog):
             self.models.append({"id": uuid.uuid4().hex[:8], "name": Path(p).stem, "path": p, "enabled": True,
                                 "imgsz": 0, "class_map": {}, "names": {}, "task": "", "train_imgsz": None})
         self._save()
+        if paths:
+            from AIO_QC.core import model_registry as R
+            for p in paths:                       # known app-wide too: the Frame Extractor and Testing offer it
+                try:
+                    R.register(p)
+                except OSError:
+                    pass
         self._refresh_models()
         if paths:
             self._log(f"Added {len(paths)} model(s). Press ⟳ Load to read their classes.")
@@ -873,7 +880,14 @@ class ModelSetupDialog(QDialog):
             self._save()
             self._refresh_models()
             n_ok = sum(1 for v in loaded.values() if v.get("ok"))
-            self._log(f"✅ {n_ok}/{len(loaded)} model(s) ready in {time.monotonic() - t0:.1f}s")
+            dt = time.monotonic() - t0
+            if n_ok == len(loaded):
+                self._log(f"✅ {n_ok}/{len(loaded)} model(s) ready in {dt:.1f}s")
+            else:
+                for v in loaded.values():
+                    if not v.get("ok"):
+                        self._log(f"❌ {v.get('id')}: {v.get('error', 'could not be loaded')}")
+                self._log(f"⚠ {n_ok}/{len(loaded)} model(s) ready in {dt:.1f}s - see the errors above")
             if then:
                 then()
 

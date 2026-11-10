@@ -15,7 +15,7 @@ GUIDE_ICONS = ["open", "list", "prev", "next", "hand", "cursor", "fit-window", "
                "review-flag", "tool-stats", "tool-validation", "tool-empty", "tool-image-dups", "tool-ambiguity",
                "tool-label-map", "tool-remove-class", "tool-crop-gallery", "tool-dup-shapes", "tool-outliers",
                "tool-dim-area", "tool-model-setup", "tool-model-check", "tool-sampling", "tool-smart-filter", "tool-coverage", "tool-editor", "review-fixed", "tool-ocr", "restore-window", "tool-quality", "tool-rules", "tool-inbox", "tool-export",
-               "logs", "delete", "undo", "edit", "tool-sequence", "tool-similar", "tool-review-grid", "tool-saved-filter",
+               "logs", "delete", "undo", "edit", "tool-testing", "mode-video", "mode-data", "tool-sequence", "tool-similar", "tool-review-grid", "tool-saved-filter",
                "history", "tool-dataprep", "tool-sketch", "tool-roi", "tool-handoff", "import", "tool-report", "tool-guidelines", "tool-splits", "keyboard",
                "get-started"]
 
@@ -104,8 +104,12 @@ Editor offers the classes as flags).</p>
 
 <h2><a name='window'></a>4 · The window</h2>
 <table>
+<tr><td><b>Settings</b></td><td>The gear at the right of the menu bar, File ▸ Settings… (Ctrl+,) or the command
+palette: every preference of Image QC in one searchable window (Ctrl+F) - interface, dataset watching and cache, review,
+storage &amp; backups, models, keyboard. Changes apply at once; ↺ puts a setting back to its default, and Export… /
+Import… share a set-up. The menus keep the commands.</td></tr>
 <tr><td><b>Toolbar</b></td><td>Open / Load Classes, previous / next image, Drag / Select mode, zoom, reset, logs.
-Icons only by default (names in the tooltips); View ▸ Compact Toolbar switches the text back on.</td></tr>
+Icons only by default (names in the tooltips); Settings ▸ Interface ▸ Compact toolbar switches the text back on.</td></tr>
 <tr><td><b>QC panel</b> (top)</td><td>A slim tab row: click a tab — or rest the mouse on the tabs for a moment — and
 the tools slide down <b>over</b> the image (the image keeps its size). The drawer is the same size for every tab, so
 switching tabs (click, or rest on another tab) just swaps the tools in place. It slides back up when you launch a
@@ -260,7 +264,12 @@ your model's.</td></tr>
 <h3>{_i('group-review')} Review — see <a href='#review'>section 8</a>.</h3>
 
 <h2><a name='models'></a>7 · Checking labels with your models</h2>
-<p><b>{_i('tool-model-setup')} Models &amp; Environment</b> (Ctrl+Alt+M)</p>
+<p><b>{_i('tool-testing')} Testing</b> (Ctrl+Alt+L, Models tab) measures and compares detection models on this dataset, a
+test set built from videos, or videos only: leaderboard, charts, confusion matrix, per class, failures, plots, A / B,
+video behaviour and reports. It uses this dataset's models and one prediction cache with Model Check; label fixes made
+there go through AIO QC (backed up, in the file's history); <i>Send to review</i> flags failures here. Its chapter is
+in the Help Center (Testing).</p>
+<p><b>{_i('tool-model-setup')} Models &amp; Environment</b> (Ctrl+Alt+N)</p>
 <ol>
 <li><b>Environment</b>: pick a Python environment that has <code>ultralytics</code> (conda / venv environments are listed
 automatically) and press <i>Check</i>. If something is missing, <i>Install into a temporary environment</i> — it can reuse
@@ -426,7 +435,7 @@ file has finished being written, and then <b>re-reads</b> it — it never writes
 are re-indexed (the current image refreshes in place), new files appear in the file list, deleted ones disappear, and
 a notification says what happened (<i>Details</i> lists every file). Open QC tools show “results may be outdated ·
 Rescan” instead of re-running on their own. If the class list or the split folders change, you are asked to reload.
-Turn it off in View ▸ Watch Dataset for Outside Changes.</p>
+Turn it off in Settings ▸ Dataset ▸ Watch the dataset for outside changes.</p>
 
 <h2><a name='team'></a>10a · Team work</h2>
 <table>
@@ -518,13 +527,17 @@ pixels &gt; largest file &gt; oldest) and says for every copy whether its labels
 Split ▸ Class folders</b> writes an image into every class it is flagged with and decodes images that exist only as
 imageData.</p>
 
-<h3>{_i('mode-data')} Data Studio — the second mode (Ctrl+Alt+M)</h3>
-<p>AIO QC is one app with two modes. The switch in the top-right corner of the menu bar (or <span class='key'>Ctrl+Alt+M</span>)
-changes to <b>Data Studio</b>: its own window, menus and settings for table data — CSV, Excel, Parquet, JSON, SQLite.
+<h3>{_i('mode-video')} {_i('mode-data')} Three modes: Image QC, the Frame Extractor, Data Studio (Ctrl+Alt+M)</h3>
+<p>AIO QC is one app with three modes, each its own window. The switch in the top-right corner of the menu bar (or
+<span class='key'>Ctrl+Alt+M</span>, next mode) changes to the <b>Frame Extractor</b> — play videos, mark and extract
+frames for annotation (batch, markers, timeline analysis, search, clip and annotated-video export, its own command line
+<code>aio-qc extract | probe | testset | eval | clip</code>); <i>File ▸ Open output in Image QC</i> brings the extracted
+frames here as a dataset, and <i>File ▸ Show Source Video in Frame Extractor</i> goes back from an image to its video.
+See <i>Help ▸ Modes &amp; working across tools</i>. Or to <b>Data Studio</b>: its own window, menus and settings for table data — CSV, Excel, Parquet, JSON, SQLite.
 Clean, reshape, build features and chart a table step by step (every step undoable and shown as pandas / PySpark
 code), see each column's health with one-click fixes, and run the recipe on the full data with Spark. <i>Tools ▸
 Annotations → Data Studio</i> opens this dataset as a table — one row per shape. Data Studio has its own guide
-(F1 there). The app starts in the mode you used last.</p>
+(F1 there). The app starts in Image QC.</p>
 
 <h3>Keyboard-only work</h3>
 <table>
@@ -534,7 +547,7 @@ the keys for where your focus is first; type to filter, click (or Enter) to run.
 <span class='key'>Alt+1 … Alt+6</span> open a QC tab with the focus on its first tool — arrows move, Enter runs, Esc
 closes.</td></tr>
 <tr><td>{_i('get-started')}</td><td><b>Help ▸ Get Started</b> — the guided overview shown on the first start, with
-<i>Show me</i> spotlights on the real window. View ▸ Animations turns all motion off.</td></tr>
+<i>Show me</i> spotlights on the real window. Settings ▸ General ▸ Animations turns all motion off.</td></tr>
 </table>
 
 <h2><a name='large'></a>10 · Working with large datasets</h2>
@@ -573,7 +586,7 @@ graphics driver) leaves <code>aio_qc_crash.log</code> with the stack, and the ne
 <tr><td>{_i('logs')}</td><td><b>Something failed?</b> Open <i>Logs</i> (Ctrl+Shift+L) — every error of the session is listed there.</td></tr>
 <tr><td>{_i('undo')}</td><td><b>View looks odd?</b> <i>Reset View</i> (R) shows all labels, clears filters and fits the image;
 <i>Display ▸ Reset</i> removes image adjustments.</td></tr>
-<tr><td>{_i('delete')}</td><td><b>Stale numbers?</b> File ▸ Clear Dataset Cache, then reopen.</td></tr>
+<tr><td>{_i('delete')}</td><td><b>Stale numbers?</b> Settings ▸ Dataset ▸ Dataset cache, then reopen.</td></tr>
 <tr><td>{_i('tool-model-setup')}</td><td><b>Model problems?</b> Models &amp; Environment ▸ Check environment, and read the console.
 Missing packages can be installed into a temporary environment.</td></tr>
 </table>

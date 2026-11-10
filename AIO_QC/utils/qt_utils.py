@@ -201,7 +201,18 @@ def set_icon(obj, name: str):
     obj.setProperty(ICON_PROP, name)
 
 
-@lru_cache(maxsize=None)
+def later(ms: int, owner, fn):
+    """Run fn after ms milliseconds — unless `owner` (a QObject) is destroyed first. Unlike
+    QTimer.singleShot(ms, lambda: ...), a lambda that uses a closed window can never fire."""
+    from PyQt6.QtCore import QTimer
+    t = QTimer(owner)
+    t.setSingleShot(True)
+    t.timeout.connect(fn)
+    t.timeout.connect(t.deleteLater)
+    t.start(max(0, int(ms)))
+    return t
+
+
 def app_settings():
     """The app's QSettings: the OS store, or data/settings.ini next to a portable build (core.appdirs)."""
     from PyQt6.QtCore import QSettings
@@ -323,3 +334,52 @@ def fmtShortcut(text):
             keys.append("+")
         parts.append("+".join(f"<b>{k}</b>" for k in keys))
     return ", ".join(parts)
+
+
+# ------------------------------------------------------------------ windows vs. the screen
+def available_geometry(widget=None):
+    """Usable area (without taskbar / dock) of the screen the widget is on (its parent's, else the primary)."""
+    scr = None
+    for w in (widget, widget.parentWidget() if widget is not None else None):
+        if w is not None:
+            try:
+                scr = w.screen()
+            except RuntimeError:
+                scr = None
+            if scr is not None:
+                break
+    scr = scr or QGuiApplication.primaryScreen()
+    return scr.availableGeometry() if scr is not None else None
+
+
+def preferred_size(win, w, h, frac=0.85):
+    """Resize a window to (w, h), but never larger than frac of the available screen area."""
+    g = available_geometry(win)
+    if g is not None:
+        w, h = min(w, int(g.width() * frac)), min(h, int(g.height() * frac))
+    win.resize(w, h)
+
+
+def fit_to_screen(win):
+    """Keep a top-level window inside its screen: shrink it (and its minimum size) to the available area and move
+    it so no part - title bar included - is off-screen. Maximized / full-screen windows are left alone."""
+    if not win.isWindow() or win.isMaximized() or win.isFullScreen():
+        return
+    g = available_geometry(win)
+    if g is None or g.width() < 200 or g.height() < 200:
+        return
+    fg, cg = win.frameGeometry(), win.geometry()
+    dw, dh = max(0, fg.width() - cg.width()), max(0, fg.height() - cg.height())
+    maxw, maxh = g.width() - dw, g.height() - dh
+    if win.minimumWidth() > maxw:
+        win.setMinimumWidth(maxw)
+    if win.minimumHeight() > maxh:
+        win.setMinimumHeight(maxh)
+    w, h = min(win.width(), maxw), min(win.height(), maxh)
+    if (w, h) != (win.width(), win.height()):
+        win.resize(w, h)
+    fg = win.frameGeometry()
+    x = min(max(fg.x(), g.left()), g.right() + 1 - fg.width())
+    y = min(max(fg.y(), g.top()), g.bottom() + 1 - fg.height())
+    if (x, y) != (fg.x(), fg.y()):
+        win.move(x, y)

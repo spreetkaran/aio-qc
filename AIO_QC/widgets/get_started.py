@@ -8,7 +8,7 @@ window, finding problems, reviewing and fixing, team work (hand-off batches, gui
 and the keyboard. "Show me" dims the window and spotlights the real part of the interface being described, with a
 caption; click or press any key to come back to the tour.
 
-Motion (all on FrameAnimator — one step per display refresh, eased; View ▸ Animations off = instant):
+Motion (all on FrameAnimator — one step per display refresh, eased; Settings ▸ General ▸ Animations off = instant):
     window fades in · pages slide and cross-fade · the hero icon rises in · the active progress dot stretches ·
     the spotlight glides from one part of the window to the next.
 """
@@ -95,7 +95,7 @@ PAGES = [
           ("tool-sketch", "Sketch & ROI", "P draws on the image to explain a point (copy / save it); O captures "
                                           "boxes with their real coordinates")]),
     Page("undo", "Safe by design",
-         "Every write keeps the original first. Undo from the tool, from <b>File ▸ Storage &amp; Backups</b>, or "
+         "Every write keeps the original first. Undo from the tool, from <b>Tools ▸ Storage…</b>, or "
          "from the file's History.",
          [("delete", "Trash, not delete", "removed files go to .aio_qc_trash and can be restored"),
           ("logs", "Small footprint", "originals are stored compressed and deduplicated; Storage shows and trims it"),

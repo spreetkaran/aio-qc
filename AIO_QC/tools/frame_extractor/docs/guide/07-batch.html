@@ -1,0 +1,43 @@
+<!--title: Batch extraction-->
+<!--keywords: batch queue many videos workers parallel sampling sharpest blur negatives duplicate duplicates dedup scene cuts mining pre-annotations resume presets gallery review reject-->
+<h1>Batch extraction</h1>
+<p><span class="k">Ctrl</span>+<span class="k">B</span> opens the queue. Add videos (or drop several files on the main window);
+each row can have its own start, end and ROI. Videos are processed in parallel worker processes; long videos are split
+across workers when there are fewer videos than workers.</p>
+
+<h2>What gets saved</h2>
+<table class="t">
+<tr><th>Setting</th><th>Effect</th></tr>
+<tr><td><b>Sampling</b></td><td>Every N-th frame, or the <i>sharpest</i> frame of every window of N frames.</td></tr>
+<tr><td><b>Min sharpness</b></td><td>Skip blurry frames (Laplacian variance; the status bar shows the current frame's value — right-click the
+timeline strip to take it from the current frame).</td></tr>
+<tr><td><b>Blurry negatives</b></td><td>Keep 1 of every K rejected blurry frames in a separate folder (useful as negatives).</td></tr>
+<tr><td><b>Skip duplicates</b></td><td>Drop frames that look the same as one of the last saved ones (presets below).</td></tr>
+<tr><td><b>Detect scene cuts</b></td><td>Always keep the first frame after a cut.</td></tr>
+<tr><td><b>Skip frames already in the dataset</b></td><td>Cross-video de-duplication against everything extracted before into this output folder
+(a perceptual-hash database).</td></tr>
+<tr><td><b>ROI follows the object</b></td><td>Track the ROI through the video.</td></tr>
+</table>
+
+<h3>Duplicate presets</h3>
+<!--@dedup-->
+
+<h2>Mining with models</h2>
+<p>With models configured (Settings ▸ Models), the batch can keep only the frames worth annotating. A frame is kept if it
+matches <b>any</b> checked criterion; no criteria = keep all.</p>
+<!--@mining-->
+<p><b>Pre-annotations</b> — write LabelMe JSON or YOLO txt next to every saved frame from the model's detections, ready to correct
+in your labelling tool.</p>
+
+<h2>Speed and robustness</h2>
+<ul>
+<li><b>Parallel workers</b> and <b>Use of this PC</b> — <i>Auto</i> plans workers from your CPU, memory and current load so the PC stays usable.</li>
+<li><b>Resume interrupted jobs</b> — a stopped, crashed or cancelled batch continues where it stopped.</li>
+<li><b>Presets</b> — save and load all batch settings; the command line reads the same preset files.</li>
+</ul>
+
+<h2>Reviewing the results</h2>
+<p><span class="k">Ctrl</span>+<span class="k">G</span> opens the review gallery for an output folder: frames, blurry negatives and rejected
+images, filtered by mining reason, with pre-annotations drawn. <b>Reject</b> moves an image and its label file into
+<code>_rejected/</code> — <b>Restore</b> or <span class="k">Ctrl</span>+<span class="k">Z</span> undoes it. Rejected frames stay in the hash
+database, so they are not extracted again.</p>

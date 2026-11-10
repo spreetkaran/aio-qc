@@ -8,8 +8,8 @@ next to those components, as their licenses require.)
 |---|---|---|---|
 | labelme 6.3.1 and 5.11.4 (Kentaro Wada and contributors) — modified, used by *Fix in Editor* as a **separate program** | `AIO_QC/editors/sources/labelme-*` | GPL-3.0-only | [labelme-GPL-3.0.txt](labelme-GPL-3.0.txt) |
 | labelImg 1.8.6 (Tzutalin and contributors) — modified, run as a separate program | `AIO_QC/editors/sources/labelimg-1.8.6` | MIT | [labelImg-MIT.txt](labelImg-MIT.txt) |
-| Phosphor Icons (basis of several app icons) | `AIO_QC/icons` | MIT | [Phosphor-Icons-MIT.txt](Phosphor-Icons-MIT.txt) |
-| Inter (The Inter Project Authors) | `AIO_QC/fonts/Inter_24pt-SemiBold.ttf` | SIL OFL 1.1 | [Inter-OFL-1.1.txt](Inter-OFL-1.1.txt) |
+| Phosphor Icons (basis of several app icons) | `AIO_QC/icons`, `AIO_QC/tools/frame_extractor/icons` | MIT | [Phosphor-Icons-MIT.txt](Phosphor-Icons-MIT.txt) |
+| Inter (The Inter Project Authors) | `AIO_QC/fonts/Inter-Bold.otf`, `AIO_QC/fonts/Inter-Medium.otf`, `AIO_QC/fonts/Inter-Regular.otf`, `AIO_QC/fonts/Inter-SemiBold.otf`, `AIO_QC/fonts/Inter_24pt-SemiBold.ttf`, `AIO_QC/fonts/inter-Regular-web.woff`, `AIO_QC/fonts/inter-SemiBold-web.woff` | SIL OFL 1.1 | [Inter-OFL-1.1.txt](Inter-OFL-1.1.txt) |
 | JetBrains Mono (The JetBrains Mono Project Authors) | `AIO_QC/fonts/JetBrainsMono-Regular.ttf` | SIL OFL 1.1 | [JetBrainsMono-OFL-1.1.txt](JetBrainsMono-OFL-1.1.txt) |
 | Source Code Pro (Adobe, Reserved Font Name “Source”) | `AIO_QC/fonts/SourceCodePro-Regular.ttf` | SIL OFL 1.1 | [SourceCodePro-OFL-1.1.txt](SourceCodePro-OFL-1.1.txt) |
 | AV Hershey Simplex (Stewart C. Russell) | `AIO_QC/fonts/AVHersheySimplexMedium.ttf` | CC0 / WTFPL | [AVHersheySimplex-CC0-WTFPL.txt](AVHersheySimplex-CC0-WTFPL.txt) |

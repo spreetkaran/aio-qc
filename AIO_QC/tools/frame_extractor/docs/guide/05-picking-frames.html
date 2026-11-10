@@ -1,0 +1,43 @@
+<!--title: Picking frames-->
+<!--keywords: markers snap suggest auto pick bookmarks in out roi tracking flags detections sharpest blur-->
+<h1>Picking frames</h1>
+
+<h2>Markers — the fastest way to pick</h2>
+<p>Press <span class="k">M</span> to drop a marker at the playhead — also while the video plays. Markers live on the lane
+above the timeline strip and in the <b>Markers</b> dock.</p>
+<table class="t">
+<tr><th>Action</th><th>How</th></tr>
+<tr><td>Move a marker</td><td>Drag it on the marker lane</td></tr>
+<tr><td>Jump between markers</td><td><span class="k">Alt</span>+<span class="k">←</span> / <span class="k">→</span>; double-click a marker</td></tr>
+<tr><td><b>Snap</b> to the sharpest frame</td><td>Markers dock ▸ Snap (searches ± N frames) — fixes motion blur from marking while playing</td></tr>
+<tr><td><b>Suggest</b> markers</td><td>Markers dock ▸ Suggest: scene starts, sharpest frame per window, model-flagged samples or uniform.
+Suggestions are hollow until extracted — delete what you don't want.</td></tr>
+<tr><td><b>Auto-pick</b></td><td><span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">E</span>: sharpest per window → snap → extract, in one go</td></tr>
+<tr><td>Extract pending</td><td><span class="k">Ctrl</span>+<span class="k">E</span> — full resolution, optional ROI crop and pre-annotations</td></tr>
+<tr><td>Auto-extract</td><td>Markers dock option: every new marker is saved immediately in the background</td></tr>
+<tr><td>Send to batch</td><td>The same frames as a batch-queue row (parallel workers)</td></tr>
+</table>
+<p>Marker colours: <b>green</b> = pending, <b>blue</b> = saved, <b>hollow</b> = suggested.</p>
+
+<h2>Bookmarks and in / out points</h2>
+<ul>
+<li><span class="k">B</span> toggles a bookmark (with an optional note in the Marks dock); <span class="k">Ctrl</span>+<span class="k">←</span> / <span class="k">→</span> jumps between them.</li>
+<li><span class="k">I</span> / <span class="k">O</span> set the in and out points; <span class="k">Shift</span>+<span class="k">I</span> / <span class="k">O</span> go there; <span class="k">X</span> clears them.
+In / out limit batch jobs, clip export and Testing video analysis.</li>
+</ul>
+
+<h2>Region of interest (ROI)</h2>
+<p><span class="k">R</span> enters ROI mode: drag to draw; drag inside to move; drag edges or corners to resize.
+<span class="k">Shift</span>+<span class="k">R</span> clears it. Saved frames are cropped to the ROI (use <b>Save Full</b>,
+<span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">S</span>, to ignore it). <span class="k">T</span> makes the ROI
+<b>follow an object</b> while playing or stepping.</p>
+
+<h2>The timeline strip</h2>
+<p>A background pass analyses the video (about two samples per second, coarse to fine): blue bars show sharpness (red below
+your blur threshold), the orange line shows motion, white ticks mark scene cuts. Right-click it to set the blur threshold
+from the current frame, add a model track, or re-analyse. <span class="k">F</span> / <span class="k">Shift</span>+<span class="k">F</span>
+jump to the next / previous flagged sample.</p>
+
+<h2>Detections on the picture</h2>
+<p><span class="k">D</span> shows your models' detections on the paused frame (configure models in Settings ▸ Models).
+Each model has its own colour — the same colour it has in Testing and in reports.</p>

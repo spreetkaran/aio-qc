@@ -26,6 +26,27 @@ _STATE = {"reason": None, "code": None, "start": time.time(), "crash_file": None
 _ORPHANS: set = set()                   # threads detached from a closing window: kept alive until they finish
 
 
+_RUNNING: set = set()                   # started threads: a strong reference until they finish
+
+
+def retain(thread):
+    """Keep `thread` (a QThread) alive until it finishes. Without this, dropping the last Python reference while
+    it still runs — e.g. `self.worker = None` in a slot fed by the thread's own last signal — destroys a running
+    QThread, which Qt answers with qFatal (abort)."""
+    if thread in _RUNNING:
+        return
+    _RUNNING.add(thread)
+    thread.finished.connect(lambda t=thread: _RUNNING.discard(t))
+
+
+class RetainedThread:
+    """Mixin for QThread subclasses: start() also retain()s the thread until it finishes."""
+
+    def start(self, *a):
+        retain(self)
+        super().start(*a)
+
+
 def set_exit_reason(reason: str, override: bool = False):
     if override or _STATE["reason"] is None:
         _STATE["reason"] = reason

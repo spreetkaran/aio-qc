@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 
 from AIO_QC.core.io import atomic_write_text
 from AIO_QC.utils import newIcon, style as apply_style
+from AIO_QC.utils import later
 from . import anim
 
 PALETTE = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#007aff", "#af52de", "#ff2d55", "#ffffff",
@@ -405,7 +406,7 @@ class _ShapesBox(QScrollArea):
         return b
 
     def show_btn(self, b):
-        QTimer.singleShot(0, lambda: self.ensureWidgetVisible(b, 0, 0))   # after the first layout
+        later(0, self, lambda: self.ensureWidgetVisible(b, 0, 0))   # after the first layout
 
     def wheelEvent(self, e):
         d = e.angleDelta()

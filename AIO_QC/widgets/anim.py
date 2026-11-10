@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """
 Motion helpers — every animation runs on FrameAnimator (one step per display refresh, eased), so it is as smooth as
-the screen allows and costs nothing when idle. View ▸ Animations turns them all off (ENABLED = False): every helper
+the screen allows and costs nothing when idle. Settings ▸ General ▸ Animations turns them all off (ENABLED = False): every helper
 then applies the end state at once.
 
     fade(widget, True/False)               opacity in / out (child widgets and overlays)
@@ -23,6 +23,9 @@ _RUNNING: dict = {}          # (id(obj), kind) -> FrameAnimator (a new animation
 
 
 def _run(obj, kind, ms, step, done=None, easing=QEasingCurve.Type.OutCubic):
+    from PyQt6 import sip
+    for k in [k for k, a in _RUNNING.items() if sip.isdeleted(a.timer)]:   # owner gone: its id may be reused
+        _RUNNING.pop(k, None)
     key = (id(obj), kind)
     old = _RUNNING.pop(key, None)
     if old is not None:
@@ -72,9 +75,20 @@ def fade(widget: QWidget, show: bool, ms: int = 180, done=None):
     _run(widget, "fade", ms, step, fin)
 
 
+def hosts_opengl(win: QWidget) -> bool:
+    """A window with an OpenGL surface (the Frame Extractor's GPU canvas). Window opacity makes a window layered on
+    Windows, and a layered window cannot present OpenGL: the canvas fails and falls back to the CPU renderer."""
+    from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+    return bool(win.findChildren(QOpenGLWidget))
+
+
 def window_fade_in(win: QWidget, ms: int = 160):
-    if not ENABLED or not win.isWindow():
+    if not ENABLED or not win.isWindow() or hosts_opengl(win):
         return
+    if win.windowType() == Qt.WindowType.Dialog:
+        from . import motion
+        if motion.installed():                      # AppMotion already fades every dialog in: never twice
+            return
     win.setWindowOpacity(0.0)
 
     def step(t):

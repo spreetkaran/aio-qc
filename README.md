@@ -1,6 +1,7 @@
 <h1 align="center">
   <table align="center">
     <tr>
+      <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/fx_icon_200x200.png" width="160" height="160"></td>
       <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/app_200_border.png" width="200" height="200"></td>
       <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/studio_icon_200x200.png" width="160" height="160"></td>
     </tr>
@@ -9,14 +10,14 @@
 </h1>
 
 <h4 align="center">
-  Find and fix annotation errors in LabelMe and YOLO datasets before you train — with Data Studio for tables, in one desktop app.
+  Find and fix annotation errors in LabelMe and YOLO datasets before you train — with a Frame Extractor for videos and Data Studio for tables, in one desktop app.
 </h4>
 
 <div align="center">
-  <a href="https://pypi.org/project/aio-qc/2.0.0/"><img src="https://img.shields.io/badge/pypi-2.0.0-blue.svg"></a>
+  <a href="https://pypi.org/project/aio-qc/2.1.0/"><img src="https://img.shields.io/badge/pypi-2.1.0-blue.svg"></a>
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.0.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.0.0"><img src="https://img.shields.io/badge/release-v2.0.0-informational.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.1.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.1.0"><img src="https://img.shields.io/badge/release-v2.1.0-informational.svg"></a>
 </div>
 
 <div align="center">
@@ -39,7 +40,7 @@
 AIO QC is a desktop app for checking annotated image datasets **before you train**: broken files, wrong or
 inconsistent label names, sloppy or duplicate shapes, split leakage and probable mislabels.\
 It shows every problem on the image, lets you fix it in the same window, and keeps the original of every file it
-changes, so any change can be undone. A second mode, **Data Studio**, analyses and cleans tables. It is written in Python and uses Qt for its graphical interface.
+changes, so any change can be undone. Two more modes share the app: the **Frame Extractor** turns videos into frames worth annotating, and **Data Studio** analyses and cleans tables. It is written in Python and uses Qt for its graphical interface.
 
 <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/qc_drawer/.readme/qc_drawer.gif" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/review/.readme/review.gif" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/zoom/.readme/zoom.gif" width="32%" />\
 <i>QC drawer, review and zoom.</i>
@@ -47,7 +48,7 @@ changes, so any change can be undone. A second mode, **Data Studio**, analyses a
 <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/validation/.readme/validation.png" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/crop_gallery/.readme/crop_gallery.png" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/review_grid/.readme/review_grid.png" width="32%" />\
 <i>Validation, Crop Gallery and Review Grid.</i>
 
-<img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/stats/.readme/stats.png" width="49%" />\
+<img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/stats/.readme/stats.png" width="49%" />
 <i>Dataset Stats.</i>
 
 <sub>Screenshots are of the current release on <a href="https://cocodataset.org">COCO</a> (COCO128 subset); the look of older releases differs.</sub>
@@ -61,7 +62,7 @@ changes, so any change can be undone. A second mode, **Data Studio**, analyses a
   - **Dataset** — Dataset Stats · Validation · Empty Annotations · Duplicate Images (exact and perceptual, split leakage) · Image Quality · Split Health
   - **Labels** — Label Ambiguities · Label Mapping (view-only renames and merges) · Remove / Re-order Classes · Text Labels · Guidelines
   - **Shapes** — Crop Gallery · Duplicate Shapes · Outliers · Sequence Check (video frames) · Dim / Area · Training Size · Relationship Rules
-  - **Models** — Model Check (report card, confusion, label-error estimate, accept by confidence) · OCR Check · Visual Similarity (DINOv3 / SigLIP2 / CLIP), with your models running in their own environment
+  - **Models** — Model Check (report card, confusion, label-error estimate, accept by confidence) · OCR Check · Visual Similarity (DINOv3 / SigLIP2 / CLIP) · **Testing** (test sets, leaderboard, A / B, failures, video review, reports), with your models running in their own environment
   - **Review** — Issues Inbox · QC Sampling (error-rate estimate with a verdict) · Review Grid · Saved Views · Coverage Map · Smart Filter · QC Report · Export & Split
 - [x] Fix on the image: move, reshape, relabel, delete or draw shapes, with exact undo / redo
 - [x] Fix in Editor: hand files to LabelMe or labelImg and get them checked again when they are saved
@@ -75,11 +76,24 @@ changes, so any change can be undone. A second mode, **Data Studio**, analyses a
 - [x] Built for big datasets: cached indexing, background work, virtualised lists — fluid at millions of files and shapes
 - [x] Safe by design: confirmations, atomic writes, originals kept in a compressed backup store, deletes are moves to a trash folder
 
+### Frame Extractor
+
+- [x] Video player with a GPU canvas, real-time pipeline and optional libmpv engine (installed automatically when wanted)
+- [x] Markers and bookmarks, snap to the sharpest frame, timeline analysis and suggestions, ROI and tracking, detections
+- [x] Batch extraction (multi-process, resumable, with pre-annotations and cross-video de-duplication), review gallery, frame search, clip and annotated-video export
+- [x] Open an extraction in Image QC as a dataset; jump from any extracted image back to its video and frame
+- [x] Video review: every model's boxes on whole videos in the player, events where models disagree or flicker, hard frames sent to Image QC
+
 ### Data Studio
 
 - [x] CSV / TSV, Excel, Parquet, Feather, JSON and SQLite; the open image dataset's annotations as a table
 - [x] A recipe of undoable steps (columns, filters, cleaning, reshaping, features), shown as pandas / PySpark code and runnable on Spark
 - [x] Column profile with one-click fixes, charts, an HTML profile report and exports
+
+### The whole app
+
+- [x] Three modes in one app (Ctrl+Alt+M), one Settings window per mode with search, one Help Center (F1)
+- [x] Every action searchable in the command palette (Ctrl+K)
 
 ## Installation
 
@@ -88,16 +102,16 @@ There are 2 options to install AIO QC:
 ### Option 1: Using pip
 
 ```bash
-pip install aio-qc==2.0.0
+pip install aio-qc==2.1.0
 
-# with every optional part (Data Studio, faster JSON, natural sort, YAML, Pillow):
+# with every optional part (Data Studio, Frame Extractor video engine, ONNX models, faster JSON …):
 pip install "aio-qc[full]"
-# or only Data Studio: "aio-qc[data]"
+# or only what you need: "aio-qc[data]", "aio-qc[video]", "aio-qc[models]"
 ```
 
 ### Option 2: Using standalone executable (easiest)
 
-Download the zip for your system from the [v2.0.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.0.0) page — no Python needed.
+Download the zip for your system from the [v2.1.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.1.0) page — no Python needed.
 
 ### Supported Python and platforms
 
@@ -107,17 +121,18 @@ Download the zip for your system from the [v2.0.0 release](https://github.com/sp
 | Qt | Qt6 (PyQt6) |
 | OS | Windows / macOS / Linux |
 | Required | PyQt6, NumPy, OpenCV, loguru |
-| Optional | `[data]` pandas, pyarrow, openpyxl · natsort, Pillow, PyYAML, orjson |
+| Optional | `[data]` pandas, pyarrow, openpyxl · `[video]` PyAV, imageio-ffmpeg, psutil · `[models]` ONNX Runtime · natsort, Pillow, PyYAML, orjson |
 
-Model-based checks run your detector, embedding or OCR models in **their own Python environment** that you choose, so the app itself never needs PyTorch or a GPU.
+Model-based checks and Testing run your detector, embedding or OCR models in **their own Python environment** that you choose, so the app itself never needs PyTorch or a GPU.
 
 ## Usage
 
 ```bash
 aio-qc                                # open the app
 aio-qc-console                        # the same, with the log in a terminal
-aio-qc --mode data                    # start in Data Studio
-aio-qc sales.csv                      # open a table in Data Studio
+aio-qc --mode video                   # start in the Frame Extractor (or: --mode data)
+aio-qc video.mp4                      # open a video; a .csv / .xlsx opens in Data Studio
+aio-qc extract -h                     # the Frame Extractor's command line (extract | probe | testset | eval | clip)
 
 aio-qc-console --version                      # print the version
 aio-qc-console --logger-level debug           # verbose log in aio_qc_tool.log
@@ -188,12 +203,13 @@ pyinstaller AIO_QC/__main__.py \
 ```bash
 git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
-git checkout v2.0.0
+git checkout v2.1.0
 pip install -e ".[full]"
 aio-qc-console --logger-level debug
+python -m pytest tests                  # the test suite (offscreen Qt)
 ```
 
-Issues and pull requests are welcome. Please include the app version (`aio-qc --version`), your OS and,
+Issues and pull requests are welcome. Please include the app version (`aio-qc-console --version`), your OS and,
 for bugs, the relevant part of `aio_qc_tool.log`. Logic belongs in `core/` (Qt-free, testable); UI in `widgets/`.
 
 ## Acknowledgement
@@ -210,5 +226,5 @@ AIO QC is free software, released under the [GNU General Public License v3.0](LI
 Copyright (c) 2026 Preetkaran Singh.
 
 It bundles third-party components that keep their own licenses. See
-[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.0.0/THIRD_PARTY_NOTICES.md); the full license texts
-are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.0.0/licenses).
+[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.1.0/THIRD_PARTY_NOTICES.md); the full license texts
+are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.1.0/licenses).

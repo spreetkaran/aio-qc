@@ -68,7 +68,7 @@ class GuideCard(QFrame):
         close = QToolButton()
         close.setText("✕")
         close.setAutoRaise(True)
-        close.setToolTip("Hide (View ▸ Guideline Cards turns them off)")
+        close.setToolTip("Hide (Settings ▸ Interface ▸ Guideline cards turns them off)")
         close.clicked.connect(lambda: anim.fade(self, False))
         head = QHBoxLayout()
         head.addWidget(QLabel("📘"))

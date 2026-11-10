@@ -1,0 +1,59 @@
+<!--title: Playback & navigation-->
+<!--keywords: play pause step seek zoom pan decoder libmpv real-time pipeline vfr timecode speed statistics 8K 60fps-->
+<h1>Playback &amp; navigation</h1>
+
+<h2>Moving through a video</h2>
+<table class="t">
+<tr><th>To</th><th>Do</th></tr>
+<tr><td>Play / pause</td><td><span class="k">Space</span> (after the end, Play restarts from the beginning)</td></tr>
+<tr><td>Step one frame</td><td><span class="k">,</span> / <span class="k">.</span> or the mouse wheel over the picture</td></tr>
+<tr><td>Jump by a step</td><td><span class="k">←</span> / <span class="k">→</span> — the step (1 frame … 10 s) is chosen under the video</td></tr>
+<tr><td>Start / end</td><td><span class="k">Home</span> / <span class="k">End</span></td></tr>
+<tr><td>Go to an exact place</td><td><span class="k">Ctrl</span>+<span class="k">J</span>, or click the position display and type it</td></tr>
+<tr><td>Change speed</td><td><span class="k">[</span> / <span class="k">]</span> (0.25× … 4×)</td></tr>
+<tr><td>Scrub</td><td>Drag the seekbar (keyframe previews while dragging), or drag on a unit of the position display</td></tr>
+</table>
+
+<h2>Zoom and pan</h2>
+<p>Zoom keeps the pixels <b>original quality</b>: when zoomed, the picture comes from the full-resolution frame, and at
+high zoom you see the real pixels. Zoom is animated around the cursor.</p>
+<ul>
+<li><span class="k">Ctrl</span>+wheel, trackpad pinch, <span class="k">Ctrl</span>+<span class="k">+</span> / <span class="k">-</span> (numpad too) — zoom</li>
+<li><span class="k">Ctrl</span>+<span class="k">0</span> — fit to window · <span class="k">Ctrl</span>+<span class="k">1</span> — actual pixels (100 %)</li>
+<li>Double-click — toggle fit ↔ 100 % at the cursor · middle-drag, or drag when zoomed — pan (also on a paused frame)</li>
+</ul>
+
+<h2>Playback engines</h2>
+<p>Settings ▸ Playback chooses how frames are produced while playing. Pausing, stepping, saving and analysis always
+use the exact decoder, so what you save is always the exact frame.</p>
+<table class="t">
+<tr><th>Engine</th><th>Best for</th></tr>
+<tr><td><b>libmpv</b> (recommended)</td><td>Media-player smoothness: hardware decoding on the display GPU, frames timed to the display's
+refresh (59.94 fps on a 60 Hz screen plays evenly), frame-exact seeking. Needs the libmpv library and the GPU renderer.</td></tr>
+<tr><td><b>Real-time pipeline</b></td><td>Built in: ffmpeg decodes on the GPU in a separate process and scales the picture; used for
+large videos (≥ 2560×1440) in <i>auto</i>, or always / never.</td></tr>
+<tr><td><b>Exact decoder</b></td><td>OpenCV or PyAV (Settings ▸ Decoding). PyAV gives exact timestamps for variable-frame-rate
+and rotated videos.</td></tr>
+</table>
+<h3>libmpv</h3>
+<p><b>Getting it is automatic.</b> When libmpv is missing, the app gets it in the background while the
+built-in engine plays: on Windows the LGPL <i>libmpv-2.dll</i> (about 30 MB), on macOS mpv from conda-forge (a few hundred
+MB), on Linux it asks once and installs your distribution's package (your system asks for your password). The task
+indicator in the status bar shows progress and has Cancel; when it is done, libmpv takes over the open video.</p>
+<p><b>Settings ▸ Playback ▸ libmpv…</b> shows the library in use (or exactly why none could be used), how playback uses
+it, and how to get it on Windows, macOS or Linux. Once per session the app checks that mpv's picture matches the exact
+decoder's picture of the same frame; on a GPU / driver where it doesn't, mpv's basic renderer is used, and if that
+doesn't match either, the built-in engine plays. If frames can't follow the display's refresh (vsync off, a slow
+graphics driver) mpv switches to its own clock so videos still play at the right speed. A file mpv can't open plays
+with the built-in engine, with mpv's reason in the status bar and the log.</p>
+<p><b>Benchmark decoders for this video</b> (Settings ▸ Playback) measures which hardware chain is fastest on your PC
+for the current video; the result is remembered.</p>
+
+<h2>Playback statistics</h2>
+<p><span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">I</span> shows an overlay with the frame rate
+actually shown, dropped frames by cause and the time spent per frame — handy to check that playback keeps up.</p>
+
+<h2>Timecode</h2>
+<p><span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">T</span> cycles the display format; <span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">O</span>
+burns a timecode overlay onto the picture; <span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">C</span> copies the
+current position.</p>

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from AIO_QC.utils import style as apply_style
+from AIO_QC.utils import later
 from .mini_session import FrameAnimator
 
 OPEN_MS, CLOSE_MS, SWITCH_MS = 230, 170, 150
@@ -281,7 +282,7 @@ class Ribbon(QWidget):
             self.bar.setCurrentIndex(i)
             self.stack.setCurrentIndex(i)
             self.open_drop()
-        QTimer.singleShot(0 if self.pinned else OPEN_MS + 10, lambda: self._focus_first(i))
+        later(0 if self.pinned else OPEN_MS + 10, self, lambda: self._focus_first(i))
 
     def _page_buttons(self, i: int) -> list:
         from PyQt6.QtWidgets import QAbstractButton

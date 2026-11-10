@@ -9,8 +9,8 @@ from AIO_QC.core.tabular import steps as S
 
 GUIDE = """
 <h2>Data Studio</h2>
-<p>The table-data mode of AIO QC — its own window, menus and settings. <b>Ctrl+Alt+M</b> or the switch in the
-top-right corner goes back to Image QC; the app starts in the mode you used last (<code>aio-qc --mode data</code>,
+<p>The table-data mode of AIO QC — its own window, menus and settings. <b>Ctrl+Alt+M</b> (next mode) or the switch
+in the top-right corner changes to Image QC or the Frame Extractor; the app starts in Image QC (<code>aio-qc --mode data</code>,
 or <code>aio-qc file.csv</code>, starts here).</p>
 
 <h3>1 · Open data</h3>

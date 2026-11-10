@@ -37,6 +37,7 @@ from AIO_QC.core.dataset import DETECTION_TYPES  # noqa: F401  (kept for callers
 from AIO_QC.core.instances import SORTS, Instance, InstanceStore, collect_file, iter_collect, shuffle_seed
 from AIO_QC.core.state import REVIEW_FLAG
 from AIO_QC.utils import LRUCache, newButton, style as apply_style, theme_color
+from AIO_QC.widgets.lifecycle import RetainedThread
 
 __all__ = ["CropGalleryDialog", "Instance", "SORTS", "crop_geometry"]
 LOOK_SORTS = ["Least typical first", "Grouped by look"]
@@ -47,7 +48,7 @@ LOOK_TIPS = ["Crops that look least like the rest of this label first (needs a V
 # =============================================================================
 # Collection (worker thread; a process pool inside for big datasets)
 # =============================================================================
-class CollectWorker(QThread):
+class CollectWorker(RetainedThread, QThread):
     progress = pyqtSignal(int, int)
     batch = pyqtSignal(list)               # rows found since the last batch (tiles appear while collecting)
     done = pyqtSignal(list, list)          # [], errors

@@ -1,0 +1,36 @@
+<!--title: Getting started-->
+<!--keywords: install requirements setup first run open video quick start ffmpeg libmpv pyav onnxruntime-->
+<h1>Getting started</h1>
+
+<h2>Requirements</h2>
+<table class="t">
+<tr><th>Component</th><th>Needed for</th><th>How to get it</th></tr>
+<tr><td>Python 3.10+ with PyQt6, OpenCV, NumPy, loguru</td><td>Everything (required)</td><td><code>pip install -r requirements.txt</code></td></tr>
+<tr><td>ffmpeg</td><td>Real-time playback of large videos, clip / annotated-video export, frame search</td><td>Any ffmpeg on PATH, or <code>pip install imageio-ffmpeg</code>; Settings ▸ Playback ▸ ffmpeg</td></tr>
+<tr><td>libmpv (recommended)</td><td>The smoothest playback: GPU decoding, display-synchronised timing</td><td>Installed automatically when missing (Linux asks first); Settings ▸ Playback ▸ <b>libmpv…</b> shows its status</td></tr>
+<tr><td>PyAV</td><td>Exact timestamps for variable-frame-rate and rotated video, instant keyframe scrubbing</td><td><code>pip install av</code></td></tr>
+<tr><td>onnxruntime</td><td>Running <code>.onnx</code> models inside the app</td><td><code>pip install onnxruntime</code> (or <code>-gpu</code> / <code>-directml</code>)</td></tr>
+<tr><td>A Python environment with ultralytics + torch</td><td>Running <code>.pt</code> / <code>.engine</code> models; CLIP text search</td><td>Settings ▸ Models finds one, or builds a temporary one for you</td></tr>
+</table>
+
+<h2>Your first five minutes</h2>
+<ol>
+<li><b>Open a video</b> — <span class="k">Ctrl</span>+<span class="k">O</span>, drag a file onto the window, or
+use the arrow on the <i>Load Video</i> button for recent files.</li>
+<li><b>Play</b> with <span class="k">Space</span>. Step frames with <span class="k">,</span> and <span class="k">.</span>
+or the mouse wheel; jump with <span class="k">←</span> / <span class="k">→</span> by the step chosen under the video.</li>
+<li><b>Choose the output folder</b> with the <i>Output Dir</i> button, and the image format, quality and file
+names on the toolbar's output bar.</li>
+<li><b>Mark frames</b> with <span class="k">M</span> — it works while playing. Markers appear on the lane above the
+timeline strip.</li>
+<li><b>Extract</b> the marked frames with <span class="k">Ctrl</span>+<span class="k">E</span> — or press
+<span class="k">Ctrl</span>+<span class="k">S</span> to save just the current frame.</li>
+</ol>
+<div class="tip"><b>Tip</b> — Help ▸ Get Started replays the interactive tour at any time.</div>
+
+<h2>Where things are saved</h2>
+<ul>
+<li><b>Frames</b>: the output folder, named by your naming template (default <code>{video}_frame_{frame}</code>).</li>
+<li><b>Per-video session</b> (bookmarks, in/out points, ROI, markers): restored automatically the next time you open the video.</li>
+<li><b>Settings, logs, caches</b>: AIO QC's settings and data folder (and its one log file) — see <i>Settings &amp; performance</i>.</li>
+</ul>

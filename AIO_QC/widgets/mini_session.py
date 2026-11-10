@@ -30,6 +30,12 @@ _LIVE: set = set()          # running animators: PyQt keeps only a WEAK referenc
                             # animator nobody holds would be garbage-collected and silently stop mid-way
 
 
+def _prune():
+    from PyQt6 import sip
+    for a in [a for a in _LIVE if sip.isdeleted(a.timer)]:
+        _LIVE.discard(a)
+
+
 def _settings():
     from AIO_QC.utils import app_settings
     return app_settings()
@@ -50,8 +56,10 @@ class FrameAnimator:
         self.timer.timeout.connect(self._tick)
 
     def start(self):
+        # No `destroyed` hook here: a Python slot on a child timer's destroyed() runs during the owner's C++
+        # teardown and could call into a freed slot proxy (segfault). Animators whose owner died are pruned instead.
+        _prune()
         _LIVE.add(self)
-        self.timer.destroyed.connect(lambda *_: _LIVE.discard(self))
         self.clock.start()
         self.step(0.0)
         self.timer.start()
@@ -65,7 +73,11 @@ class FrameAnimator:
 
     def _tick(self):
         p = min(1.0, self.clock.elapsed() / self.duration)
-        self.step(self.curve.valueForProgress(p))
+        try:
+            self.step(self.curve.valueForProgress(p))
+        except RuntimeError:                       # the animated object was deleted under us
+            self.stop()
+            return
         if p >= 1.0:
             self.timer.stop()
             _LIVE.discard(self)
