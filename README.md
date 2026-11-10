@@ -109,8 +109,8 @@ Model-based checks run your detector, embedding or OCR models in **their own Pyt
 aio-qc                                # open the app
 aio-qc-console                        # the same, with the log in a terminal
 
-aio-qc --version                      # print the version
-aio-qc --logger-level debug           # verbose log in aio_qc_tool.log
+aio-qc-console --version                      # print the version
+aio-qc-console --logger-level debug           # verbose log in aio_qc_tool.log
 ```
 
 Click **Open Dir** (`Ctrl+O`) or drop a dataset folder on the window; the layout is detected automatically. **`F1`** opens the user guide.
@@ -179,7 +179,7 @@ git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
 git checkout v1.0.1
 pip install -e ".[full]"
-aio-qc --logger-level debug
+aio-qc-console --logger-level debug
 ```
 
 Issues and pull requests are welcome. Please include the app version (`aio-qc --version`), your OS and,
