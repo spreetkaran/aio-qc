@@ -9,7 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 from PyQt6.QtCore import QAbstractListModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QIcon
 from AIO_QC.utils import newIcon, style as apply_style, theme_color
 from PyQt6.QtWidgets import (
     QSizePolicy,
@@ -23,17 +23,20 @@ REVIEW_FILTERS = [("All files", None), ("Unreviewed", "none"), ("✓ OK", "ok"),
 
 
 def _badge(color: str, glyph: str) -> QIcon:
-    pix = QPixmap(14, 14)
-    pix.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setBrush(QColor(color))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(0, 0, 14, 14)
-    p.setPen(QColor("white"))
-    p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
-    p.end()
-    return QIcon(pix)
+    """Coloured disc with a glyph, drawn at the real screen resolution (sharp at any scaling)."""
+    from AIO_QC.utils import painted_icon
+    from PyQt6.QtCore import QRectF
+
+    def draw(p):
+        p.setBrush(QColor(color))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(0, 0, 14, 14))
+        p.setPen(QColor("white"))
+        f = p.font()
+        f.setPixelSize(10)
+        p.setFont(f)
+        p.drawText(QRectF(0, 0, 14, 14), Qt.AlignmentFlag.AlignCenter, glyph)
+    return painted_icon(draw, 14)
 
 
 class SampleListModel(QAbstractListModel):

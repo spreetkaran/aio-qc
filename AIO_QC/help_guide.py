@@ -127,7 +127,11 @@ click again to deselect, double-click to zoom to it, right-click to rename its l
 <tr><td><b>Labels</b></td><td>Every label in the dataset with its count; untick to hide a label, right-click for
 “show files with this label”, “show only this label”, rename / mapping.</td></tr>
 <tr><td><b>Thumbnails</b></td><td>Thumbnails around the current image (vertical when docked left / right).</td></tr>
-<tr><td><b>Status bar</b></td><td>Review state of the current file, indexing progress, position, mode, active label mapping.</td></tr>
+<tr><td><b>Status bar</b></td><td>Left, like Paint: pointer position on the image, size of the selected shape / box
+being drawn / ROI, image size; then messages. Right: review state of the current file, indexing progress, position,
+mode, active label mapping.</td></tr>
+<tr><td><b>Zoom</b></td><td>Toolbar: zoom box, Fit Window, 1:1, zoom out, slider, zoom in (Ctrl + wheel over the image
+too).</td></tr>
 </table>
 <p class='muted'>Panels can be moved, floated or hidden (View ▸ Panels); the layout is remembered. The side panels run
 the full height of the window. <b>Focus mode</b> (F11 or Ctrl+Alt+F) hides every panel and the toolbar — only the
@@ -283,6 +287,20 @@ held-out, or an image list for k-fold models).</li>
 <p><b>{_i('tool-model-check')} Model Check</b> (Ctrl+Shift+M) runs the models once; predictions are cached, so every
 threshold change afterwards is instant.</p>
 <table>
+<tr><td><b>🔭 Explorer</b></td><td>The whole dataset with your labels (solid) and every model's predictions (dashed)
+drawn on each image. Coloured by the match result — green correct, purple wrong class, amber poor fit, red not
+labelled, orange missed — or by class / model. <b>Sidebar:</b> each model with its own confidence slider, match IoU,
+match results, classes, split / folder / review / training filters, all with live counts. <b>Sort</b> by most errors,
+missed labels, unlabelled detections, wrong classes, worst fit, uncertainty or where the models disagree.
+<b>Objects</b> shows every object as a crop (labels, predictions or only the problems); <b>Map</b> places the objects
+Visual Similarity embedded on a 2-D map coloured by result — drag a rectangle to open them. <b>📈 Thresholds</b>: the
+confidence histogram (drag the line) and precision / recall per model and class, with the best-F1 threshold.
+Double-click an image: full resolution, hover details, <span class='key'>Enter</span> accepts the model's suggestion,
+<span class='key'>A</span> adds a prediction as a label, <span class='key'>R</span> relabels,
+<span class='key'>Delete</span> deletes, <i>Compare</i> shows two models side by side. <b>✓ Accept…</b> applies the
+suggestions of the selected (or all shown) images in one go; ↶ undoes. Save views (☰) per dataset. The last run comes
+back when you reopen Model Check, and <i>View ▸ Model Predictions</i> (Shift+P) draws them in the main viewer.
+Segmentation outlines, oriented boxes and keypoints are drawn when the model makes them.</td></tr>
 <tr><td><b>Cards</b></td><td>Every finding as a crop — your box solid, the model's box dashed — ranked by how likely it
 is a real label error: class mismatch, missing annotation, poor box fit, missed by model. Tick cards, then relabel,
 add the predicted box, delete, or flag — only when you choose. (The same list as a table: <i>Findings table</i>.)</td></tr>

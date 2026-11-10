@@ -37,6 +37,193 @@ MIN_POINTS = {"polygon": 3, "linestrip": 2, "points": 1}
 HANDLE_PX = 9
 
 
+class ImageItem(QGraphicsPixmapItem):
+    """The image, drawn like Windows Photos at every zoom.
+
+    Qt alone scales a picture with plain bilinear filtering: enlarged a lot it turns soft-blocky, shrunk a lot it
+    aliases (jagged edges, shimmer). While the view moves that fast path is used; once it rests (≈ 90 ms), the
+    visible part is re-rendered once at the screen's real resolution — bicubic when magnified, area-averaged when
+    reduced — and drawn 1:1 on device pixels. Panning reuses it; only a new zoom or new area re-renders.
+    `pixel_view` (Settings ▸ Viewer ▸ Show pixels when zoomed in) keeps hard pixel squares when magnified instead."""
+    REFINE_UP, REFINE_DOWN = 1.15, 0.85          # device scale outside [DOWN, UP]: worth a high-quality render
+
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        self.pixel_view = False
+        self.hq = None                           # (device scale, scene QRectF, QImage at device resolution)
+        self._arr = None                         # RGBA copy of the shown pixmap (made on the first refine)
+        from PyQt6.QtCore import QTimer
+        self.timer = QTimer(canvas)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(90)
+        self.timer.timeout.connect(self.refine)
+
+    def setPixmap(self, pm):
+        self.hq, self._arr = None, None
+        super().setPixmap(pm)
+
+    def _dpr(self) -> float:
+        try:
+            return float(self.canvas.viewport().devicePixelRatioF())
+        except RuntimeError:
+            return 1.0
+
+    def _wanted(self, s: float) -> bool:
+        d = s * self._dpr()
+        if d > self.REFINE_UP:
+            return not self.pixel_view
+        return d < self.REFINE_DOWN
+
+    def paint(self, p, opt, w=None):
+        super().paint(p, opt, w)                 # fast filter: the base (and what shows while moving)
+        s = p.worldTransform().m11()
+        if self.pixmap().isNull() or not self._wanted(s):
+            return
+        hq = self.hq
+        moving = self.canvas.is_animating() or getattr(self.canvas, "_holding", False)
+        if hq is not None and abs(hq[0] - s) < 1e-9 and not moving:
+            tgt = p.worldTransform().mapRect(hq[1])
+            p.save()
+            p.resetTransform()
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+            p.drawImage(QRectF(round(tgt.x()), round(tgt.y()), hq[2].width() / hq[2].devicePixelRatio(),
+                               hq[2].height() / hq[2].devicePixelRatio()), hq[2])
+            p.restore()
+            if self._covers(hq):
+                return
+        if not moving:
+            self.timer.start()
+
+    def _view_rect(self) -> QRectF:
+        """The visible part of the image, in scene coordinates, snapped to whole viewport pixels."""
+        c = self.canvas
+        vr = QRectF(c.viewport().rect())
+        img_v = c.mapFromScene(self.boundingRect()).boundingRect()
+        r = vr.intersected(QRectF(img_v))
+        if r.isEmpty():
+            return QRectF()
+        r = QRectF(math.floor(r.left()), math.floor(r.top()), math.ceil(r.width()) + 1, math.ceil(r.height()) + 1)
+        r = r.intersected(vr)
+        inv, _ok = c.viewportTransform().inverted()
+        return inv.mapRect(r)
+
+    def _covers(self, hq) -> bool:
+        v = self._view_rect()
+        return v.isEmpty() or hq[1].adjusted(-1e-3, -1e-3, 1e-3, 1e-3).contains(v)
+
+    def invalidate(self):
+        self.hq = None
+        self.update()
+
+    def refine(self):
+        c = self.canvas
+        pm = self.pixmap()
+        if pm.isNull() or c.is_animating() or getattr(c, "_holding", False):
+            return
+        s = c.viewportTransform().m11()
+        if not self._wanted(s):
+            self.hq = None
+            return
+        S = self._view_rect()
+        if S.isEmpty():
+            return
+        dpr = self._dpr()
+        k = s * dpr                                             # source pixels -> device pixels
+        W, H = max(1, int(round(S.width() * k))), max(1, int(round(S.height() * k))) 
+        if W * H > 40_000_000:
+            return
+        if self._arr is None:
+            img = pm.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+            ptr = img.constBits()
+            ptr.setsize(img.sizeInBytes())
+            self._arr = np.frombuffer(ptr, np.uint8).reshape(img.height(), img.bytesPerLine())[:, :img.width() * 4] \
+                .reshape(img.height(), img.width(), 4).copy()
+        import cv2
+        a = self._arr
+        ih, iw = a.shape[:2]
+        x0, y0 = max(0, int(math.floor(S.left())) - 3), max(0, int(math.floor(S.top())) - 3)
+        x1, y1 = min(iw, int(math.ceil(S.right())) + 3), min(ih, int(math.ceil(S.bottom())) + 3)
+        crop = a[y0:y1, x0:x1]
+        if not crop.size:
+            return
+        if k > 1:                                               # magnified: bicubic, exact sub-pixel mapping
+            sx = S.width() / W
+            sy = S.height() / H
+            M = np.array([[sx, 0, S.left() - x0 + 0.5 * sx - 0.5], [0, sy, S.top() - y0 + 0.5 * sy - 0.5]], np.float64)
+            out = cv2.warpAffine(crop, M, (W, H), flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
+                                 borderMode=cv2.BORDER_REPLICATE)
+        else:                                                   # reduced: area average (no aliasing)
+            sub = a[int(math.floor(S.top())):int(math.ceil(S.bottom())), int(math.floor(S.left())):int(math.ceil(S.right()))]
+            if not sub.size:
+                return
+            S = QRectF(math.floor(S.left()), math.floor(S.top()), sub.shape[1], sub.shape[0])
+            W, H = max(1, int(round(sub.shape[1] * k))), max(1, int(round(sub.shape[0] * k)))
+            out = cv2.resize(sub, (W, H), interpolation=cv2.INTER_AREA)
+        out = np.ascontiguousarray(out)
+        qi = QImage(out.data, W, H, 4 * W, QImage.Format.Format_RGBA8888).copy()
+        qi.setDevicePixelRatio(dpr)
+        self.hq = (s, S, qi)
+        self.update()
+
+
+class PointsItem(QGraphicsPathItem):
+    """Point shapes: dots with a constant on-screen radius (like the outlines and the tags), so a point looks the
+    same at every zoom instead of swelling over the pixels around it."""
+    RADIUS_PX = 3.5
+
+    def __init__(self, points, lines=False):
+        super().__init__()
+        self.lines = lines
+        self.set_points(points)
+
+    def set_points(self, points):
+        self.prepareGeometryChange()
+        self.pts = [QPointF(p) for p in points]
+        xs, ys = [p.x() for p in self.pts] or [0.0], [p.y() for p in self.pts] or [0.0]
+        self._box = QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+        path = QPainterPath()
+        if self.lines and self.pts:
+            path.moveTo(self.pts[0])
+            for p in self.pts[1:]:
+                path.lineTo(p)
+        self.setPath(path)
+
+    def _scale(self) -> float:
+        views = self.scene().views() if self.scene() is not None else []
+        return max(views[0].transform().m11(), 1e-6) if views else 1.0
+
+    def _dots(self, radius_px) -> QPainterPath:
+        r = radius_px / self._scale()
+        path = QPainterPath(self.path())
+        for p in self.pts:
+            path.addEllipse(p, r, r)
+        return path
+
+    def boundingRect(self):
+        """Point box + the dot radius at the current zoom (asked on every paint / hit test: no path building)."""
+        m = (self.RADIUS_PX * 2 + self.pen().widthF() + 2) / self._scale()
+        return self._box.adjusted(-m, -m, m, m)
+
+    def shape(self):
+        return self._dots(self.RADIUS_PX + 4)                       # a comfortable click target
+
+    def paint(self, p, _opt, _w=None):
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.lines:
+            p.setPen(self.pen())
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(self.path())
+        s = max(p.worldTransform().m11(), 1e-6)
+        r = self.RADIUS_PX * self.pen().widthF() / 2.0 / s
+        pen = QPen(QColor(0, 0, 0, 170), 1.0)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.setBrush(self.pen().color())
+        for pt in self.pts:
+            p.drawEllipse(pt, r, r)
+
+
 class LabelTag(QGraphicsItem):
     """A shape's class name as a crisp, constant-size pill (like CVAT / Label Studio / Roboflow):
 
@@ -52,22 +239,35 @@ class LabelTag(QGraphicsItem):
 
     PAD_X, PAD_Y, RADIUS = 5.0, 2.0, 4.0
     MAX_W = 220.0
+    _metrics: dict = {}                           # (font, text) -> (elided, text width, ascent, height)
+
+    @classmethod
+    def _measure(cls, font, text):
+        key = (font.key(), text)
+        hit = cls._metrics.get(key)
+        if hit is None:
+            from PyQt6.QtGui import QFontMetricsF
+            fm = QFontMetricsF(font)
+            el = fm.elidedText(text, Qt.TextElideMode.ElideRight, cls.MAX_W - 2 * cls.PAD_X)
+            hit = (el, fm.horizontalAdvance(el), fm.ascent(), fm.height())
+            if len(cls._metrics) > 20000:
+                cls._metrics.clear()
+            cls._metrics[key] = hit
+        return hit
 
     def __init__(self, text: str, color: QColor, font):
         super().__init__()
-        from PyQt6.QtGui import QFontMetricsF
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self.setAcceptHoverEvents(False)
+        # rendered once into a device-pixel cache: zooming / panning blits it (the tag never changes size)
+        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
         self.font = font
-        fm = QFontMetricsF(font)
         full = str(text)
-        self.text = fm.elidedText(full, Qt.TextElideMode.ElideRight, self.MAX_W - 2 * self.PAD_X)
+        self.text, self.text_w, self.ascent, fh = self._measure(font, full)
         if self.text != full:
             self.setToolTip(full)
-        self.text_w = fm.horizontalAdvance(self.text)
-        self.ascent = fm.ascent()
         self.w = math.ceil(self.text_w + 2 * self.PAD_X)
-        self.h = math.ceil(fm.height() + 2 * self.PAD_Y)
+        self.h = math.ceil(fh + 2 * self.PAD_Y)
         self.fill = QColor(color)
         self.fill.setAlpha(235)
         self.border = QColor(color).darker(165)
@@ -162,6 +362,7 @@ class Canvas(QGraphicsView):
     MIN_ZOOM, MAX_ZOOM = 0.01, 10.0
 
     zoomFinished = pyqtSignal()
+    zoomChanged = pyqtSignal(float)               # every frame of a glide too (zoom box / slider follow live)
     shapeSelected = pyqtSignal(int)      # index into current shapes list
     selectionCleared = pyqtSignal()
     modeChanged = pyqtSignal(str)
@@ -170,6 +371,8 @@ class Canvas(QGraphicsView):
     relabelRequested = pyqtSignal(int, int)       # index, class number 1-9 (0 = choose from the list)
     boxDrawn = pyqtSignal(QRectF)                 # new box (image pixels)
     editRefused = pyqtSignal(str)                 # why an edit gesture was not possible
+    cursorMoved = pyqtSignal(object)              # image point under the mouse (QPointF) or None (status bar)
+    selectionRect = pyqtSignal(object)            # bounds of the selection / box being drawn (QRectF) or None
 
     BASE_SHAPE_Z, LABEL_BG_Z, LABEL_TEXT_Z = 10, 100_000, 200_000
     SELECTED_Z = 1e9
@@ -178,7 +381,7 @@ class Canvas(QGraphicsView):
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
-        self.pixmap_item = QGraphicsPixmapItem()
+        self.pixmap_item = ImageItem(self)       # Windows-Photos-quality rendering once the view rests
         self.pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self.scene.addItem(self.pixmap_item)
 
@@ -191,6 +394,8 @@ class Canvas(QGraphicsView):
         self.selected_group: Optional[ShapeGroup] = None
         self.hover_group: Optional[ShapeGroup] = None
         self.overlay_items: list = []           # temporary, non-annotation graphics (model predictions)
+        self.peek_index = None                  # a hidden-label shape shown while it is selected (see select_shape)
+        self.pred_items: list = []              # the persistent predictions layer (View ▸ Model Predictions)
 
         self.show_tags = True
         self.fill_shapes = False
@@ -329,7 +534,9 @@ class Canvas(QGraphicsView):
         self.drawShapes()
 
     def loadPixmap(self, pixmap: QPixmap):
+        self.peek_index = None
         self.clear_overlay()
+        self.clear_pred_layer()
         self.clearShapes(emit_signal=True)
         self._original = pixmap
         self.pixmap_item.setPixmap(pixmap)
@@ -343,6 +550,7 @@ class Canvas(QGraphicsView):
     def clearAll(self):
         self._original = QPixmap()
         self.clear_overlay()
+        self.clear_pred_layer()
         self.clearShapes(emit_signal=True)
         self.pixmap_item.setPixmap(QPixmap())
         if self._panning():
@@ -351,10 +559,16 @@ class Canvas(QGraphicsView):
 
     def loadShapes(self, shapes: List[dict], label_colors: Dict, visible_labels: Set):
         prev = self.selected_group.index if self.selected_group else None
+        if prev is None or prev != self.peek_index:
+            self.peek_index = None
         self.shapes, self.label_colors, self.visible_labels = shapes or [], label_colors, visible_labels
         self.drawShapes()
         if prev is not None and prev in self.index_to_group:
             self.select_shape(prev, emit=False)
+        elif prev is not None:                  # the selected shape is gone / hidden now: everyone must know
+            self.peek_index = None
+            self.selectionRect.emit(None)
+            self.selectionCleared.emit()
 
     def clearShapes(self, emit_signal=False):
         self._clear_handles()
@@ -370,12 +584,10 @@ class Canvas(QGraphicsView):
         self.shape_groups.clear()
         self.item_to_group.clear()
         self.index_to_group.clear()
+        if had_selection:
+            self.selectionRect.emit(None)
         if emit_signal and had_selection:
             self.selectionCleared.emit()
-
-    def _base_scale(self) -> float:
-        r = self.pixmap_item.boundingRect()
-        return max(min(r.width(), r.height()) / 800.0, 0.25)
 
     @staticmethod
     def _shape_priority(shape: dict) -> float:
@@ -397,13 +609,12 @@ class Canvas(QGraphicsView):
             return QGraphicsEllipseItem(QRectF(points[0].x() - r, points[0].y() - r, 2 * r, 2 * r))
         if st == "line" and len(points) == 2:
             return QGraphicsLineItem(QLineF(points[0], points[1]))
-        if st in ("linestrip", "point", "points") or len(points) < 3:
+        if st in ("point", "points") or len(points) == 1:
+            return PointsItem(points, lines=False)            # dots of a constant screen size
+        if st == "linestrip" or len(points) < 3:
             path = QPainterPath(points[0])
             for p in points[1:]:
                 path.lineTo(p)
-            if len(points) == 1:
-                rr = 3 * self._base_scale()
-                path.addEllipse(points[0], rr, rr)
             return QGraphicsPathItem(path)
         return QGraphicsPolygonItem(QPolygonF(points))
 
@@ -411,15 +622,14 @@ class Canvas(QGraphicsView):
         self.clearShapes()
         if not self.shapes or self.pixmap_item.pixmap().isNull():
             return
-        base = self._base_scale()
         font = self._tag_font()
-        pen_w = max(1.0, 2.0 * base) * self.outline_scale
+        pen_w = 2.0 * self.outline_scale        # screen pixels: the same thin line at every zoom (cosmetic pen)
 
         order = sorted(range(len(self.shapes)), key=lambda i: self._shape_priority(self.shapes[i]))
         for z, idx in enumerate(order):
             shape = self.shapes[idx]
             label = str(shape.get("label", "?"))
-            if label not in self.visible_labels:
+            if label not in self.visible_labels and idx != self.peek_index:
                 continue
             color = self.label_colors.get(label)
             if color is None:
@@ -432,6 +642,7 @@ class Canvas(QGraphicsView):
                 continue
             item = self._make_item(shape, points)
             pen = QPen(color, pen_w)
+            pen.setCosmetic(True)               # zooming in never thickens it over the pixels being checked
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             item.setPen(pen)
             if hasattr(item, "setBrush"):
@@ -537,6 +748,8 @@ class Canvas(QGraphicsView):
 
     def scrollContentsBy(self, dx, dy):
         super().scrollContentsBy(dx, dy)
+        if not self.is_animating():
+            self.pixmap_item.timer.start()
         if self.shape_groups:
             self._schedule_tag_layout()
 
@@ -553,9 +766,14 @@ class Canvas(QGraphicsView):
     # ------------------------------------------------------------- selection
     def select_shape(self, index: int, emit: bool = True) -> bool:
         """Selecting is a Select-mode action: from Drag mode it switches to Select first (modeChanged tells the UI)."""
+        if self.peek_index is not None and index != self.peek_index:
+            self.peek_index = None                       # another shape: the peeked hidden one goes away again
+            self.drawShapes()
         group = self.index_to_group.get(index)
         if group is None:
-            return False
+            group = self._peek(index)
+            if group is None:
+                return False
         if self.mode == self.DRAG:
             self.setMode(self.SELECT)
         if self.selected_group is not group:
@@ -566,18 +784,43 @@ class Canvas(QGraphicsView):
             group.set_selected(True, self.SELECTED_Z)
             self._emphasize_tag(group)
         self._update_handles()
+        self.emit_selection()
         if emit:
             self.shapeSelected.emit(group.index)
         return True
 
+    def _peek(self, index: int):
+        """A shape whose label is unticked in the Labels panel was asked for (Annotations dock, a QC finding):
+        draw it while it is selected instead of failing silently — deselecting hides it again."""
+        if not (0 <= index < len(self.shapes)) or self.pixmap_item.pixmap().isNull():
+            return None
+        if str(self.shapes[index].get("label", "?")) in self.visible_labels:
+            return None                                  # visible but not drawable (no points / colour)
+        self.peek_index = index
+        self.drawShapes()
+        group = self.index_to_group.get(index)
+        if group is None:
+            self.peek_index = None
+        return group
+
+    def is_peeked(self, index: int) -> bool:
+        return self.peek_index is not None and index == self.peek_index
+
     def clearSelection(self):
         if self.selected_group is None:
+            if self.peek_index is not None:
+                self.peek_index = None
+                self.drawShapes()
             return
         self._flush_nudge()
         self.selected_group.set_selected(False)
         self.selected_group = None
         self._emphasize_tag(None)
         self._clear_handles()
+        if self.peek_index is not None:                  # the hidden shape was only shown while selected
+            self.peek_index = None
+            self.drawShapes()
+        self.selectionRect.emit(None)
         self.selectionCleared.emit()
 
     def focus_shape(self, index: int):
@@ -602,14 +845,13 @@ class Canvas(QGraphicsView):
         Cleared automatically when another image is loaded.
         """
         self.clear_overlay()
-        base = self._base_scale()
         tag_font = self._tag_font()
         for b in boxes:
             x1, y1, x2, y2 = map(float, b["box"])
             color = QColor(b.get("color", "#ff00ff"))
             rect = QGraphicsRectItem(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
-            pen = QPen(color, max(1.5, 2.5 * base), Qt.PenStyle.DashLine)
-            pen.setCosmetic(False)
+            pen = QPen(color, 2.0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
             rect.setPen(pen)
             rect.setZValue(self.LABEL_TEXT_Z * 2)
             self.scene.addItem(rect)
@@ -621,6 +863,57 @@ class Canvas(QGraphicsView):
                 t.setZValue(self.LABEL_TEXT_Z * 2 + 1)
                 self.scene.addItem(t)
                 self.overlay_items.append(t)
+
+    def set_pred_layer(self, items: list[dict]):
+        """
+        The model-predictions layer (not annotations, never saved), kept until the next image:
+        [{"box": (x1, y1, x2, y2), "poly": [(x, y), …] or None, "kpts": [(x, y, c), …] or None, "text": str,
+          "color": "#rrggbb"}] — dashed outlines with a constant-size tag.
+        """
+        self.clear_pred_layer()
+        from PyQt6.QtGui import QPolygonF
+        from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsPolygonItem
+        tag_font = self._tag_font()
+        for b in items:
+            color = QColor(b.get("color", "#ff00ff"))
+            pen = QPen(color, 1.8, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            poly = b.get("poly")
+            if poly is not None and len(poly) >= 3:
+                item = QGraphicsPolygonItem(QPolygonF([QPointF(float(x), float(y)) for x, y in poly]))
+            else:
+                x1, y1, x2, y2 = map(float, b["box"])
+                item = QGraphicsRectItem(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
+            item.setPen(pen)
+            item.setZValue(self.LABEL_TEXT_Z * 2 - 2)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.scene.addItem(item)
+            self.pred_items.append(item)
+            for x, y, c in (b.get("kpts") or ()):
+                if c >= 0.3 and (x or y):
+                    r = PointsItem.RADIUS_PX                       # screen pixels, like the point shapes
+                    dot = QGraphicsEllipseItem(-r, -r, 2 * r, 2 * r)
+                    dot.setFlag(dot.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                    dot.setPos(float(x), float(y))
+                    dot.setBrush(color)
+                    dot.setPen(QPen(QColor(0, 0, 0, 160), 0))
+                    dot.setZValue(self.LABEL_TEXT_Z * 2 - 1)
+                    self.scene.addItem(dot)
+                    self.pred_items.append(dot)
+            if b.get("text"):
+                x1, y1, x2, y2 = map(float, b["box"])
+                t = LabelTag(b["text"], color, tag_font)
+                t.setPos(QPointF(min(x1, x2), max(y1, y2)))
+                t.set_offset(0, 2)
+                t.setZValue(self.LABEL_TEXT_Z * 2 - 1)
+                self.scene.addItem(t)
+                self.pred_items.append(t)
+
+    def clear_pred_layer(self):
+        for it in self.pred_items:
+            if it.scene() is self.scene:
+                self.scene.removeItem(it)
+        self.pred_items = []
 
     def clear_overlay(self):
         for it in self.overlay_items:
@@ -704,6 +997,10 @@ class Canvas(QGraphicsView):
         self.setTransform(QTransform.fromScale(zoom, zoom))
         self.current_zoom = zoom
         self.centerOn(center)
+        self.zoomChanged.emit(zoom)
+        for g in self.shape_groups:               # point dots keep their screen size: new scene bounds
+            if isinstance(g.shape_item, PointsItem):
+                g.shape_item.prepareGeometryChange()
         if self.shape_groups:                     # tags keep their screen size: re-place them for this zoom
             if animating and self._tags_slow:
                 return                            # many tags: placed once the glide lands (keeps it fluid)
@@ -717,11 +1014,13 @@ class Canvas(QGraphicsView):
 
     def _set_smooth(self, zoom: float, animating: bool):
         # Smooth (bilinear) whenever it is affordable — also while gliding: nearest-neighbour shimmers while the
-        # scale changes, which reads as jitter. Very large images glide with the fast filter. Crisp pixels when
-        # pixel-peeping (>= 300 %) once settled.
+        # scale changes, which reads as jitter. Very large images glide with the fast filter. Once the view rests
+        # the image item re-renders the visible part in high quality (ImageItem). Hard pixel squares only with
+        # Settings ▸ Viewer ▸ Show pixels when zoomed in (from 300 %).
         pm = self.pixmap_item.pixmap()
         big = pm.width() * pm.height() > 12_000_000
-        smooth = (not big if animating else True) and zoom < 3.0
+        pixels = getattr(self.pixmap_item, "pixel_view", False) and zoom >= 3.0
+        smooth = (not big if animating else True) and not pixels
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, smooth)
         self.pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation if smooth
                                                else Qt.TransformationMode.FastTransformation)
@@ -843,6 +1142,7 @@ class Canvas(QGraphicsView):
         self.zoom_mode = mode
         self._target_zoom = self.current_zoom
         self._set_smooth(self.current_zoom, False)
+        self.pixmap_item.timer.start()            # the view rests: high-quality render of what is visible
         self.zoomFinished.emit()
 
     # public zoom API ------------------------------------------------------------
@@ -867,6 +1167,14 @@ class Canvas(QGraphicsView):
         """Spinbox: zoom around the viewport centre."""
         self.animate_to(zoom, anchor_scene=self._view_center(), anchor_view=self.viewport().rect().center(),
                         duration=180)
+
+    def zoom_step(self, direction: int):
+        """Zoom in / out buttons: the next Windows Photos level (10-point steps to 200 %, 25 to 600 %, 50 above).
+        Steps accumulate on the running target, so N quick clicks are N steps (a click during a glide continues from
+        where that glide is heading, not from the frame it happens to be at)."""
+        from .zoom_widget import photos_step
+        base = self._target_zoom if self.is_animating() else self.current_zoom
+        self.zoom_to(photos_step(base, 1 if direction > 0 else -1, self.MIN_ZOOM, self.MAX_ZOOM))
 
     def zoom_by(self, factor: float, view_pos):
         """Ctrl+wheel. Consecutive ticks accumulate onto the running target instead of restarting."""
@@ -1008,7 +1316,40 @@ class Canvas(QGraphicsView):
         if group is not None:
             group.set_hover(True)
 
+    def report_cursor(self, view_pos):
+        """Status bar: the image pixel under view_pos (None off the image). Modes that filter the viewport's mouse
+        events (ROI, sketch) call it too."""
+        if view_pos is None or self.pixmap_item.pixmap().isNull():
+            self.cursorMoved.emit(None)
+            return
+        p = self.mapToScene(view_pos)
+        r = self.pixmap_item.boundingRect()
+        self.cursorMoved.emit(QPointF(p) if r.contains(p) else None)
+
+    @staticmethod
+    def points_rect(pts, shape_type=None):
+        try:
+            xs, ys = [float(p[0]) for p in pts], [float(p[1]) for p in pts]
+        except (TypeError, ValueError, IndexError):
+            return None
+        if not xs:
+            return None
+        if shape_type == "circle" and len(xs) == 2:
+            r = ((xs[1] - xs[0]) ** 2 + (ys[1] - ys[0]) ** 2) ** 0.5
+            return QRectF(xs[0] - r, ys[0] - r, 2 * r, 2 * r)
+        return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+
+    def emit_selection(self, pts=None):
+        g = self.selected_group
+        if pts is None and g is not None:
+            pts = g.shape_data.get("points") or []
+        if g is None and pts is None:
+            self.selectionRect.emit(None)
+            return
+        self.selectionRect.emit(self.points_rect(pts, self._stype(g.shape_data) if g is not None else None))
+
     def mouseMoveEvent(self, event):
+        self.report_cursor(event.pos())
         if self._draw_start is not None:
             self._move_draw(event.pos())
             return
@@ -1036,6 +1377,7 @@ class Canvas(QGraphicsView):
 
     def leaveEvent(self, event):
         self._set_hover(None)
+        self.cursorMoved.emit(None)
         super().leaveEvent(event)
 
     def wheelEvent(self, event):
@@ -1207,7 +1549,6 @@ class Canvas(QGraphicsView):
 
     # ---- live geometry -----------------------------------------------------------------------------------------
     def _set_item_points(self, group, pts):
-        st = self._stype(group.shape_data)
         item = group.shape_item
         q = [QPointF(x, y) for x, y in pts]
         if isinstance(item, QGraphicsRectItem) and len(q) == 2:
@@ -1219,14 +1560,12 @@ class Canvas(QGraphicsView):
             item.setLine(QLineF(q[0], q[1]))
         elif isinstance(item, QGraphicsPolygonItem):
             item.setPolygon(QPolygonF(q))
+        elif isinstance(item, PointsItem) and q:
+            item.set_points(q)
         elif isinstance(item, QGraphicsPathItem) and q:
             path = QPainterPath(q[0])
             for p in q[1:]:
                 path.lineTo(p)
-            if len(q) == 1 or st in ("point", "points"):
-                rr = 3 * self._base_scale()
-                for p in q:
-                    path.addEllipse(p, rr, rr)
             item.setPath(path)
         for it in (group.rect_item, group.text_item):     # the tag is redrawn after the commit
             if it is not None:
@@ -1307,6 +1646,7 @@ class Canvas(QGraphicsView):
         self._work_pts = pts
         self._set_item_points(g, pts)
         self._update_handles(pts)
+        self.emit_selection(pts)
 
     def _end_edit(self):
         d, self._drag_edit = self._drag_edit, None
@@ -1441,9 +1781,11 @@ class Canvas(QGraphicsView):
         p = self.mapToScene(view_pos)
         q = QPointF(*self._clamp(p.x(), p.y()))
         self._draw_item.setRect(QRectF(self._draw_start, q).normalized())
+        self.selectionRect.emit(self._draw_item.rect())
 
     def _end_draw(self, view_pos):
         rect = self._draw_item.rect() if self._draw_item is not None else QRectF()
         self._stop_drawing()
+        self.emit_selection()
         if rect.width() * self.current_zoom >= 4 and rect.height() * self.current_zoom >= 4:
             self.boxDrawn.emit(rect)

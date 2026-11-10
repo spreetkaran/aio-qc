@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{__appname__} — AIO QC")
+        self.setWindowTitle(f"{__appname__} — AIO QC App")
         from AIO_QC.core.fx_storage import migrate_files
         migrate_files()                        # once: ~/.frame_extractor of the standalone app -> AIO QC's data
         self.setAcceptDrops(True)
@@ -369,7 +369,7 @@ class MainWindow(QMainWindow):
                           "Cut the in → out range: lossless and instant, or frame-exact")
         a.export_annotated = A("Export annotated video…", self.export_annotated, None, "detect",
                                "The video with 1-4 models' detections drawn (overlay or side by side)")
-        a.about = A("About", self.show_about)
+        a.about = A("About Frame Extractor", self.show_about)
         a.logs = A("Open log folder", self.open_log_folder, tip="Logs and crash reports")
         self.toggleToolbar = A(text="Toolbar", func=self.toggle_toolbar, tip="Show/hide the toolbar",
                                checkable=True, checked=True)
@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
 
     def reset_state(self):
         self.stop_engine()
-        self.setWindowTitle(f"{__appname__} — AIO QC")
+        self.setWindowTitle(f"{__appname__} — AIO QC App")
         self.video_path = None
         self.current = None
         self.current_frame = self.requested_frame = 0
@@ -885,7 +885,7 @@ class MainWindow(QMainWindow):
         # analysis starts once the first frame is up - never competes with opening the file
         later(600, self, lambda e=engine: e is self.engine and self.start_timeline())
         name = os.path.basename(file_path)
-        self.setWindowTitle(f"{__appname__} — {name} — AIO QC")
+        self.setWindowTitle(f"{__appname__} — {name} — AIO QC App")
         dec = f"{engine.backend}{' +GPU' if engine.hw_accel else ''}"
         extra = (" · VFR" if engine.is_vfr else "") + (f" · rotated {engine.rotation}°" if engine.rotation else "")
         self.decoder_label.setText(f"{engine.width}×{engine.height} · {self.frame_rate:.2f} fps · {dec}{extra}")
@@ -3010,19 +3010,9 @@ class MainWindow(QMainWindow):
 
 
     def show_about(self):
-        from AIO_QC.tools.frame_extractor.core import mpv_lib
-        try:
-            mpv = "available" if mpv_lib.load_library(self.settings.value("playback/libmpv", "")) is not None \
-                else "not found (Settings ▸ Playback)"
-        except Exception:
-            mpv = "not found (Settings ▸ Playback)"
-        QMessageBox.about(self, f"About {__appname__}",
-                          f"<h3>{__appname__} {__version__}</h3>"
-                          "<p>Video frame extraction for image annotation - AIO QC's video mode. Model testing is in "
-                          "Image QC ▸ Models ▸ Testing.</p>"
-                          f"<p>PyAV: {'available' if HAVE_PYAV else 'not installed (pip install av)'}<br>"
-                          f"ffmpeg: {self._ffmpeg() or 'not found'}<br>libmpv: {mpv}</p>"
-                          "<p>Help ▸ User's Guide (F1) · Keyboard shortcuts (Ctrl+/)</p>")
+        from AIO_QC.widgets.about import show_about
+        from AIO_QC.utils import newIcon as aio_icon
+        show_about(self, __appname__, "Video frame extraction for image annotation", aio_icon("mode-video"))
 
     def close_window(self):
         self.close()

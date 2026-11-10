@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-AIO QC Tool — annotation quality control for LabelMe and YOLO datasets.
+AIO QC App — annotation quality control for LabelMe and YOLO datasets.
 
 Dependencies: pip install PyQt6 numpy opencv-python loguru
 Optional:     pip install natsort pillow pyyaml orjson
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from loguru import logger
 from PyQt6.QtCore import QSize, Qt, QThreadPool, QTimer, QUrl
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QKeySequence, QPixmap, QTextDocument
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QPixmap, QTextDocument
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
@@ -203,12 +203,14 @@ def _find_ffmpeg(user_path=""):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{__appname__} v{__version__}")
+        self._update_title()
         self.setWindowIcon(utils.appIcon())
         screen = QApplication.primaryScreen().availableGeometry()
         w = int(screen.width() * 0.75)
         self.resize(w, int(w * 0.55))
         self.settings = utils.app_settings()
+        from AIO_QC.widgets.status_fields import PaintStatusBar
+        self.setStatusBar(PaintStatusBar(self))           # pointer · selection · image size, then messages
         from AIO_QC.widgets import motion
         anim.ENABLED = motion.enabled()                    # one switch for every animation (ui/animations)
         from AIO_QC.core import backups as _backups
@@ -288,6 +290,7 @@ class MainWindow(QMainWindow):
         self.canvas = Canvas(self)
         self.setCentralWidget(self.canvas)
         self.canvas.zoomFinished.connect(self.updateZoomSpinbox)
+        self.canvas.zoomChanged.connect(self._zoom_live)           # every click / wheel tick / glide frame
         self.canvas.shapeSelected.connect(self.onShapeSelected)
         self.canvas.selectionCleared.connect(self.onSelectionCleared)
         self.canvas.modeChanged.connect(self._on_mode_changed)
@@ -405,12 +408,20 @@ class MainWindow(QMainWindow):
             prev=A("Prev Image", lambda: self.file_dock.step(-1), ["A", "PgUp"], icon="prev", tip="Previous image"),
             fit=A("Fit Window", self.canvas.fit_window, "Ctrl+0", icon="fit-window", tip="Fit image to window"),
             actual=A("Actual Size", self.canvas.actual_size, "Ctrl+1", icon="zoom", tip="100 %"),
-            zoom_in=A("Zoom In", lambda: self.canvas.zoom_to(self.canvas.current_zoom * 1.25), ["Ctrl++", "Ctrl+="],
-                      icon="zoom-in", tip="Zoom in around the centre"),
-            zoom_out=A("Zoom Out", lambda: self.canvas.zoom_to(self.canvas.current_zoom / 1.25), "Ctrl+-",
-                       icon="zoom-out", tip="Zoom out around the centre"),
+            zoom_in=A("Zoom In", lambda: self.canvas.zoom_step(1), ["Ctrl++", "Ctrl+="],
+                      icon="fluent-zoom-in", tip="Zoom in around the centre"),
+            zoom_out=A("Zoom Out", lambda: self.canvas.zoom_step(-1), "Ctrl+-",
+                       icon="fluent-zoom-out", tip="Zoom out around the centre"),
             tags=A("Label Tags", self._toggle_tags, "T", icon="tag", tip="Show label text on shapes", checkable=True, checked=True),
             fill=A("Fill Shapes", self._toggle_fill, "F", icon="fill", tip="Semi-transparent fill", checkable=True),
+            pixel_view=A("Show Pixels When Zoomed In", self._set_pixel_view, checkable=True,
+                         checked=self.settings.value("view/pixel_view", False, type=bool),
+                         tip="From 300 %: hard pixel squares (nearest neighbour) instead of the smooth, Windows "
+                             "Photos-like high-quality enlargement"),
+            pred_layer=A("Model Predictions", self.set_pred_layer, "Shift+P", icon="tool-model-check",
+                         tip="Draw the models' predictions (dashed) on every image — from Model Check's last run, "
+                             "at its explorer's thresholds", checkable=True,
+                         checked=self.settings.value("view/pred_layer", False, type=bool)),
             all_labels=A("Show All Labels", self.toggle_all_labels, "Ctrl+Shift+H", icon="eye",
                          tip="Toggle all labels", checkable=True, checked=True),
             search=A("Search Files", self._focus_search, "Ctrl+F"),
@@ -513,15 +524,26 @@ class MainWindow(QMainWindow):
         self.zoom_spin = ZoomWidget(Canvas.MIN_ZOOM, Canvas.MAX_ZOOM)      # "Zoom" + level to one decimal
         self.zoom_spin.setEnabled(False)
         self.zoom_spin.zoomRequested.connect(self.onZoomSpinboxChanged)
+        from AIO_QC.widgets.zoom_widget import ZoomSlider
+        self.zoom_slider = ZoomSlider(Canvas.MIN_ZOOM, Canvas.MAX_ZOOM)    # Paint-style: − ━━●━━ +
+        self.zoom_slider.zoomRequested.connect(self._zoom_from_slider)
 
         self.toolbar.addWidget(self.open_dir_btn)
         self.toolbar.addWidget(self.load_classes_btn)
         self.toolbar.addWidget(self.dataset_label)
         self.toolbar.addSeparator()
         utils.addActions(self.toolbar, (self.a.prev, self.a.next, None, self.a.drag, self.a.select, None,
-                                        self.a.zoom_in, self.a.zoom_out, self.a.fit, self.a.actual, self.zoom_spin,
+                                        self.zoom_spin, self.a.fit, self.a.actual, self.a.zoom_out,
+                                        self.zoom_slider, self.a.zoom_in,
                                         None, self.a.reset, self.a.logs))
         self.toolbar.visibilityChanged.connect(lambda v: self.a_toolbar.setChecked(v))
+        self.canvas.pixmap_item.pixel_view = self.a.pixel_view.isChecked()
+        from AIO_QC.widgets.zoom_widget import HoldToZoom
+        self._hold_zoom = []
+        for act, d in ((self.a.zoom_in, 1), (self.a.zoom_out, -1)):      # click = one step · hold = smooth zoom
+            for btn in (self.toolbar.widgetForAction(a) for a in self.toolbar.actions()):
+                if getattr(btn, "defaultAction", lambda: None)() is act:
+                    self._hold_zoom.append(HoldToZoom(self.canvas, btn, d))
 
     # ------------------------------------------------------------------ Display tab
     DISPLAY_DEFAULTS = {"brightness": 0, "contrast": 0, "gamma": 100, "auto": False, "fill": 55, "outline": 100, "tag": 100}
@@ -693,7 +715,7 @@ class MainWindow(QMainWindow):
         utils.addActions(self.menus.view, (
             {"menu": "Interaction Mode", "actions": (self.a.drag, self.a.select)},
             None, self.a.zoom_in, self.a.zoom_out, self.a.fit, self.a.actual, None,
-            self.a.tags, self.a.fill, self.a.all_labels, None,
+            self.a.tags, self.a.fill, self.a.all_labels, self.a.pred_layer, None,
             {"menu": "Panels", "actions": (*dock_toggles, None, self.a_toolbar)},
             self.a.pin_qc, self.a.focus,
         ))
@@ -710,8 +732,14 @@ class MainWindow(QMainWindow):
             self.a.next_unreviewed, None, self.a.save_flagged, self.a.export_review])
         utils.addActions(self.menus.tools, (self.a.sketch, self.a.roi, None, self.a.data_prep, self.a.ann_table, None,
                                             self.a.palette, None, self.a.storage, None, self.a.reset, self.a.logs))
+        about = QAction(utils.appIcon(), "About Image QC", self)
+        about.setMenuRole(QAction.MenuRole.AboutRole)
+        from AIO_QC.widgets.about import show_about
+        about.triggered.connect(lambda _c=False: show_about(
+            self, "Image QC", "Quality control for annotated image datasets (LabelMe / YOLO)", utils.appIcon()))
+        self.a.about = about
         utils.addActions(self.menus.help, (self.a.get_started, None, self.a.guide, self.a.tool_map, self.a.shortcuts,
-                                           self.a.keymap))
+                                           self.a.keymap, None, about))
         utils.addActions(self.menus.go, (None, self.a.next_panel, self.a.prev_panel))
         for i in range(min(9, self.tabs.count())):          # Alt+1… : a QC tab, keyboard focus on its first tool
             sc = QAction(self)
@@ -720,6 +748,9 @@ class MainWindow(QMainWindow):
             self.addAction(sc)
 
     def _build_statusbar(self):
+        sb = self.statusBar()
+        self.canvas.cursorMoved.connect(sb.set_pointer)
+        self.canvas.selectionRect.connect(sb.set_selection)
         self.pos_label = QLabel("")
         self.index_label = QLabel("")
         self.mode_label = QLabel("✋ Drag")
@@ -869,12 +900,15 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._check_yolo_classes_on_open)
         QTimer.singleShot(50, self._offer_unfinished_editor_sessions)
 
-        # Label colours: YOLO -> class-map order is known up front
+        # Label colours: the dataset's saved ones first, then the class list in order (most distinct first)
+        from AIO_QC.utils import colors as _colors
+        _colors.load(root, self.label_colors)
         for name in adapter.class_names:
             utils.update_label_colors(name, self.label_colors)
 
         self.refresh_status_buttons()
         self.dataset_label.setText(f"  📂 {root.name} · {dtype.title} · {len(session.samples):,} files  ")
+        self._update_title()
         self._external_log = []
         self._start_watcher()
         self._start_sweep()
@@ -1037,7 +1071,7 @@ class MainWindow(QMainWindow):
                 f"{names}{' …' if len(structural) > 3 else ''} — class names or split folders may differ now. "
                 "Reload to apply." + (f"<br>Also: {' · '.join(parts)} (already updated)." if parts else ""),
                 kind="warn", sticky=True,
-                actions=[("Reload dataset", self.reload_dataset), ("Details", self._show_external_log)])
+                actions=[("Reload dataset", self.reload_dataset)], details=self._external_log_text)
         elif parts:
             # one notification while it is on screen: counts accumulate, its timer restarts
             if self.toast.find("external") is None:
@@ -1050,7 +1084,7 @@ class MainWindow(QMainWindow):
                      if self._ext_locked else "")
             self.toast.show_message(f"<b>Updated from disk</b><br>{' · '.join(total)} outside AIO QC.{extra}",
                                     kind="warn" if self._ext_locked else "info", key="external",
-                                    actions=[("Details", self._show_external_log)])
+                                    details=self._external_log_text)
             self.statusBar().showMessage(f"Dataset updated from disk: {' · '.join(parts)}", 6000)
 
     def _on_samples_added(self, keys):
@@ -1059,26 +1093,24 @@ class MainWindow(QMainWindow):
         self.dataset_label.setText(f"  📂 {s.root.name} · {s.type.title} · {len(s.samples):,} files  ")
         self._update_position()
 
-    def _show_external_log(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Changes made outside AIO QC")
-        dlg.setWindowIcon(utils.newIcon("undo"))
-        lay = QVBoxLayout(dlg)
-        text = QTextEdit(readOnly=True)
+    def _external_log_text(self) -> str:
+        """Changes made outside AIO QC this session, newest first (the notification's Details)."""
         by_key = self.session.by_key if self.session else {}
         icon = {"changed": "✎", "added": "＋", "removed": "−", "layout": "⚠"}
         lines = [f"{t}  {icon.get(k, '·')} {k:8s} {by_key[x].display if x in by_key else x}"
                  for t, k, x in reversed(self._external_log)]
-        text.setPlainText("\n".join(lines) or "No outside changes in this session.")
-        text.setFont(QFont("Monospace", 9))
-        lay.addWidget(text)
-        dlg.resize(760, 460)
-        dlg.exec()
+        return "\n".join(lines) or "No outside changes in this session."
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "toast"):
             self.toast.reposition()
+
+    def _update_title(self):
+        """One pattern in every mode: '<mode> — <what is open> — AIO QC App'."""
+        s = getattr(self, "session", None)
+        self.setWindowTitle(f"Image QC — {s.root.name} — {__appname__}" if s is not None
+                            else f"Image QC — {__appname__}")
 
     def _close_session(self):
         for mode in (getattr(self, "sketch", None), getattr(self, "roi", None)):
@@ -1110,6 +1142,7 @@ class MainWindow(QMainWindow):
         self._inflight.clear()
         self.pixmap_cache.clear()
         self.session = None
+        self._update_title()
         self.current_key = self.current_ann = None
         self.inline.reset()
         self.embed_index = None
@@ -1119,8 +1152,12 @@ class MainWindow(QMainWindow):
         self.unique_labels.clear()
         self.annotations_list.clear()
         self.canvas.clearAll()
+        self.statusBar().set_image(None, None)
+        self.statusBar().set_file(None)
+        self.statusBar().set_pointer(None)
         self.zoom_spin.setEnabled(False)
         self.zoom_spin.set_zoom(None)
+        self.zoom_slider.set_zoom(None)
         self.file_dock.model.review = None
         self.filmstrip.set_session(None)
 
@@ -1563,7 +1600,8 @@ class MainWindow(QMainWindow):
             if r["freed"] >= 5 * 2 ** 20 and self.session is s:
                 self.toast.show_message(f"<b>Storage tidied</b><br>Freed {S.human(r['freed'])} in .aio_qc — "
                                         + "; ".join(r["notes"][:2]) + ".", kind="success", key="storage",
-                                        actions=[("Storage…", self.open_storage)])
+                                        actions=[("Storage…", self.open_storage)],
+                                        details="\n".join(r["notes"]) or None)
 
         w.done.connect(done)
         w.failed.connect(lambda m: logger.warning(f"storage housekeeping failed: {m}"))
@@ -1668,6 +1706,8 @@ class MainWindow(QMainWindow):
         elif not same or self.canvas.pixmap_item.pixmap().cacheKey() != pix.cacheKey():
             self.canvas.loadPixmap(pix)
             self.zoom_spin.setEnabled(True)
+        self.statusBar().set_image(None if pix.isNull() else pix.width(), None if pix.isNull() else pix.height())
+        self._status_file(sample, ann, pix)
         if ann is not None and ann.normalized and not pix.isNull():
             ann = ann.scaled(pix.width(), pix.height())
         if error:
@@ -1676,6 +1716,7 @@ class MainWindow(QMainWindow):
         self._register_labels(ann.label_counts() if ann else Counter())
         self.update_annotations_list()
         self.load_canvas_shapes()
+        self.refresh_pred_layer()
         self.inline.refresh()
         self.sketch.image_changed(key)
         self.roi.image_changed(key)
@@ -1687,6 +1728,28 @@ class MainWindow(QMainWindow):
         self._update_review_badge()
         self._update_filmstrip()
         self._check_current_image()
+
+    def _status_file(self, sample, ann, pix):
+        """Status bar: file type and file size of the image — shown only when it decoded."""
+        sb = self.statusBar()
+        if pix.isNull():
+            sb.set_file(None)
+            return
+        path = (ann.image_path if ann is not None else None) or sample.image_path
+        data = getattr(ann, "image_data", None) if ann is not None else None
+        if path is not None and Path(path).is_file():
+            sb.set_file(path)
+        elif data:                                        # LabelMe imageData (embedded base64)
+            import base64
+            from PyQt6.QtCore import QBuffer, QByteArray
+            from PyQt6.QtGui import QImageReader
+            raw = base64.b64decode(data)
+            buf = QBuffer()
+            buf.setData(QByteArray(raw))
+            fmt = bytes(QImageReader(buf).format()).decode() or None
+            sb.set_file(None, len(raw), fmt)
+        else:
+            sb.set_file(None)
 
     def reload_current_annotation(self):
         """Refresh shapes after an edit without resetting zoom."""
@@ -1759,6 +1822,10 @@ class MainWindow(QMainWindow):
             totals.setdefault(name, 0)
         self.unique_labels.blockSignals(True)
         self.unique_labels.clear()
+        for label in sorted(totals, key=lambda l: -totals[l]):      # common classes get the most distinct colours
+            utils.update_label_colors(label, self.label_colors)
+        from AIO_QC.utils import colors as _colors
+        _colors.save(self.session.root, self.label_colors)
         for label in natsorted(totals):
             utils.update_label_colors(label, self.label_colors)
             if label not in self.hidden_labels:
@@ -1833,7 +1900,19 @@ class MainWindow(QMainWindow):
         it = self.annotations_list.item(row)
         if it is not None:
             self._ann_row_changed = True
-            self.canvas.select_shape(it.data(Qt.ItemDataRole.UserRole), emit=False)
+            self._select_from_list(it.data(Qt.ItemDataRole.UserRole))
+
+    def _select_from_list(self, idx):
+        """The list and the canvas always agree: a shape that cannot be selected leaves no row selected, and a
+        hidden-label shape is shown while selected (deselecting hides it again)."""
+        if not self.canvas.select_shape(idx, emit=False):
+            self.onSelectionCleared()
+            self.statusBar().showMessage(f"#{idx} cannot be shown (no geometry)", 4000)
+            return
+        if self.canvas.is_peeked(idx) and self.current_ann and 0 <= idx < len(self.current_ann.shapes):
+            label = self.current_ann.shapes[idx].get("label")
+            self.statusBar().showMessage(f"#{idx} '{label}' is hidden in the Labels panel — shown while selected; "
+                                         "click elsewhere to hide it again", 6000)
 
     def _on_annotation_clicked(self, item):
         """Clicking the row that is already selected toggles the selection off (works in both modes)."""
@@ -1845,7 +1924,7 @@ class MainWindow(QMainWindow):
         if sel is not None and sel.index == idx:
             self.canvas.clearSelection()
         else:
-            self.canvas.select_shape(idx, emit=False)
+            self._select_from_list(idx)
 
     def onShapeSelected(self, index: int):
         self.annotations_list.blockSignals(True)
@@ -2132,7 +2211,16 @@ class MainWindow(QMainWindow):
             "Training tools may crash or silently skip them.",
             kind="warn", key="broken-images",
             actions=[("Show", lambda: self.file_dock.set_key_filter(sorted(self.broken), "🩺 Broken images")),
-                     ("Details", lambda: self.open_tool("image_quality"))])
+                     ("Image Quality…", lambda: self.open_tool("image_quality"))],
+            details=self._broken_text)
+
+    def _broken_text(self) -> str:
+        by_key = self.session.by_key if self.session else {}
+        lines = []
+        for k in sorted(self.broken):
+            why = "; ".join(str(f[-1]) for f in (self.broken[k] or [])[:3])
+            lines.append(f"{by_key[k].display if k in by_key else k}  —  {why}")
+        return "\n".join(lines) or "No broken images."
 
     def _check_current_image(self):
         """Red banner over the viewer when the open image is broken (cached check, ~2 ms otherwise)."""
@@ -2537,6 +2625,61 @@ class MainWindow(QMainWindow):
         self.canvas.fill_shapes = on
         self.load_canvas_shapes()
 
+    def _set_pixel_view(self, on):
+        self.settings.setValue("view/pixel_view", bool(on))
+        self.canvas.pixmap_item.pixel_view = bool(on)
+        self.canvas._set_smooth(self.canvas.current_zoom, False)
+        self.canvas.pixmap_item.invalidate()
+
+    # ---- model predictions layer (Prediction Explorer data)
+    def pred_layer_on(self) -> bool:
+        return bool(self.a.pred_layer.isChecked()) if hasattr(self, "a") else False
+
+    def set_pred_layer(self, on):
+        on = bool(on)
+        self.settings.setValue("view/pred_layer", on)
+        if self.a.pred_layer.isChecked() != on:
+            self.a.pred_layer.blockSignals(True)
+            self.a.pred_layer.setChecked(on)
+            self.a.pred_layer.blockSignals(False)
+        dlg = self.open_dialogs.get("model_check")
+        panel = getattr(dlg, "explorer", None)
+        if panel is not None and panel.layer_action.isChecked() != on:
+            panel.layer_action.blockSignals(True)
+            panel.layer_action.setChecked(on)
+            panel.layer_action.blockSignals(False)
+        self.refresh_pred_layer()
+
+    def refresh_pred_layer(self):
+        if not self.pred_layer_on() or not self.session or not self.current_key:
+            self.canvas.clear_pred_layer()
+            return
+        try:
+            from AIO_QC.widgets.explorer import layer_objects
+            from AIO_QC.widgets.explorer.paint import object_color, object_text
+            objs, d = layer_objects(self, self.current_key)
+        except Exception as exc:                          # the viewer must never break for the layer
+            logger.warning(f"predictions layer: {exc}")
+            objs, d = [], None
+        if not objs:
+            self.canvas.clear_pred_layer()
+            return
+        pix = self.canvas.pixmap_item.pixmap()
+        i = d.index_of(self.current_key)
+        W = float(d.img_w[i] or 0) if i is not None else 0.0
+        k = (pix.width() / W) if W and not pix.isNull() else 1.0         # predictions are in image pixels
+        dlg = self.open_dialogs.get("model_check")
+        panel = getattr(dlg, "explorer", None)
+        mode = panel.view.color if panel is not None and panel.data is d else "match"
+        items = []
+        for o in objs:
+            col = object_color(o, mode, self.label_colors, d.model_colors)
+            items.append({"box": tuple(v * k for v in o.box),
+                          "poly": None if o.poly is None else [(x * k, y * k) for x, y in o.poly],
+                          "kpts": None if o.kps is None else [(x * k, y * k, c) for x, y, c in o.kps],
+                          "text": object_text(o, d.model_names, with_tag=True), "color": col.name()})
+        self.canvas.set_pred_layer(items)
+
     def _on_mode_changed(self, mode):
         (self.a.select if mode == Canvas.SELECT else self.a.drag).setChecked(True)
         self.mode_label.setText("🖱 Select" if mode == Canvas.SELECT else "✋ Drag")
@@ -2547,8 +2690,23 @@ class MainWindow(QMainWindow):
     def updateZoomSpinbox(self):
         self._sync_zoom_buttons()
         if self.canvas.pixmap_item.pixmap().isNull():
+            self.zoom_slider.set_zoom(None)
             return
         self.zoom_spin.set_zoom(self.canvas.current_zoom)
+        self.zoom_slider.set_zoom(self.canvas.current_zoom)
+
+    def _zoom_live(self, zoom: float):
+        """Zoom box and slider follow the canvas while it glides (like Windows Photos: N clicks, N updates)."""
+        if not self.canvas.pixmap_item.pixmap().isNull():
+            self.zoom_spin.set_zoom(zoom)
+            self.zoom_slider.set_zoom(zoom)
+
+    def _zoom_from_slider(self, zoom: float):
+        """Live while dragging: no glide (the slider is the animation), around the view centre."""
+        c = self.canvas
+        if zoom > 0 and not c.pixmap_item.pixmap().isNull():
+            c.animate_to(zoom, anchor_scene=c._view_center(), anchor_view=c.viewport().rect().center(), duration=0)
+            self.zoom_spin.set_zoom(c.current_zoom)
 
     def _sync_zoom_buttons(self):
         """Fit Window / Actual Size look pressed whenever the view IS fitted / at 100 % — however it got there

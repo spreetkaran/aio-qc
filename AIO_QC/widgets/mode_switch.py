@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QToolButton, QWidget
 from AIO_QC.utils import newIcon, style as apply_style
 
 MODES = (("video", "Frame Extractor", "mode-video", "Videos — play, mark and extract frames for annotation"),
-         ("image", "Image QC", "mode-image", "Annotated image datasets — LabelMe / YOLO quality control"),
+         ("image", "Image QC", "app", "Annotated image datasets — LabelMe / YOLO quality control"),
          ("data", "Data Studio", "mode-data", "Tables — CSV, Excel, Parquet … analysis, cleaning, features, Spark"))
 
 
@@ -27,8 +27,8 @@ class ModeSwitch(QWidget):
         self.buttons = {}
         for i, (key, text, icon, tip) in enumerate(MODES):
             b = QToolButton()
-            b.setText(text)
-            b.setIcon(newIcon(icon))
+            b.setText(" " + text)                         # a little air between the icon and the name
+            b.setIcon(newIcon(icon))                      # app icons: every size shipped, sharp at any scaling
             b.setProperty("aio_icon", icon)
             b.setIconSize(QSize(16, 16))
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)

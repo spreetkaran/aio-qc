@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🤖 Model check: run one or several YOLO models (in the environment chosen in 🤖 Models & Environment) and
-rank likely label errors.
+🤖 Model check: run one or several YOLO models (in the environment chosen in 🤖 Models & Environment), draw their
+predictions on the whole dataset (🔭 Explorer) and rank likely label errors (Findings, Analysis).
 
 Optimisations
 - models live in a persistent server process (loaded + warmed up once)
@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from AIO_QC.core.model_check import (
-    MISMATCH, MISSED, MISSING, POOR_FIT, coverage, gt_boxes, match, merge_predictions, model_signature,
+    GEO_TASKS, MISMATCH, MISSED, MISSING, POOR_FIT, coverage, gt_boxes, match, merge_predictions, model_signature,
 )
 from AIO_QC.core.evaluation import (
     BACKGROUND, ERROR_TYPES, IOU_GRID, Record, View, box_quality, build, confusion, error_breakdown, make_seen_fn,
@@ -91,7 +91,8 @@ class ModelCheckDialog(BaseScanDialog):
     """
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
     TITLE, ICON = "Model Check", "🤖"
-    HELP = ("Compares one or more YOLO models with your labels. Findings: class mismatch, missing annotation, poor "
+    HELP = ("Compares one or more YOLO models with your labels. 🔭 Explorer: every image with your labels and every "
+            "model's predictions drawn on it — filter, sort, compare, accept. Findings: class mismatch, missing annotation, poor "
             "box fit, missed by model — ranked by likelihood of a real error. Analysis: per-class precision / recall / "
             "AP, confusion matrix and insights. Every threshold above re-computes instantly from the cached "
             "predictions — no re-inference. Labels no model covers are skipped.")
@@ -186,6 +187,7 @@ class ModelCheckDialog(BaseScanDialog):
         apply_style(self.live_note, "color:@muted;")
         lv.addWidget(self.live_note, 1)
         self.table_host.insertWidget(0, live)
+        self._live = live
         self.conf.valueChanged.connect(self._thresholds_changed)
         self.iou.currentIndexChanged.connect(self._thresholds_changed)
         self.missing_conf.valueChanged.connect(self._thresholds_changed)
@@ -205,12 +207,116 @@ class ModelCheckDialog(BaseScanDialog):
         cl.addWidget(self.cards, 1)
         self.tabs = QTabWidget()
         self.table_host.removeWidget(self.table)
+        from .explorer import ExplorerPanel
+        self.explorer = ExplorerPanel(self)
+        self.tabs.addTab(self.explorer, "🔭 Explorer")
+        self._cards_page = cards
         self.tabs.addTab(cards, "Cards")
         self.tabs.addTab(self.table, "Findings table")
         self.tabs.addTab(self._build_analysis(), "Analysis")
         self.table_host.addWidget(self.tabs)
         self.filter_box.currentIndexChanged.connect(lambda _i: self._refresh_cards())
         self.table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._refresh_cards())
+        # the Explorer has its own controls: the findings toolbar / live thresholds / help only with the findings
+        from PyQt6.QtWidgets import QToolButton
+        root = self.layout()
+        self._findings_bar = next((root.itemAt(i).layout() for i in range(root.count()) if root.itemAt(i).layout()
+                                   is not None and root.itemAt(i).layout().indexOf(self.select_all) >= 0), None)
+        self._help_lbl = root.itemAt(0).widget() if isinstance(root.itemAt(0).widget(), QLabel) else None
+        self.params_toggle = QToolButton()
+        self.params_toggle.setText("⚙ Parameters")
+        self.params_toggle.setCheckable(True)
+        self.params_toggle.setChecked(True)
+        self.params_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.params_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self.params_toggle.setAutoRaise(True)
+        self.params_toggle.setToolTip("Show / hide the models, scope and options of the check")
+        self.params_toggle.toggled.connect(self._show_params)
+        root.insertWidget(root.indexOf(self.params_box), self.params_toggle)
+        self.tabs.currentChanged.connect(lambda _i: self._layout_for_tab())
+        # a full window (not a dialog stuck on top of the app), large by default
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.resize(max(self.width(), int(self.app.width() * 0.94)), max(self.height(), int(self.app.height() * 0.92)))
+        self._load_last_run()
+
+    def _show_params(self, on):
+        self.params_toggle.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+        self.params_box.setVisible(bool(on))
+
+    def _layout_for_tab(self):
+        on_explorer = self.tabs.currentWidget() is self.explorer
+        has = self.explorer.data is not None
+        self._live.setVisible(not on_explorer)
+        if self._help_lbl is not None:
+            self._help_lbl.setVisible(not (on_explorer and has))
+        if self._findings_bar is not None:
+            def walk(lay):
+                for i in range(lay.count()):
+                    it = lay.itemAt(i)
+                    if it.widget() is not None:
+                        it.widget().setVisible(not on_explorer and (it.widget() is not self.filter_box
+                                                                   or self.FILTER_COLUMN is not None))
+                    elif it.layout() is not None:
+                        walk(it.layout())
+            walk(self._findings_bar)
+            if not on_explorer:
+                self.select_all.setVisible(self.CHECKABLE)
+        if on_explorer and has and self.params_toggle.isChecked():
+            self.params_toggle.setChecked(False)          # room for the images; one click brings it back
+
+    def _load_last_run(self):
+        """The previous run's explorer data (saved with the dataset) — shown at once, no inference."""
+        from AIO_QC.core import explorer as E
+        path = E.data_path(self.session.root)
+        if not os.path.isfile(path):
+            return
+        keys = set(self.session.by_key)
+
+        by_key, adapter = dict(self.session.by_key), self.session.adapter
+
+        def load():
+            d = E.load(path)
+            if d is None:
+                return None
+            gone = sum(1 for k in d.keys if k not in keys)
+            saved = os.path.getmtime(path)
+            updates = {}                                  # labels edited since that run: re-matched now
+            agnostic = bool(d.meta.get("agnostic"))
+            for k in d.keys:
+                smp = by_key.get(k)
+                ap = getattr(smp, "ann_path", None)
+                try:
+                    if ap is None or os.path.getmtime(ap) <= saved:
+                        continue
+                    ann = adapter.load(smp, light=True)
+                except Exception:
+                    continue
+                shapes = [dict(sh, label="object") for sh in ann.shapes] if agnostic else ann.shapes
+                updates[k] = (shapes, ann.normalized, None, None)
+            if updates:
+                E.replace_gt(d, updates)
+            return d, gone
+
+        def done(res):
+            if res is None or self.explorer.data is not None:
+                return                                   # unreadable / a new scan already finished
+            d, gone = res
+            note = f"last run {d.meta.get('when', '')}"
+            sigs = d.meta.get("sigs") or {}
+            try:
+                specs = server_specs(self._models(), self.app.inference.opts, self.app.inference.info)
+                now = {sp["id"]: model_signature(sp) for sp in specs}
+            except Exception:
+                now = sigs
+            if sigs and now and sigs != now:
+                note += " · ⚠ models changed since — ▶ Scan to update"
+            if gone:
+                note += f" · {gone:,} file(s) no longer in the dataset"
+            self.explorer.set_data(d, note)
+            self._layout_for_tab()
+
+        self._layout_for_tab()
+        self.app.inference.run_async(load, done, lambda _e: None)
 
     def _build_analysis(self) -> QWidget:
         w = QWidget()
@@ -497,7 +603,40 @@ class ModelCheckDialog(BaseScanDialog):
                "root": self.session.root}
         ctx["shared"] = self._shared_predictions(models, specs)
         ctx.update(self._thr())
+        from AIO_QC.core.explorer import Builder
+        ctx["builder"] = Builder(ctx["ids"], ctx["names"], ctx["colors"], {} if agnostic else cov,
+                                 meta={"conf": ctx["conf"], "agnostic": agnostic, "when": time.strftime("%Y-%m-%d %H:%M"),
+                                       "sigs": ctx["sigs"], "scope": self.scope.currentIndex(),
+                                       "n_scope": len(order), "n_dataset": len(self.session.samples)})
+        if agnostic:
+            ctx["builder"].coverage = {"object": set(ctx["ids"])}
         return ctx
+
+    @staticmethod
+    def _feed_explorer(ctx, s, ann, W, H, got, geo, seen):
+        """Worker thread: every model's predictions of this image (own classes mapped to dataset labels, no
+        cross-model NMS: each model is drawn and matched on its own) + the labels -> explorer builder."""
+        maps = ctx["maps"]
+        preds = {}
+        for mid, boxes in got.items():
+            cmap = maps.get(mid, {})
+            gl = geo.get(mid) or []
+            out = []
+            for n, b in enumerate(boxes or ()):
+                label = cmap.get(str(int(b[5])), "")
+                if not label:
+                    continue
+                g = gl[n] if n < len(gl) else None
+                out.append((label, float(b[4]), (float(b[0]), float(b[1]), float(b[2]), float(b[3])),
+                            (g or {}).get("poly"), (g or {}).get("kpts")))
+            preds[mid] = out
+        shapes = ann.shapes
+        if ctx["agnostic"]:
+            shapes = [dict(sh, label="object") for sh in shapes]
+        try:
+            ctx["builder"].add(s.key, s.split or "", s.folder or "", W, H, shapes, ann.normalized, preds, seen)
+        except Exception as exc:                            # the findings must never fail for the explorer
+            ctx.setdefault("explorer_errors", []).append(f"{s.name}: {exc}")
 
     def _shared_predictions(self, models, specs):
         """{model id: (PredCache, key)} - Testing's predictions of the same weights / size / SAHI in the dataset's
@@ -509,6 +648,8 @@ class ModelCheckDialog(BaseScanDialog):
             m = by_id.get(sp["id"])
             if m is None or os.path.abspath(sp["path"]) != os.path.abspath(m.get("path", "")):
                 continue                                   # running an ONNX / TensorRT export: other numbers
+            if sp.get("task") in GEO_TASKS:
+                continue                                   # Testing keeps boxes only; outlines are wanted here
             hit = R.shared_lookup(self.session.root, m["path"], sp.get("imgsz"), sp.get("sahi"))
             if hit is not None:
                 out[sp["id"]] = hit
@@ -533,7 +674,7 @@ class ModelCheckDialog(BaseScanDialog):
             if img is None:
                 ctx["buffer"][s.key] = ("error", "no image")
                 continue
-            got, missing = {}, []
+            got, missing, geo = {}, [], {}
             wh = None
             for mid in ctx["ids"]:
                 hit = cache.get_preds(ctx["sigs"][mid], img) if cache is not None else None
@@ -545,8 +686,10 @@ class ModelCheckDialog(BaseScanDialog):
                     missing.append(mid)
                 else:
                     got[mid] = hit["boxes"]
+                    if hit.get("geo"):
+                        geo[mid] = hit["geo"]
                     wh = (hit["w"], hit["h"])
-            per[s.key] = (ann, img, got, missing, wh)
+            per[s.key] = (ann, img, got, missing, wh, geo)
             if missing:
                 need_img.append(str(img))
             else:
@@ -559,7 +702,7 @@ class ModelCheckDialog(BaseScanDialog):
             res = ctx["svc"].predict(need_img, need_ids, conf=0.05, batch=ctx["batch"],
                                      classes={m: ctx["classes"].get(m) for m in need_ids}, cancel=ctx["cancel"])
             ctx["ran"] += len(need_img)
-            for key, (ann, img, got, missing, wh) in list(per.items()):
+            for key, (ann, img, got, missing, wh, geo) in list(per.items()):
                 r = res.get(str(img))
                 if not missing or r is None:
                     continue
@@ -570,9 +713,15 @@ class ModelCheckDialog(BaseScanDialog):
                 for mid in missing:
                     boxes = r["by_model"].get(mid) or []
                     got[mid] = boxes
+                    g = (r.get("geo") or {}).get(mid)
+                    if g:
+                        geo[mid] = g
                     if cache is not None and r.get("w"):
-                        cache.put_preds(ctx["sigs"][mid], img, {"w": r["w"], "h": r["h"], "boxes": boxes})
-                per[key] = (ann, img, got, missing, (r["w"], r["h"]))
+                        entry = {"w": r["w"], "h": r["h"], "boxes": boxes}
+                        if g:
+                            entry["geo"] = g
+                        cache.put_preds(ctx["sigs"][mid], img, entry)
+                per[key] = (ann, img, got, missing, (r["w"], r["h"]), geo)
         for key, v in per.items():
             if v is not None:
                 ctx["buffer"][key] = ("ok", v)
@@ -609,7 +758,7 @@ class ModelCheckDialog(BaseScanDialog):
         status, v = ctx["buffer"].pop(s.key, ("error", "no prediction"))
         if status == "error":
             raise RuntimeError(v)
-        ann, _img, got, _missing, wh = v
+        ann, _img, got, _missing, wh, geo = v
         W, H = wh or (ann.width, ann.height)
         preds = merge_predictions(got, ctx["maps"], ctx["nms"])
         for p in preds:
@@ -632,6 +781,7 @@ class ModelCheckDialog(BaseScanDialog):
             light = hit.get("light") if hit else None
         ctx["records"].append(Record(s.key, s.split, gt_rec, pred_rec, W, H, s.folder, light))
         ctx["wh"][s.key] = (W, H)
+        self._feed_explorer(ctx, s, ann, W, H, got, geo, seen)
         return findings_rows(ctx, s.key, gt_rec, pred_rec, W, H, ctx)
 
     def finalize(self, ctx):
@@ -643,6 +793,13 @@ class ModelCheckDialog(BaseScanDialog):
         t0 = time.monotonic()
         ctx["eval"] = build(ctx["records"], labels, ctx["ids"])
         ctx["eval_s"] = time.monotonic() - t0
+        from AIO_QC.core import explorer as E
+        try:
+            ctx["explorer"] = ctx["builder"].finish()
+            E.save(ctx["explorer"], E.data_path(ctx["root"]))
+        except Exception as exc:
+            ctx.setdefault("explorer_errors", []).append(f"explorer: {type(exc).__name__}: {exc}")
+        ctx["builder"] = None
         return []
 
     def on_scan_complete(self, ctx):
@@ -654,6 +811,12 @@ class ModelCheckDialog(BaseScanDialog):
         notes.append(f"Inference on {ctx['ran']:,} image(s), {ctx['cached']:,} fully from cache · "
                      f"analysis prepared in {ctx.get('eval_s', 0):.1f}s.")
         self.names_info.setText("\n".join(notes))
+        if ctx.get("explorer") is not None:
+            self.explorer.set_data(ctx["explorer"], f"run of {ctx['explorer'].meta.get('when', '')}")
+            self.tabs.setCurrentIndex(self.tabs.indexOf(self.explorer))
+            self._layout_for_tab()
+        for e in ctx.get("explorer_errors", [])[:20]:
+            self.errors.append(f"[Explorer] {e}")
         d = ctx.get("eval")
         if d is not None:
             has_seen = bool((d.gt_seen == 1).any())
@@ -857,7 +1020,7 @@ class ModelCheckDialog(BaseScanDialog):
         if crops and gt:
             self.app.open_crop_instances(gt, f"{ERROR_TYPES[c - 2][1]} errors · {name}")
         else:
-            self.app.apply_file_filter(files, f"🤖 {ERROR_TYPES[c - 2][1]} errors · {name}")
+            self._to_explorer(files, f"{ERROR_TYPES[c - 2][1]} errors · {name}")
 
     def _refresh_boxes(self):
         d = self.ctx["eval"]
@@ -1170,7 +1333,15 @@ class ModelCheckDialog(BaseScanDialog):
         if crops and gt:
             self.app.open_crop_instances(gt, f"your '{names[r]}' where the model says '{names[c]}'")
         else:
+            self._to_explorer(files, title)
+
+    def _to_explorer(self, files, title):
+        """Analysis drill-down: those images in the explorer (the file list when there is no explorer data)."""
+        if self.explorer.data is None:
             self.app.apply_file_filter(files, f"🤖 {title}")
+            return
+        self.explorer.show_keys(files, title)
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.explorer))
 
     def _report_activated(self, row, _col):
         d = self.ctx.get("eval") if self.ctx else None
@@ -1234,7 +1405,7 @@ class ModelCheckDialog(BaseScanDialog):
             cards.append(Card(row, [Panel(row.key, focus, shapes)], chips,
                               [line1, f"{s.display if s else row.key}  ·  {names.get(f.model, '')}".rstrip(" ·")]))
         self.cards.set_cards(cards)
-        self.tabs.setTabText(0, f"Cards ({len(cards):,})")
+        self.tabs.setTabText(self.tabs.indexOf(self._cards_page), f"Cards ({len(cards):,})")
 
     def summarize(self):
         self._refresh_cards()
@@ -1257,6 +1428,7 @@ class ModelCheckDialog(BaseScanDialog):
             self.app.inference.changed.disconnect(self._refresh_setup_info)
         except TypeError:
             pass
+        self.explorer.shutdown()
         super().closeEvent(event)
 
     # --------------------------------------------------------------- actions

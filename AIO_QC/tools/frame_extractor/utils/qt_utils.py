@@ -94,6 +94,9 @@ def newIcon(icon, color=None):
         return QIcon()
     if QSvgRenderer is not None and _svg_text(icon) is not None:
         return QIcon(SvgIconEngine(icon, color))
+    if icon == "icon":                     # the Frame Extractor's app icon: a vector (sharp at any size / DPI)
+        from AIO_QC.utils.qt_utils import newIcon as aio_icon
+        return aio_icon("mode-video")
     p = os.path.join(ICONS_DIR, icon + ".png")
     return QIcon(p) if os.path.isfile(p) else QIcon()
 

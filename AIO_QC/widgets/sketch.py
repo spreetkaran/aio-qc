@@ -163,11 +163,13 @@ def _dropper_cursor(color) -> QCursor:
     """An eyedropper (the sketch-picker icon) with a white halo so it shows on any image; the tube holds the current
     colour and the hotspot is the tip, as in MS Paint."""
     d = 28
-    pm = QPixmap(d, d)
+    from AIO_QC.utils import screen_dpr
+    dpr = screen_dpr()                                      # drawn at the screen's real resolution: sharp at any DPI
+    pm = QPixmap(round(d * dpr), round(d * dpr))
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.scale(d / 256.0, d / 256.0)
+    p.scale(d * dpr / 256.0, d * dpr / 256.0)
     body = QPainterPath()
     for i, (x, y) in enumerate([(156, 116), (72, 200), (40, 216), (56, 184), (140, 100)]):
         body.moveTo(x, y) if i == 0 else body.lineTo(x, y)
@@ -188,6 +190,7 @@ def _dropper_cursor(color) -> QCursor:
         p.drawPath(bulb)
         p.drawLine(QLineF(116, 76, 180, 140))
     p.end()
+    pm.setDevicePixelRatio(dpr)
     return QCursor(pm, round(40 * d / 256.0), round(216 * d / 256.0))
 
 
@@ -923,6 +926,7 @@ class _Filter(QWidget):
         if t == QEvent.Type.MouseButtonPress:
             return m.press(e)
         if t == QEvent.Type.MouseMove:
+            m.c.report_cursor(e.position().toPoint())          # the status bar's pointer field
             return m.move(e)
         if t == QEvent.Type.MouseButtonRelease:
             return m.release(e)
@@ -1260,6 +1264,7 @@ class RoiMode:
             return False
         self.overlay.live = QRectF(self.drag, pt).normalized()
         self.overlay.update()
+        self.c.selectionRect.emit(self.overlay.live)
         return True
 
     def release(self, e) -> bool:
@@ -1269,6 +1274,7 @@ class RoiMode:
         r = self.overlay.live
         self.drag = None
         self.overlay.live = None
+        self.c.selectionRect.emit(None)
         if r is not None and r.width() >= 1 and r.height() >= 1:
             self.overlay.rois.append([round(r.left(), 2), round(r.top(), 2), round(r.right(), 2),
                                       round(r.bottom(), 2)])

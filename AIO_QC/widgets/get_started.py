@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget,
@@ -187,10 +187,9 @@ def _page_widget(pg: Page, on_show) -> QWidget:
     lay.setContentsMargins(36, 18, 36, 6)
     lay.setSpacing(10)
     head = QHBoxLayout()
-    icon = QLabel()
-    icon.setPixmap(newIcon(pg.icon).pixmap(QSize(64, 64)))
+    from AIO_QC.utils import IconLabel
+    icon = IconLabel(pg.icon, 64)                   # painted at the screen's resolution: sharp at any scaling
     icon.setFixedSize(72, 72)
-    icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
     title = QLabel(pg.title)
     f = QFont(title.font())
     f.setPointSizeF(f.pointSizeF() * 1.9)
@@ -210,10 +209,8 @@ def _page_widget(pg: Page, on_show) -> QWidget:
     lay.addSpacing(4)
     for ic, bold, text in pg.points:
         row = QHBoxLayout()
-        i = QLabel()
-        i.setPixmap(newIcon(ic).pixmap(QSize(26, 26)))
+        i = IconLabel(ic, 26)
         i.setFixedWidth(34)
-        i.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         t = QLabel(f"<b>{bold}</b> — {text}")
         t.setWordWrap(True)
         t.setTextFormat(Qt.TextFormat.RichText)
@@ -236,7 +233,7 @@ class GetStarted(QDialog):
     def __init__(self, app):
         super().__init__(app)
         self.app = app
-        self.setWindowTitle("Get Started — AIO QC")
+        self.setWindowTitle("Get Started — AIO QC App")
         self.setWindowIcon(newIcon("get-started"))
         self.setModal(False)
         self.resize(820, 560)

@@ -20,6 +20,7 @@ import numpy as np
 
 from .geometry import to_polygon
 
+GEO_TASKS = ("segment", "obb", "pose")        # models whose predictions carry more than a box
 MISMATCH, MISSING, MISSED, POOR_FIT = "class mismatch", "missing annotation", "missed by model", "poor box fit"
 
 
@@ -142,7 +143,8 @@ def model_signature(spec: dict) -> str:
         ver = "missing"
     sahi = spec.get("sahi")
     sahi_key = f"sahi{sahi.get('slice')}/{sahi.get('overlap')}" if sahi else "std"
-    return f"{os.path.abspath(spec['path'])}|{ver}|{spec.get('imgsz')}|{sahi_key}|half{int(bool(spec.get('half')))}"
+    geo = "|geo1" if spec.get("task") in GEO_TASKS and not sahi else ""      # outlines / keypoints stored too
+    return f"{os.path.abspath(spec['path'])}|{ver}|{spec.get('imgsz')}|{sahi_key}|half{int(bool(spec.get('half')))}{geo}"
 
 
 def coverage(class_maps: dict[str, dict[str, str]]) -> dict[str, set]:

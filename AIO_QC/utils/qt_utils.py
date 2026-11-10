@@ -133,12 +133,108 @@ class SvgIconEngine(QIconEngine):
         return "aio-svg"
 
 
+class PaintedIconEngine(QIconEngine):
+    """An icon drawn by code at exactly the requested pixel size (any DPI — FHD at 125 %, 4K, 8K): `fn(painter)`
+    draws in a base × base coordinate system and is scaled to the target, never a bitmap stretched afterwards."""
+
+    def __init__(self, fn, base: float = 16.0, key: str = "aio-painted"):
+        super().__init__()
+        self.fn, self.base, self._key = fn, float(base), key
+
+    def paint(self, painter, rect, mode, state):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(rect)
+        k = min(r.width(), r.height()) / self.base
+        painter.translate(r.x() + (r.width() - self.base * k) / 2, r.y() + (r.height() - self.base * k) / 2)
+        painter.scale(k, k)
+        if mode == QIcon.Mode.Disabled:
+            painter.setOpacity(0.35)
+        self.fn(painter)
+        painter.restore()
+
+    def scaledPixmap(self, size, mode, state, scale):
+        w, h = max(1, round(size.width() * scale)), max(1, round(size.height() * scale))
+        pm = QPixmap(w, h)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        self.paint(p, QRect(0, 0, w, h), mode, state)
+        p.end()
+        pm.setDevicePixelRatio(scale)
+        return pm
+
+    def pixmap(self, size, mode, state):
+        return self.scaledPixmap(size, mode, state, 1.0)
+
+    def actualSize(self, size, mode, state):
+        return size
+
+    def clone(self):
+        return PaintedIconEngine(self.fn, self.base, self._key)
+
+    def key(self):
+        return self._key
+
+
+def painted_icon(fn, base: float = 16.0) -> QIcon:
+    return QIcon(PaintedIconEngine(fn, base))
+
+
+def screen_dpr(widget=None) -> float:
+    """The device pixel ratio to render for: the widget's screen, else the sharpest connected screen."""
+    if widget is not None:
+        try:
+            return float(widget.devicePixelRatioF())
+        except RuntimeError:
+            pass
+    screens = QGuiApplication.screens()
+    return max([sc.devicePixelRatio() for sc in screens] or [1.0])
+
+
+class IconLabel(QWidget):
+    """A fixed-size icon that paints itself through QIcon at the real screen resolution (QLabel.setPixmap with
+    a 1× pixmap is stretched — blurry — on scaled / HiDPI screens)."""
+
+    def __init__(self, icon, size: int, parent=None):
+        super().__init__(parent)
+        self.icon = icon if isinstance(icon, QIcon) else newIcon(icon)
+        self._name = None if isinstance(icon, QIcon) else icon
+        self.isz = size
+        self.setFixedSize(size, size)
+
+    def set_icon(self, icon):
+        self.icon = icon if isinstance(icon, QIcon) else newIcon(icon)
+        self._name = None if isinstance(icon, QIcon) else icon
+        self.update()
+
+    def paintEvent(self, _e):
+        if self._name:                                   # theme ink may have changed
+            self.icon = newIcon(self._name)
+        p = QPainter(self)
+        s = min(self.isz, self.width(), self.height())
+        self.icon.paint(p, QRect((self.width() - s) // 2, (self.height() - s) // 2 if self.height() < 2 * s else 0, s, s))
+
+
 @lru_cache(maxsize=None)
 def _icon(name: str, dark: bool) -> QIcon:
     if _svg_text(name) is not None and QSvgRenderer is not None:
         return QIcon(SvgIconEngine(name))
-    p = ICONS_DIR / f"{name}.png"                 # raster fallback (e.g. the app icon)
-    return QIcon(str(p)) if p.is_file() else QIcon()
+    return raster_icon(name)
+
+
+@lru_cache(maxsize=None)
+def raster_icon(name: str) -> QIcon:
+    """A raster icon from every size shipped (<name>_16.png … _512.png, plus <name>.png): Qt picks the closest size
+    for the screen's scaling, so it is never one small bitmap stretched (blurry) or a huge one squeezed."""
+    icon = QIcon()
+    for f in sorted(ICONS_DIR.glob(f"{name}_*.png")):
+        tail = f.stem[len(name) + 1:]
+        if tail.isdigit():
+            icon.addFile(str(f), QSize(int(tail), int(tail)))
+    p = ICONS_DIR / f"{name}.png"
+    if p.is_file():
+        icon.addFile(str(p))
+    return icon
 
 
 SHAPE_ICONS = {"rectangle": "shape-rectangle", "polygon": "shape-polygon", "line": "shape-line",
@@ -223,12 +319,7 @@ def app_settings():
 
 def appIcon() -> QIcon:
     """Multi-resolution application icon (title bar, taskbar, Alt+Tab each pick the best size)."""
-    icon = QIcon()
-    for s in (16, 32, 64, 128, 256):
-        p = ICONS_DIR / f"app_{s}.png"
-        if p.is_file():
-            icon.addFile(str(p), QSize(s, s))
-    return icon
+    return raster_icon("app")
 
 
 def _no_args(slot):

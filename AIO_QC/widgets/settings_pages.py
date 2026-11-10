@@ -37,6 +37,12 @@ def image_sections(win) -> list:
                        description="Open the guided overview every time the app starts (it always opens the first "
                                    "time).", aliases=("tour", "welcome")),
         ]),
+        Section("Viewer", "zoom", [
+            from_action("image.pixel_view", a.pixel_view, "Show pixels when zoomed in", default=False,
+                        description="From 300 %, show hard pixel squares (nearest neighbour) for pixel-level work. "
+                                    "Off: the image is enlarged smoothly in high quality, like Windows Photos.",
+                        aliases=("pixel", "pixelated", "nearest", "smooth", "zoom", "interpolation", "sharp")),
+        ]),
         Section("Dataset", "folders", [
             from_action("image.watch", a.watch, "Watch the dataset for outside changes", default=True,
                         description="Pick up files changed, added or removed by other programs (re-read only, never "

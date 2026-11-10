@@ -6,7 +6,7 @@
       <td><img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/logo/.readme/studio_icon_200x200.png" width="160" height="160"></td>
     </tr>
   </table>
-  AIO QC
+  AIO QC App
 </h1>
 
 <h4 align="center">
@@ -14,10 +14,10 @@
 </h4>
 
 <div align="center">
-  <a href="https://pypi.org/project/aio-qc/2.1.0/"><img src="https://img.shields.io/badge/pypi-2.1.0-blue.svg"></a>
+  <a href="https://pypi.org/project/aio-qc/2.2.0/"><img src="https://img.shields.io/badge/pypi-2.2.0-blue.svg"></a>
   <a href="https://pypi.org/project/aio-qc/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.1.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
-  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.1.0"><img src="https://img.shields.io/badge/release-v2.1.0-informational.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/blob/v2.2.0/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
+  <a href="https://github.com/spreetkaran/aio-qc/releases/tag/v2.2.0"><img src="https://img.shields.io/badge/release-v2.2.0-informational.svg"></a>
 </div>
 
 <div align="center">
@@ -37,7 +37,7 @@
 
 ## Description
 
-AIO QC is a desktop app for checking annotated image datasets **before you train**: broken files, wrong or
+AIO QC App is a desktop app for checking annotated image datasets **before you train**: broken files, wrong or
 inconsistent label names, sloppy or duplicate shapes, split leakage and probable mislabels.\
 It shows every problem on the image, lets you fix it in the same window, and keeps the original of every file it
 changes, so any change can be undone. Two more modes share the app: the **Frame Extractor** turns videos into frames worth annotating, and **Data Studio** analyses and cleans tables. It is written in Python and uses Qt for its graphical interface.
@@ -48,8 +48,8 @@ changes, so any change can be undone. Two more modes share the app: the **Frame 
 <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/validation/.readme/validation.png" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/crop_gallery/.readme/crop_gallery.png" width="32%" /> <img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/review_grid/.readme/review_grid.png" width="32%" />\
 <i>Validation, Crop Gallery and Review Grid.</i>
 
-<img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/stats/.readme/stats.png" width="49%" />
-<i>Dataset Stats.</i>
+<img src="https://raw.githubusercontent.com/spreetkaran/aio-qc/main/samples/stats/.readme/stats.png" width="49%" />\
+<i>Dataset Stats, and switching between the modes.</i>
 
 <sub>Screenshots are of the current release on <a href="https://cocodataset.org">COCO</a> (COCO128 subset); the look of older releases differs.</sub>
 
@@ -72,6 +72,7 @@ changes, so any change can be undone. Two more modes share the app: the **Frame 
 - [x] File history: who changed what, when and with which tool — preview any version and revert it
 - [x] Data Prep: unzip, combine and flatten, find orphans, integrity check, exact duplicates, resize, import COCO / Pascal VOC / CVAT / Label Studio, pick the most varied images to label, fix EXIF rotation — each with a preview and undo
 - [x] Sketch on the image and ROI capture with real image coordinates
+- [x] Paint-style status bar and Windows-Photos-style zoom (smooth rendering when zoomed in); label colours that stay apart
 - [x] Export & Split: train / val / test splits that keep duplicates, video frames and OCR identities together, exported as YOLO, LabelMe, COCO or class folders
 - [x] Built for big datasets: cached indexing, background work, virtualised lists — fluid at millions of files and shapes
 - [x] Safe by design: confirmations, atomic writes, originals kept in a compressed backup store, deletes are moves to a trash folder
@@ -97,12 +98,12 @@ changes, so any change can be undone. Two more modes share the app: the **Frame 
 
 ## Installation
 
-There are 2 options to install AIO QC:
+There are 2 options to install AIO QC App:
 
 ### Option 1: Using pip
 
 ```bash
-pip install aio-qc==2.1.0
+pip install aio-qc==2.2.0
 
 # with every optional part (Data Studio, Frame Extractor video engine, ONNX models, faster JSON …):
 pip install "aio-qc[full]"
@@ -111,7 +112,7 @@ pip install "aio-qc[full]"
 
 ### Option 2: Using standalone executable (easiest)
 
-Download the zip for your system from the [v2.1.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.1.0) page — no Python needed.
+Download the zip for your system from the [v2.2.0 release](https://github.com/spreetkaran/aio-qc/releases/tag/v2.2.0) page — no Python needed.
 
 ### Supported Python and platforms
 
@@ -203,7 +204,7 @@ pyinstaller AIO_QC/__main__.py \
 ```bash
 git clone https://github.com/spreetkaran/aio-qc.git
 cd aio-qc
-git checkout v2.1.0
+git checkout v2.2.0
 pip install -e ".[full]"
 aio-qc-console --logger-level debug
 python -m pytest tests                  # the test suite (offscreen Qt)
@@ -216,15 +217,15 @@ for bugs, the relevant part of `aio_qc_tool.log`. Logic belongs in `core/` (Qt-f
 
 - [labelme](https://github.com/wkentaro/labelme) and [labelImg](https://github.com/HumanSignal/labelImg) — bundled
   (modified) as the external editors of *Fix in Editor*.
-- [Phosphor Icons](https://phosphoricons.com) — the basis of many of the app's icons.
+- [Phosphor Icons](https://phosphoricons.com) and [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) — the basis of many of the app's icons.
 - [Inter](https://github.com/rsms/inter), [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono),
   [Source Code Pro](https://github.com/adobe-fonts/source-code-pro) and AV Hershey Simplex — the bundled fonts.
 
 ## License
 
-AIO QC is free software, released under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-only).
+AIO QC App is free software, released under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-only).
 Copyright (c) 2026 Preetkaran Singh.
 
 It bundles third-party components that keep their own licenses. See
-[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.1.0/THIRD_PARTY_NOTICES.md); the full license texts
-are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.1.0/licenses).
+[THIRD_PARTY_NOTICES.md](https://github.com/spreetkaran/aio-qc/blob/v2.2.0/THIRD_PARTY_NOTICES.md); the full license texts
+are in [`licenses/`](https://github.com/spreetkaran/aio-qc/tree/v2.2.0/licenses).

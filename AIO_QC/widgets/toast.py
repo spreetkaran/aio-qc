@@ -3,7 +3,12 @@
 """
 Notifications: small, colour-coded, translucent pop-ups in the bottom-right corner of the main window.
 
-    window.toast.show_message("<b>Updated from disk</b> — 3 changed", kind="info", actions=[("Details", fn)])
+    window.toast.show_message("<b>Updated from disk</b> — 3 changed", kind="info", details=fn_returning_text)
+
+details=…: a "Details" button that grows the notification in place (taller, and wider when the text needs it) into a
+scrollable panel — no extra window. One smooth animation for size and position (the panel is revealed as it grows; no
+second opacity effect — Qt cannot nest them); while open, the
+countdown waits. The text is fetched when it opens (a callable) so it is always current.
 
 kind: info (blue) · success (green) · warn (amber) · error (red). Fixed saturated colours with white text, so they read
 the same in light and dark themes.
@@ -23,7 +28,7 @@ from PyQt6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPoint, QProper
                           QVariantAnimation, pyqtSignal)
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton,
-                             QVBoxLayout, QWidget)
+                             QTextBrowser, QVBoxLayout, QWidget)
 
 from AIO_QC.utils import tintedIcon
 
@@ -38,6 +43,12 @@ MAX_VISIBLE = 4
 MARGIN = 16
 GAP = 2
 SLIDE = 14                       # px the notification rises while appearing
+TEXT_W = 380                     # message width
+DETAILS_W = 600                  # widest a notification grows for its details
+DETAILS_H = 300                  # tallest details panel (it scrolls beyond)
+EXPAND_MS = 340
+BTN_CSS = ("QPushButton{color:white; background: rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.55); "
+           "border-radius:6px; padding:3px 12px;} QPushButton:hover{background: rgba(255,255,255,0.28);}")
 
 
 class _Card(QFrame):
@@ -51,8 +62,14 @@ class _Card(QFrame):
 class Toast(QWidget):
     closed = pyqtSignal(object)
 
-    def __init__(self, parent, html: str, kind: str, actions, sticky: bool, timeout_ms: int):
+    def __init__(self, parent, html: str, kind: str, actions, sticky: bool, timeout_ms: int, details=None,
+                 on_resize=None):
         super().__init__(parent)
+        self.details, self.on_resize = details, on_resize
+        self._expanded = False
+        self._expand_t = 0.0                   # 0 collapsed … 1 open (animated)
+        self._expand_anim = None
+        self._details_size = (0, 0)
         self.rgb, icon = KINDS.get(kind, KINDS["info"])
         self.sticky, self.timeout_ms = sticky, timeout_ms
         self.key = None
@@ -63,13 +80,12 @@ class Toast(QWidget):
         self._placed = False
         self.card = _Card(self)
 
-        ic = QLabel()
-        ic.setPixmap(tintedIcon(icon, "#ffffff").pixmap(22, 22))
-        ic.setAlignment(Qt.AlignmentFlag.AlignTop)
+        from AIO_QC.utils import IconLabel
+        ic = IconLabel(tintedIcon(icon, "#ffffff"), 22)          # sharp at any screen scaling
         self.text = QLabel(html)
         self.text.setWordWrap(True)
         self.text.setTextFormat(Qt.TextFormat.RichText)
-        self.text.setMaximumWidth(380)
+        self.text.setMaximumWidth(TEXT_W)
         self.text.setStyleSheet("color: white; background: transparent;")
         close = QPushButton("✕")
         close.setFlat(True)
@@ -80,21 +96,38 @@ class Toast(QWidget):
         close.clicked.connect(lambda _c=False: self.dismiss())
         top = QHBoxLayout()
         top.setSpacing(10)
-        top.addWidget(ic)
+        top.addWidget(ic, 0, Qt.AlignmentFlag.AlignTop)
         top.addWidget(self.text, 1)
         top.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
         lay = QVBoxLayout(self.card)
         lay.setContentsMargins(14, 10, 10, 12)
         lay.addLayout(top)
-        if actions:
+        self.panel = None
+        if details is not None:
+            self.panel = QTextBrowser()
+            self.panel.setOpenExternalLinks(False)
+            self.panel.setFrameShape(QFrame.Shape.NoFrame)
+            self.panel.setStyleSheet("QTextBrowser{color:white; background: rgba(0,0,0,0.22); border-radius:6px; "
+                                     "padding:6px;} QScrollBar:vertical{width:8px; background:transparent;}"
+                                     "QScrollBar::handle:vertical{background: rgba(255,255,255,0.45); "
+                                     "border-radius:4px; min-height:20px;}"
+                                     "QScrollBar::add-line, QScrollBar::sub-line{height:0;}")
+            self.panel.setFixedHeight(0)
+            self.panel.setVisible(False)
+            lay.addWidget(self.panel)
+        if actions or details is not None:
             row = QHBoxLayout()
             row.addStretch(1)
-            for label, fn in actions:
+            if details is not None:
+                self.details_btn = QPushButton("Details  ▾")
+                self.details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.details_btn.setStyleSheet(BTN_CSS)
+                self.details_btn.clicked.connect(lambda _c=False: self.toggle_details())
+                row.addWidget(self.details_btn)
+            for label, fn in actions or ():
                 b = QPushButton(label)
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
-                b.setStyleSheet("QPushButton{color:white; background: rgba(255,255,255,0.14); "
-                                "border:1px solid rgba(255,255,255,0.55); border-radius:6px; padding:3px 12px;}"
-                                "QPushButton:hover{background: rgba(255,255,255,0.28);}")
+                b.setStyleSheet(BTN_CSS)
                 b.clicked.connect(lambda _c=False, f=fn: (f(), self.dismiss()))
                 row.addWidget(b)
             lay.addLayout(row)
@@ -164,7 +197,7 @@ class Toast(QWidget):
     # ------------------------------------------------------------------ countdown control
     def _should_run(self) -> bool:
         win = self.window()
-        return (not self.sticky and not self._closing and not self._hover and self.isVisible()
+        return (not self.sticky and not self._closing and not self._hover and not self._expanded and self.isVisible()
                 and QApplication.applicationState() == Qt.ApplicationState.ApplicationActive
                 and not (win is not None and win.isMinimized()))
 
@@ -190,6 +223,77 @@ class Toast(QWidget):
         self._hover = False
         self._sync_countdown()
         super().leaveEvent(e)
+
+    # ------------------------------------------------------------------ details (expand in place)
+    def _details_html(self) -> str:
+        try:
+            v = self.details() if callable(self.details) else self.details
+        except Exception as exc:                                  # never break the notification for it
+            v = f"Details unavailable: {exc}"
+        v = "" if v is None else str(v)
+        if "<" in v and ">" in v:
+            return v
+        from html import escape
+        return ("<pre style='white-space:pre-wrap; margin:0; font-family:monospace; font-size:9pt;'>"
+                f"{escape(v) or 'Nothing to show.'}</pre>")
+
+    def toggle_details(self):
+        if self.panel is None or self._closing:
+            return
+        self._expanded = not self._expanded
+        if self._expanded:
+            self.panel.setHtml(self._details_html())
+            fm = self.panel.fontMetrics()
+            doc = self.panel.document()
+            longest = max((fm.horizontalAdvance(l) for l in doc.toPlainText().splitlines()[:400]), default=0)
+            w = int(min(DETAILS_W, max(TEXT_W, longest + 40)))
+            doc.setTextWidth(w - 24)
+            h = int(min(DETAILS_H, doc.size().height() + 16))
+            self._details_size = (w, max(48, h))
+            self.panel.setVisible(True)
+            self.details_btn.setText("Hide details  ▴")
+        else:
+            self.details_btn.setText("Details  ▾")
+        self._sync_countdown()
+        self._animate_expand(1.0 if self._expanded else 0.0)
+
+    def _animate_expand(self, to: float):
+        if self._expand_anim is not None:
+            self._expand_anim.stop()
+        a = QVariantAnimation(self)
+        a.setStartValue(float(self._expand_t))
+        a.setEndValue(float(to))
+        from AIO_QC.widgets import anim as _anim
+        a.setDuration(EXPAND_MS if getattr(_anim, "ENABLED", True) else 1)
+        a.setEasingCurve(QEasingCurve.Type.OutCubic if to > self._expand_t else QEasingCurve.Type.InOutCubic)
+        a.valueChanged.connect(self._set_expand)
+        a.finished.connect(lambda: self._expand_done(to))
+        self._expand_anim = a
+        a.start()
+
+    def _set_expand(self, t):
+        """One frame: panel height + message width, then the whole notification re-anchors."""
+        t = float(t)
+        self._expand_t = t
+        w, h = self._details_size
+        self.panel.setFixedHeight(int(round(h * t)))
+        self.panel.setFixedWidth(max(TEXT_W - 30, int(round(TEXT_W + (w - TEXT_W) * t))))
+        self.text.setMaximumWidth(int(round(TEXT_W + (w - TEXT_W) * t)))
+        self.adjustSize()
+        if self.on_resize is not None:
+            self.on_resize(self)                                 # stays bottom-right anchored, every frame
+
+    def _expand_done(self, to):
+        self._expand_anim = None
+        if to == 0.0 and self.panel is not None:
+            self.panel.setVisible(False)
+            self.panel.setMinimumWidth(0)
+            self.panel.setMaximumWidth(16777215)
+            self.text.setMaximumWidth(TEXT_W)
+            self.adjustSize()
+            if self.on_resize is not None:
+                self.on_resize(self)
+        self._sync_countdown()
 
     # ------------------------------------------------------------------ life cycle
     def appear(self, target: QPoint):
@@ -303,18 +407,22 @@ class ToastManager:
         return next((t for t in self.toasts if t.key == key and not t._closing), None)
 
     def show_message(self, html: str, kind: str = "info", actions=(), sticky: bool = False, timeout_ms: int | None = None,
-                     icon: str | None = None, key: str | None = None):
+                     icon: str | None = None, key: str | None = None, details=None):
         timeout_ms = timeout_ms or (12000 if kind in ("warn", "error") else 8000)
         if key is not None:
             t = self.find(key)
             if t is not None:
+                if details is not None:
+                    t.details = details
+                    if t._expanded:
+                        t.panel.setHtml(t._details_html())
                 t.update_message(html, timeout_ms)
                 self.reposition()
                 return t
         live = [t for t in self.toasts if not t._closing]
         while len(live) >= MAX_VISIBLE:
             live.pop(0).dismiss()
-        t = Toast(self.window, html, kind, actions, sticky, timeout_ms)
+        t = Toast(self.window, html, kind, actions, sticky, timeout_ms, details=details, on_resize=self._resized)
         t.key = key
         t.closed.connect(self._closed)
         self.toasts.append(t)
@@ -341,6 +449,16 @@ class ToastManager:
             out[t] = QPoint(max(MARGIN, w.width() - t.width() - MARGIN), max(MARGIN, y))
             y -= GAP
         return out
+
+    def _resized(self, toast):
+        """A notification grew / shrank (details): it and the ones above follow at once — no lagging glide."""
+        for t, pos in self._targets().items():
+            if t is toast or t.pos().y() < toast.pos().y():
+                t._glide.stop()
+                if t._placed and not t._closing:
+                    t.move(pos)
+            else:
+                t.glide_to(pos)
 
     def reposition(self):
         for t, pos in self._targets().items():

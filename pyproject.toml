@@ -47,7 +47,7 @@ models = ["onnxruntime>=1.16", "PyYAML>=6.0", "Pillow>=9.5"]   # ONNX models in-
 [project.urls]
 Homepage = "https://github.com/spreetkaran/aio-qc"
 Issues = "https://github.com/spreetkaran/aio-qc/issues"
-Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v2.1.0"
+Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v2.2.0"
 Changelog = "https://github.com/spreetkaran/aio-qc/blob/main/AIO_QC/CHANGES.md"
 
 [project.gui-scripts]

@@ -570,8 +570,15 @@ class ExportDialog(QDialog):
                + (f" · {sum(stats['unknown_labels'].values())} objects with labels outside the class list"
                   if stats["unknown_labels"] else ""))
         self.status.setText(msg)
+        lines = [f"Folder: {out}"] + [f"{k}: {v:,} image(s)" for k, v in stats["images"].items()]
+        if stats["unknown_labels"]:
+            lines += ["", "Labels outside the class list:"] + [f"  {k}: {v:,}" for k, v in
+                                                              sorted(stats["unknown_labels"].items())]
+        if stats["skipped"]:
+            lines += ["", f"Skipped ({len(stats['skipped']):,}):"] + [f"  {x}" for x in list(stats["skipped"])[:300]]
         self.app.toast.show_message(f"<b>Export finished</b><br>{msg}", kind="success",
-                                    actions=[("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(out))))])
+                                    actions=[("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(out))))],
+                                    details="\n".join(lines))
 
     def closeEvent(self, e):
         self.cancel.set()

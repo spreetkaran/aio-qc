@@ -18,8 +18,10 @@ def generate_label_color(label: str) -> QColor:
 
 
 def update_label_colors(label: str, label_dict: dict) -> None:
+    """A new label gets the most distinct palette colour no other label uses (utils.colors)."""
     if label not in label_dict:
-        label_dict[label] = generate_label_color(label)
+        from .colors import assign
+        assign(label, label_dict)
 
 
 def is_close(a: float, b: float, rel_tol: float = 0.01, abs_tol: float = 0.001) -> bool:

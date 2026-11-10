@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- SPDX-FileCopyrightText: 2026 Preetkaran Singh -->
+  <!-- SPDX-License-Identifier: MIT -->
+  <!-- Frame Extractor app icon: a video player (screen with a mountain lake, play / next / progress / fullscreen),
+       drawn as vectors so it is sharp at every size, from 16 px to 8K screens. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b3f86"/>
+      <stop offset="0.55" stop-color="#4a6fae"/>
+      <stop offset="1" stop-color="#9fb3d1"/>
+    </linearGradient>
+    <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8c97a6"/>
+      <stop offset="1" stop-color="#4c5a6b"/>
+    </linearGradient>
+    <linearGradient id="slope" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c9d3d6"/>
+      <stop offset="0.45" stop-color="#d79a2b"/>
+      <stop offset="1" stop-color="#b8731c"/>
+    </linearGradient>
+    <linearGradient id="fog" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.15"/>
+      <stop offset="0.5" stop-color="#e9edf2" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.3"/>
+    </linearGradient>
+    <clipPath id="screen"><rect x="18" y="46" width="220" height="128" rx="9"/></clipPath>
+  </defs>
+  <!-- player body -->
+  <rect x="6" y="34" width="244" height="190" rx="16" fill="#232323"/>
+  <g clip-path="url(#screen)">
+    <rect x="18" y="46" width="220" height="128" fill="url(#sky)"/>
+    <!-- snowy peaks -->
+    <path d="M70 116 L96 92 L104 98 L122 74 L146 104 L156 96 L178 112 L206 104 L230 118 L230 130 L70 130 Z" fill="#eef2f6"/>
+    <path d="M122 74 L130 92 L124 100 L136 112 L146 104 Z M96 92 L100 104 L92 112 L104 98 Z" fill="#b9c4d2"/>
+    <!-- fog band -->
+    <ellipse cx="138" cy="122" rx="96" ry="12" fill="url(#fog)"/>   <!-- kept inside the screen: Qt SVG ignores clip paths -->
+    <!-- right slope: autumn forest -->
+    <path d="M150 174 L170 140 L196 116 L238 92 L238 174 Z" fill="url(#slope)"/>
+    <path d="M196 150 l6 -12 l6 12 Z M212 146 l6 -13 l6 13 Z M226 140 l5 -12 l5 12 Z M184 158 l5 -10 l5 10 Z" fill="#3f6b2c"/>
+    <!-- left: snowy bank + dark pines -->
+    <path d="M18 160 L60 150 L100 162 L104 174 L18 174 Z" fill="#e6ecf1"/>
+    <g fill="#1f3a33">
+      <path d="M26 158 L36 116 L46 158 Z"/>
+      <path d="M40 160 L52 104 L64 160 Z"/>
+      <path d="M58 160 L68 124 L78 160 Z"/>
+      <path d="M72 162 L82 132 L92 162 Z"/>
+    </g>
+    <g fill="#ffffff" opacity="0.55">
+      <path d="M36 116 L40 132 L33 132 Z M52 104 L57 124 L48 124 Z M68 124 L72 138 L64 138 Z"/>
+    </g>
+    <!-- lake with reflection -->
+    <rect x="18" y="160" width="220" height="14" fill="url(#lake)"/>
+    <rect x="150" y="161" width="88" height="5" fill="#d79a2b" opacity="0.35"/>
+  </g>
+  <!-- controls -->
+  <circle cx="38" cy="198" r="13" fill="#ffffff"/>
+  <path d="M34 190 L46 198 L34 206 Z" fill="#232323"/>
+  <path d="M64 192 L73 198 L64 204 Z" fill="#ffffff"/>
+  <rect x="74" y="192" width="3" height="12" rx="1" fill="#ffffff"/>
+  <rect x="88" y="196.5" width="126" height="3.5" rx="1.75" fill="#3c3c3c"/>
+  <rect x="88" y="196.5" width="34" height="3.5" rx="1.75" fill="#e01b1b"/>
+  <path d="M224 190 h-4 v4 M224 190 h4 v4 M224 206 h-4 v-4 M224 206 h4 v-4" fill="none"/>
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="square">
+    <path d="M222 194 v-4 h4"/><path d="M234 190 h4 v4"/><path d="M222 202 v4 h4"/><path d="M234 206 h4 v-4"/>
+  </g>
+</svg>

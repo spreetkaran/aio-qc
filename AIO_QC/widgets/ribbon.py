@@ -94,13 +94,44 @@ class _Drawer(QWidget):
         p.end()
 
 
+class _TabBar(QTabBar):
+    """Tabs that look selected only while their tools are shown (drawer open or pinned), and hovered only while
+    the mouse is really over them — a tab never stays lit after the drawer closed or the mouse left."""
+
+    def __init__(self, ribbon):
+        super().__init__()
+        self.ribbon = ribbon
+
+    def paintEvent(self, _e):
+        from PyQt6.QtWidgets import QStyle, QStyleOptionTab, QStylePainter
+        p = QStylePainter(self)
+        active = self.ribbon.pinned or self.ribbon._open
+        under = self.tabAt(self.mapFromGlobal(QCursor.pos())) if self.underMouse() else -1
+        for i in range(self.count()):
+            opt = QStyleOptionTab()
+            self.initStyleOption(opt, i)
+            if not active:
+                opt.state &= ~QStyle.StateFlag.State_Selected
+            if i == under:
+                opt.state |= QStyle.StateFlag.State_MouseOver
+            else:
+                opt.state &= ~QStyle.StateFlag.State_MouseOver
+            p.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+
+    def leaveEvent(self, e):
+        super().leaveEvent(e)
+        self.update()
+
+
 class Ribbon(QWidget):
     pinnedChanged = pyqtSignal(bool)
 
     def __init__(self, settings=None, parent=None):
         super().__init__(parent)
         self.settings = settings
-        self.bar = QTabBar()
+        self._open = False                                    # target state of the drawer
+        self._pinned = None
+        self.bar = _TabBar(self)
         self.bar.setDrawBase(False)
         self.bar.setExpanding(False)
         self.bar.setDocumentMode(True)
@@ -203,6 +234,7 @@ class Ribbon(QWidget):
                             if on else "Pin: keep the tools open under the tabs (double-click a tab does the same)")
         if self.settings is not None:
             self.settings.setValue("ribbon/pinned", on)
+        self.bar.update()
         self.pinnedChanged.emit(on)
 
     def _fit_height(self):
@@ -370,6 +402,7 @@ class Ribbon(QWidget):
         d.curtain.show()
         d.curtain.raise_()
         self._open = True
+        self.bar.update()
         QApplication.instance().installEventFilter(self)
         t0 = d.curtain.t
 
@@ -391,6 +424,7 @@ class Ribbon(QWidget):
         if not self._open or d is None:
             return
         self._open = False
+        self.bar.update()
         self._leave_timer.stop()
         self._hover_timer.stop()
         QApplication.instance().removeEventFilter(self)

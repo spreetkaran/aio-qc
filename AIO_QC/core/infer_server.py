@@ -144,7 +144,44 @@ def _load_sahi(spec):
     raise RuntimeError(f"SAHI could not load the model: {last}")
 
 
-def _boxes_from_result(r, keep):
+MAX_POLY = 64          # outline points kept per segmentation mask (evenly spaced along the contour)
+
+
+def _thin(poly, n=MAX_POLY):
+    if len(poly) <= n:
+        return poly
+    idx = [round(i * (len(poly) - 1) / (n - 1)) for i in range(n)]
+    return [poly[i] for i in idx]
+
+
+def _geometry(r, n):
+    """Per box: None, {"poly": [[x, y], ...]} (segmentation / oriented box) or {"kpts": [[x, y, c], ...]}."""
+    out = [None] * n
+    try:
+        masks = getattr(r, "masks", None)
+        if masks is not None and getattr(masks, "xy", None) is not None:
+            for i, xy in enumerate(list(masks.xy)[:n]):
+                pts = [[round(float(x), 1), round(float(y), 1)] for x, y in xy.tolist()]
+                if len(pts) >= 3:
+                    out[i] = {"poly": _thin(pts)}
+        obb = getattr(r, "obb", None)
+        if obb is not None and len(obb) and not (getattr(r, "boxes", None) is not None and len(r.boxes)):
+            for i, quad in enumerate(obb.xyxyxyxy.cpu().numpy().tolist()[:n]):
+                out[i] = {"poly": [[round(float(x), 1), round(float(y), 1)] for x, y in quad]}
+        kp = getattr(r, "keypoints", None)
+        if kp is not None and getattr(kp, "data", None) is not None and len(kp.data):
+            for i, pts in enumerate(kp.data.cpu().numpy().tolist()[:n]):
+                rows = [[round(float(p[0]), 1), round(float(p[1]), 1), round(float(p[2]) if len(p) > 2 else 1.0, 3)]
+                        for p in pts]
+                out[i] = dict(out[i] or {}, kpts=rows)
+    except Exception as exc:                       # geometry is a bonus: never lose the boxes for it
+        log(f"geometry skipped ({type(exc).__name__}: {exc})")
+        return [None] * n
+    return out
+
+
+def _boxes_from_result(r, keep, geo=None):
+    """[[x1, y1, x2, y2, conf, cls]]; with geo (a list), the per-box outline / keypoints are appended to it."""
     boxes = []
     src = r.boxes if (getattr(r, "boxes", None) is not None and len(r.boxes)) else getattr(r, "obb", None)
     if src is None or not len(src):
@@ -152,10 +189,20 @@ def _boxes_from_result(r, keep):
     xyxy = src.xyxy.cpu().numpy().tolist()
     conf = src.conf.cpu().numpy().tolist()
     cls = src.cls.cpu().numpy().astype(int).tolist()
-    for b, c, k in zip(xyxy, conf, cls):
+    shapes = _geometry(r, len(xyxy)) if geo is not None else None
+    for i, (b, c, k) in enumerate(zip(xyxy, conf, cls)):
         if keep is None or k in keep:
             boxes.append([round(float(v), 2) for v in b] + [round(float(c), 4), int(k)])
+            if geo is not None:
+                geo.append(shapes[i])
     return boxes
+
+
+def _store(res_p, mid, r, keep):
+    geo = []
+    res_p["by_model"][mid] = _boxes_from_result(r, keep, geo)
+    if any(g is not None for g in geo):
+        res_p.setdefault("geo", {})[mid] = geo
 
 
 def predict(images, ids, conf, batch, classes):
@@ -203,14 +250,14 @@ def predict(images, ids, conf, batch, classes):
                 for p, r in zip(chunk, res):
                     h, w = r.orig_shape[:2]
                     results[p]["w"], results[p]["h"] = int(w), int(h)
-                    results[p]["by_model"][mid] = _boxes_from_result(r, keep)
+                    _store(results[p], mid, r, keep)
             except Exception as exc:                               # retry one by one to isolate a bad image
                 for p in chunk:
                     try:
                         r = entry["model"].predict(p, **kw)[0]
                         h, w = r.orig_shape[:2]
                         results[p]["w"], results[p]["h"] = int(w), int(h)
-                        results[p]["by_model"][mid] = _boxes_from_result(r, keep)
+                        _store(results[p], mid, r, keep)
                     except Exception as exc2:
                         results[p]["error"] = f"{mid}: {type(exc2).__name__}: {exc2}"
                 log(f"batch fallback ({type(exc).__name__}: {exc})")

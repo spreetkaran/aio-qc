@@ -212,7 +212,7 @@ class HelpCenter(QMainWindow):
 
     def __init__(self, parent=None, shortcuts_getter=None, mouse_help=None, actions=None, icon_loader=None):
         super().__init__(parent)
-        self.setWindowTitle("AIO QC — Help")
+        self.setWindowTitle("Help — AIO QC App")
         self.actions = dict(actions or {})         # "action:<name>" links -> callables (set by the app)
         self.icon_loader = icon_loader             # "aio-icon:<name>" images in AIO QC's chapters
         self.setObjectName("HelpCenter")

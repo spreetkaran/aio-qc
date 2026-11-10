@@ -59,8 +59,8 @@ class AppShell(QObject):
                     self.video = FrameExtractorWindow()
                 finally:
                     QApplication.restoreOverrideCursor()
-                from AIO_QC.tools.frame_extractor.utils import newIcon as fx_icon
-                self.video.setWindowIcon(fx_icon("icon"))       # the Frame Extractor keeps its own app icon
+                from AIO_QC.utils import newIcon
+                self.video.setWindowIcon(newIcon("mode-video"))       # the Frame Extractor keeps its own app icon
                 self._add_switch(self.video, "video")
                 self.video.installEventFilter(self)
                 from AIO_QC.widgets import tasks

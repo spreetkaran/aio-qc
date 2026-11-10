@@ -19,8 +19,8 @@ import os
 import time
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer, QThread, QPointF
-from PyQt6.QtGui import QColor, QIcon, QPixmap, QKeySequence
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer, QThread, QPointF, QRectF
+from PyQt6.QtGui import QColor, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox, QDoubleSpinBox,
@@ -90,9 +90,9 @@ def slot_hex(slot, mode=None):
 
 
 def _swatch_icon(color, size=12):
-    pm = QPixmap(size, size)
-    pm.fill(QColor(color))
-    return QIcon(pm)
+    from AIO_QC.utils import painted_icon
+    c = QColor(color)
+    return painted_icon(lambda p: p.fillRect(QRectF(0, 0, size, size), c), size)
 
 
 def _item(text, sort=None, align_right=False, tip=None):
@@ -144,14 +144,14 @@ def _make_table(headers, stretch_col=None):
 
 def _status_icon(level, size=14):
     """Step status for the navigation: ✓ ok · ! warning · ✕ problem · ○ not done yet."""
-    from PyQt6.QtGui import QPainter, QPen
-    from PyQt6.QtCore import QRectF
-    pm = QPixmap(size * 2, size * 2)
-    pm.setDevicePixelRatio(2.0)
-    pm.fill(Qt.GlobalColor.transparent)
+    from AIO_QC.utils import painted_icon
     col = {"ok": "#199e70", "ready": "#199e70", "warn": "#c98500", "error": "#d03b3b"}.get(level, "#8f8d86")
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    return painted_icon(lambda p: _draw_status(p, level, size, col), size)
+
+
+def _draw_status(p, level, size, col):
+    from PyQt6.QtGui import QPen
+    from PyQt6.QtCore import QRectF
     r = QRectF(1, 1, size - 2, size - 2)
     if level == "todo":
         p.setPen(QPen(QColor(col), 1.5))
@@ -170,8 +170,6 @@ def _status_icon(level, size=14):
         else:
             p.drawLine(QPointF(c - 2.6, c - 2.6), QPointF(c + 2.6, c + 2.6))
             p.drawLine(QPointF(c + 2.6, c - 2.6), QPointF(c - 2.6, c + 2.6))
-    p.end()
-    return QIcon(pm)
 
 
 def _strip_tags(t):

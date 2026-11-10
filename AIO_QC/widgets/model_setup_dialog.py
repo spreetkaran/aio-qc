@@ -103,7 +103,7 @@ def server_specs(models: list[dict], opts: dict, info: dict | None = None) -> li
             continue
         path, _note = runtime_path(m, opts, info)
         out.append({"id": m["id"], "path": path, "imgsz": effective_imgsz(m),
-                    "device": dev, "half": half, "warmup": True, "conf": 0.05, "batch": int(opts.get("batch", 8)),
+                    "device": dev, "half": half, "warmup": True, "conf": 0.05, "task": m.get("task") or "", "batch": int(opts.get("batch", 8)),
                     "sahi": {"slice": int(opts.get("slice", 640)), "overlap": float(opts.get("overlap", 0.2))}
                     if opts.get("mode") == "sahi" else None})
     return out

@@ -170,9 +170,9 @@ class MiniSessionWindow(QWidget):
         restore.clicked.connect(self.restoreRequested.emit)
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        ic = QLabel()
+        from AIO_QC.utils import IconLabel
+        ic = IconLabel("tool-editor", 18)
         ic.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        ic.setPixmap(newIcon("tool-editor").pixmap(18, 18))
         top.addWidget(ic)
         top.addWidget(self.title, 1)
         top.addWidget(restore)

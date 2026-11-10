@@ -77,7 +77,7 @@ class StudioWindow(QMainWindow):
         self._undo: list = []
         self._redo: list = []
         self._prof_key = None
-        self.setWindowTitle("Data Studio — AIO QC")
+        self.setWindowTitle("Data Studio — AIO QC App")
         self.setWindowIcon(newIcon("mode-data"))
         self.setAcceptDrops(True)
         self.resize(1360, 860)
@@ -164,6 +164,11 @@ class StudioWindow(QMainWindow):
         h = mb.addMenu("&Help")
         h.addAction(A("Data Studio Guide", self.show_help, "F1"))
         h.addAction(A("Formula Reference", lambda: QMessageBox.information(self, "Formulas", S.OPS["derive"].help)))
+        h.addSeparator()
+        from AIO_QC.widgets.about import show_about
+        h.addAction(A("About Data Studio", lambda: show_about(
+            self, "Data Studio", "Analysis, cleaning and features for tables (CSV, Excel, Parquet, Spark)",
+            newIcon("mode-data"))))
 
         from AIO_QC.widgets.mode_switch import ModeSwitch
         self.mode_switch = ModeSwitch("data", self)
@@ -1065,7 +1070,7 @@ class StudioWindow(QMainWindow):
 
     def _update_title(self):
         ws = os.path.basename(self.ws.path) if self.ws.path else "unsaved workspace"
-        self.setWindowTitle(f"Data Studio — {ws}{' •' if self.ws.dirty and self.ws.tables else ''} — AIO QC")
+        self.setWindowTitle(f"Data Studio — {ws}{' •' if self.ws.dirty and self.ws.tables else ''} — AIO QC App")
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape and self.at_step is not None:

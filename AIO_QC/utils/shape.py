@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtGui import QColor
 from .theme import style as apply_style
 from PyQt6.QtWidgets import QFrame, QGraphicsDropShadowEffect
 
@@ -16,15 +16,15 @@ def custom_v_separator():
 
 
 def get_color_icon(color):
-    pix = QPixmap(12, 12)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(color)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawEllipse(0, 0, 12, 12)
-    painter.end()
-    return QIcon(pix)
+    """A colour dot drawn at the real screen resolution (sharp at any scaling)."""
+    from .qt_utils import painted_icon
+    c = QColor(color)
+
+    def draw(p):
+        p.setBrush(c)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(0.5, 0.5, 11, 11))
+    return painted_icon(draw, 12)
 
 
 class ShapeGroup:

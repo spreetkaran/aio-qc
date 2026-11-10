@@ -125,8 +125,8 @@ class GetStarted(QDialog):
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 8, 8, 8)
         v.setSpacing(14)
-        ic = QLabel()
-        ic.setPixmap(newIcon(icon).pixmap(72, 72))
+        from AIO_QC.utils import IconLabel
+        ic = IconLabel(newIcon(icon), 72)              # sharp at any screen scaling
         v.addWidget(ic)
         t = QLabel(title)
         f = t.font()

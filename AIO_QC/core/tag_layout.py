@@ -129,19 +129,24 @@ def place_anchored(items, bounds=None):
         for c in cells(*r):
             grid.setdefault(c, []).append(k)
 
-    def overlap(x1, y1, x2, y2, first_only=False):
+    def overlap(x1, y1, x2, y2, limit=float("inf")):
+        """Covered area; stops as soon as it reaches `limit` (that spot cannot win any more)."""
         seen, tot = set(), 0.0
-        for c in cells(x1, y1, x2, y2):
-            for k in grid.get(c, ()):
-                if k in seen:
-                    continue
-                seen.add(k)
-                a1, b1, a2, b2 = placed[k]
-                ow, oh = min(x2, a2) - max(x1, a1), min(y2, b2) - max(y1, b1)
-                if ow > 0 and oh > 0:
-                    if first_only:
-                        return 1.0
-                    tot += ow * oh
+        for gx in range(int(x1 // CELL), int(x2 // CELL) + 1):
+            for gy in range(int(y1 // CELL), int(y2 // CELL) + 1):
+                for k in grid.get((gx, gy), ()):
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    a1, b1, a2, b2 = placed[k]
+                    ow = (x2 if x2 < a2 else a2) - (x1 if x1 > a1 else a1)
+                    if ow <= 0:
+                        continue
+                    oh = (y2 if y2 < b2 else b2) - (y1 if y1 > b1 else b1)
+                    if oh > 0:
+                        tot += ow * oh
+                        if tot >= limit:
+                            return tot
         return tot
 
     # every shape's preferred anchor dot is reserved up front: labels never cover another shape's dot
@@ -177,8 +182,12 @@ def place_anchored(items, bounds=None):
             if not _hits_except(grid, placed, cells, (x, y, x + w, y + h), own):
                 best = (i, x, y)
                 break
-        if best is None:
-            best = min(spots[:4 if crowded else 12], key=lambda q: overlap(q[1], q[2], q[1] + w, q[2] + h))
+        if best is None:                                         # least covered spot (same choice as a plain
+            low = float("inf")                                   # min(); losers stop counting early)
+            for q in spots[:4 if crowded else 12]:
+                o = overlap(q[1], q[2], q[1] + w, q[2] + h, low)
+                if o < low:
+                    best, low = q, o
         i, x, y = best
         add((x - 1, y - 1, x + w + 1, y + h + 1))
         if i != 0:                                               # a different anchor is used: reserve its dot too
@@ -191,16 +200,18 @@ def place_anchored(items, bounds=None):
 def _hits_except(grid, placed, cells, r, own) -> bool:
     x1, y1, x2, y2 = r
     seen = set()
-    for c in cells(x1, y1, x2, y2):
-        for k in grid.get(c, ()):
-            if k in seen:
-                continue
-            seen.add(k)
-            a = placed[k]
-            if a == own:
-                continue
-            if min(x2, a[2]) > max(x1, a[0]) and min(y2, a[3]) > max(y1, a[1]):
-                return True
+    for gx in range(int(x1 // CELL), int(x2 // CELL) + 1):
+        for gy in range(int(y1 // CELL), int(y2 // CELL) + 1):
+            for k in grid.get((gx, gy), ()):
+                if k in seen:
+                    continue
+                seen.add(k)
+                a = placed[k]
+                if a == own:
+                    continue
+                if (x2 if x2 < a[2] else a[2]) > (x1 if x1 > a[0] else a[0]) and \
+                        (y2 if y2 < a[3] else a[3]) > (y1 if y1 > a[1] else a[1]):
+                    return True
     return False
 
 
