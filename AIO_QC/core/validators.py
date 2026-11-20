@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .editors import editors_home
+from AIO_QC.core.diag import ignored as _ignored
 
 BUILTIN_DIR = Path(__file__).resolve().parent.parent / "validators"
 
@@ -60,6 +61,7 @@ class Validator:
         try:
             r = self.fn(text)
         except Exception as exc:
+            _ignored(exc)
             return None, f"validator error: {type(exc).__name__}: {exc}"
         if isinstance(r, tuple):
             return bool(r[0]), str(r[1]) if len(r) > 1 and r[1] else ""
@@ -80,6 +82,7 @@ def load_file(path: Path, origin: str) -> Validator:
         v.title = str(getattr(mod, "NAME", v.title))
         v.description = str(getattr(mod, "DESCRIPTION", "") or (fn.__doc__ or "").strip())
     except Exception as exc:
+        _ignored(exc)
         v.error = f"{type(exc).__name__}: {exc}"
     return v
 
@@ -96,6 +99,7 @@ def load_code(code: str, name: str = "draft") -> Validator:
         v.fn, v.title = fn, str(ns.get("NAME", name))
         v.description = str(ns.get("DESCRIPTION", ""))
     except Exception as exc:
+        _ignored(exc)
         v.error = f"{type(exc).__name__}: {exc}"
         tb = traceback.extract_tb(sys.exc_info()[2])
         line = next((f.lineno for f in reversed(tb) if f.filename.startswith("<validator")), None)

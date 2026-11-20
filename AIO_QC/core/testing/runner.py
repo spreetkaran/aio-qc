@@ -95,7 +95,8 @@ class PredCache:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._lock = threading.RLock()
         self.con = sqlite3.connect(path, check_same_thread=False, timeout=30)
-        self.con.execute("PRAGMA journal_mode=WAL")
+        from AIO_QC.core.sqlite_util import configure
+        configure(self.con, path)
         self.con.execute("PRAGMA synchronous=NORMAL")
         self.con.execute("CREATE TABLE IF NOT EXISTS models (key TEXT PRIMARY KEY, path TEXT, label TEXT, "
                          "names TEXT, spec TEXT, info TEXT, updated REAL)")
@@ -245,6 +246,7 @@ def run_on_images(specs, images, cache, progress=None, cancel=None, batch=8, log
         cached = cache.model(mk)
         if not todo:
             info["names"] = (cached or {}).get("names") or {}
+            info["task"] = ((cached or {}).get("info") or {}).get("task", "detect")
             info["speed_ms"] = cache.speed_ms(mk)
             progress(mi, len(images), len(images), info["speed_ms"], f"{spec.label}: cached")
             continue
@@ -263,8 +265,9 @@ def run_on_images(specs, images, cache, progress=None, cancel=None, batch=8, log
         names = dict(getattr(det, "names", None) or {})
         info["names"] = names
         info["backend"] = getattr(det, "provider", "")
+        info["task"] = getattr(det, "task", "detect") or "detect"     # "classify": whole-frame rows (cls_rows)
         used = getattr(det, "imgsz", None)                  # the size it really ran at (shared-cache matching)
-        cache.set_model(mk, spec, names, dict(backend=info["backend"], load_s=info["load_s"],
+        cache.set_model(mk, spec, names, dict(backend=info["backend"], load_s=info["load_s"], task=info["task"],
                                               imgsz_used=list(used) if isinstance(used, (tuple, list)) else used))
         keys, paths = [k for k, _ in todo], [p for _, p in todo]
         done = len(images) - len(todo)
@@ -385,7 +388,8 @@ def run_on_video(specs, path, cache, stride=1, start=None, end=None, progress=No
             dets[mk] = d
             info["names"] = dict(getattr(d, "names", None) or {})
             info["backend"] = getattr(d, "provider", "")
-            cache.set_model(mk, spec, info["names"], dict(backend=info["backend"]))
+            info["task"] = getattr(d, "task", "detect") or "detect"
+            cache.set_model(mk, spec, info["names"], dict(backend=info["backend"], task=info["task"]))
             todo_models.append((spec, missing))
         except Exception as e:
             info["error"] = f"{type(e).__name__}: {e}"

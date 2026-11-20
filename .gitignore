@@ -5,6 +5,10 @@ venv/
 *.egg-info/
 build/
 dist/
+aio-qc.log*
+aio-qc-crash.log
+aio-qc-crash-*.log
+# names before 3.0.0
 aio_qc_tool.log*
 aio_qc_crash*.log
 .aio_qc/
@@ -15,4 +19,15 @@ Thumbs.db
 .idea/
 .vscode/
 .ruff_cache/
-.pytest_cache/
+
+# made by test runs
+/a/
+.frameextractor_hashes.db
+
+# test tooling
+.cov_runner/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ruff_cache/

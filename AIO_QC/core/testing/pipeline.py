@@ -12,15 +12,19 @@ Headless Model Lab pipeline - the same steps the Model Lab window runs, usable f
 
 Nothing here imports Qt.
 """
+
 import math
 import os
 import threading
+
+import numpy as np
 from dataclasses import dataclass, field
 
 from AIO_QC.tools.frame_extractor.core.imageio import imread
 
 from AIO_QC.core.testing import dataset as D
 from AIO_QC.core.testing.evaluation import LabRun
+from AIO_QC.core.testing.cls_eval import ClsLabRun
 from AIO_QC.core.testing.report import ReportBuilder, write_exports, write_report
 from AIO_QC.core.testing.runner import (
     ModelSpec,
@@ -33,6 +37,7 @@ from AIO_QC.core.testing.runner import (
 )
 from AIO_QC.core.testing.testset import TestSet
 from AIO_QC.core.testing import videoeval as V
+from AIO_QC.core.diag import ignored as _ignored
 
 
 @dataclass
@@ -101,10 +106,29 @@ def _labelme_image(ann_path):
     return next((os.path.abspath(c) for c in cands if os.path.isfile(c)), "")
 
 
-def open_qc(root, fmt, pairs, names=None, label="", progress=None, cancel=None):
+def open_qc(root, fmt, pairs, names=None, label="", progress=None, cancel=None, cls_type=None):
     """The dataset open in Image QC as test data: AIO QC's own file list (image, annotation) - read on the UI
     thread and passed in as plain strings - and the dataset's class names; nothing is searched again."""
     root = os.path.abspath(str(root))
+    if fmt == "classify":                       # a classifier's dataset: (image, annotation, classes) per file
+        items = []
+        for img, ann, *rest in pairs:
+            if img:
+                w, h = D.image_size(img)
+                items.append(D.ImageItem(path=img, w=w, h=h, label_path=ann or "", tags=list(rest[0] if rest else [])))
+        names = dict(names or {})
+        for it in items:
+            for t in it.tags:
+                if t not in names.values():
+                    names[len(names)] = t
+        ds = D.Dataset(items=items, names=names, fmt="classify", root=root, cls_type=cls_type)
+        if not ds.items:
+            raise ValueError("The open dataset has no images.")
+        from AIO_QC.core.testing.labels_io import apply_exclusions
+        apply_exclusions(ds, root, None)
+        from AIO_QC.core.model_registry import qc_image_key
+        return Data(ds, root, None, label or os.path.basename(root), [qc_image_key(it.path, root) for it in ds.items],
+                    qc=True)
     images, label_paths = [], {}
     for i, (img, ann) in enumerate(pairs):
         if cancel is not None and cancel():
@@ -177,9 +201,35 @@ def evaluate(data, specs, cache=None, only_reviewed=True, ground="auto", referen
     cache = cache or cache_for(data)
     infos = run_on_images(specs, data.images, cache, progress=progress, cancel=cancel, batch=batch, log=log)
     ok = [s for s in specs if not (infos.get(s.key) or {}).get("error") or cache.keys_for(s.key)]
-    run = LabRun.from_cache(data.dataset, ok, cache, data.keys, infos, only_reviewed=only_reviewed, ground=ground,
-                            reference=reference, op_conf=op_conf, source=data.root)
+    cls = is_classify(data.dataset, ok, infos, cache)
+    if cls and data.dataset.task != "classify" and any(it.boxes is not None and len(it.boxes) for it in
+                                                         data.dataset.items) and log:
+        log("Classifier models on a detection test set: scored against a reference model (the boxes are not classes)")
+    Run = ClsLabRun if cls else LabRun
+    if cls and ground == "labels" and data.dataset.task != "classify":
+        ground = "auto"
+    run = Run.from_cache(data.dataset, ok, cache, data.keys, infos, only_reviewed=only_reviewed, ground=ground,
+                         reference=reference, op_conf=op_conf, source=data.root)
     return run, infos
+
+
+def model_tasks(specs, infos=None, cache=None) -> list:
+    """Each model's task ("detect" / "segment" / "classify") as the runner recorded it."""
+    out = []
+    for s in specs:
+        t = (infos or {}).get(s.key, {}).get("task") if infos else None
+        if t is None and cache is not None:
+            t = ((cache.model(s.key) or {}).get("info") or {}).get("task")
+        out.append(t or "detect")
+    return out
+
+
+def is_classify(dataset, specs, infos=None, cache=None) -> bool:
+    """Score as classifiers: a classification test set, or every model is a classifier."""
+    tasks = model_tasks(specs, infos, cache)
+    if dataset is not None and getattr(dataset, "task", "") == "classify":
+        return True
+    return bool(tasks) and all(t == "classify" for t in tasks)
 
 
 VIDEO_CONF_FLOOR = 0.05      # label-free video analysis never needs the 0.001 floor of mAP: 20-50x less data
@@ -246,8 +296,13 @@ def analyse_videos(videos, specs, cache=None, every_s=0.2, op_conf=0.25, referen
             preds.append(p)
             names.append(nm or infos[vspecs[i].key].get("names") or {})
         ref = good.index(reference) if reference is not None and reference in good else None
+        tasks = [infos[vspecs[i].key].get("task", "detect") for i in good]
+        cls = bool(tasks) and all(t == "classify" for t in tasks)
+        if cls:            # a classifier: each sample's best class (one whole-frame row) — the tracker then sees
+            preds = [[p[np.argsort(-p[:, 4])[:1]] if p is not None and len(p) else p for p in pr] for pr in preds]
         a = V.analyse_video([(specs[i].label, nm) for i, nm in zip(good, names)], preds, times, idx,
-                            op_conf=op_conf, gap=gap, reference=ref)
+                            op_conf=op_conf if not cls else 0.0, gap=gap, reference=ref)
+        a["task"] = "classify" if cls else "detect"     # class flips (blip), drop-outs (flicker), agreement
         a["specs"] = [specs[i].key for i in good]           # the user's model keys (colours, labels)
         a["speed_ms"] = [infos[vspecs[i].key].get("speed_ms") for i in good]
         a["step_s"] = step_s
@@ -282,8 +337,8 @@ def video_run(videos_out, specs, cache, ground="auto", reference=None, op_conf=N
             src = open_source(path, "auto", hw_accel=False)
             w, h = src.width, src.height
             src.release()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         vk = video_key(path)
         done_keys = set(a.get("specs") or [])
         for fr, t in zip(frames, times):
@@ -309,8 +364,10 @@ def video_run(videos_out, specs, cache, ground="auto", reference=None, op_conf=N
         for k, ms in zip(an.get("specs") or [], an.get("speed_ms") or []):
             if ms and k not in infos:
                 infos[k] = dict(speed_ms=ms)
-    run = LabRun(items, {}, specs, preds_raw, model_names, infos, ground, reference if ground == "reference" else None,
-                 op_conf, source="videos")
+    cls = any(a.get("task") == "classify" for _p, a in videos_out)
+    Run = ClsLabRun if cls else LabRun
+    run = Run(items, {}, specs, preds_raw, model_names, infos, ground, reference if ground == "reference" else None,
+              op_conf if not cls else None, source="videos")
     run.video_step = step
     return run
 
@@ -328,8 +385,8 @@ def release_reader(tid=None):
     if cur is not None:
         try:
             cur[1].release()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
 
 def open_readers():
@@ -354,7 +411,8 @@ def _video_frame(path, frame):
         src.seek(int(frame))
         ok, f = src.read()
         return f if ok else None
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         release_reader(tid)
         return None
 
@@ -380,11 +438,16 @@ def make_report(path, kind="summary", run=None, videos=None, title=None, slots=N
     if kind in ("summary", "detailed", "comparison") and run is None:
         kind = "video"
     title = title or ("Model comparison" if kind == "comparison" else "Model evaluation")
-    rb = ReportBuilder(run, title, slots=slots, frame_getter=frame_getter, video=videos or [], version=version)
+    cls = getattr(run, "task", "") == "classify"
+    if cls:                                    # a classifier run: accuracy, per class, mistakes as pictures
+        from AIO_QC.core.testing.cls_report import ClsReportBuilder, write_cls_exports
+        rb = ClsReportBuilder(run, title, slots=slots, frame_getter=frame_getter, video=videos or [], version=version)
+    else:
+        rb = ReportBuilder(run, title, slots=slots, frame_getter=frame_getter, video=videos or [], version=version)
     paths = [write_report(path, rb.build(kind, pair))]
     if exports and run is not None and run.scored:
-        paths += write_exports(run, os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0]
-                                                 + "_data"))
+        folder = os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0] + "_data")
+        paths += write_cls_exports(run, folder) if cls else write_exports(run, folder)
     return paths
 
 
@@ -401,10 +464,14 @@ def prelabel(testset, spec, cache, conf=0.25, fmt="yolo", only_unlabelled=True, 
     from AIO_QC.core.testing import metrics as M
     target = dict(testset.names) or dict(names)
     mp, _, _ = M.build_class_map(names, target)
+    classify = (info.get("task") or ((cache.model(spec.key) or {}).get("info") or {}).get("task")) == "classify"
     by_file = {}
     for it, p in zip(testset.items, preds):
         if p is None:
             continue
         p = M.remap(p, mp)
+        if classify:                       # a classifier: its best class (when sure enough) as the image's class
+            p = p[np.argsort(-p[:, 4])[:1]] if len(p) else p
         by_file[it["file"]] = p[p[:, 4] >= conf]
-    return testset.write_prelabels(by_file, target, fmt, only_unlabelled)
+    return testset.write_prelabels(by_file, target, "labelme" if classify else fmt, only_unlabelled,
+                                   classify=classify)

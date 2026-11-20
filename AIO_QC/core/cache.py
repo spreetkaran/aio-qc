@@ -91,7 +91,8 @@ class DatasetCache:
     def _connect(self, path) -> sqlite3.Connection:
         db = sqlite3.connect(str(path), check_same_thread=False, timeout=30)
         db.execute("PRAGMA auto_vacuum=INCREMENTAL")  # only takes effect on a new database (set before tables)
-        db.execute("PRAGMA journal_mode=WAL")
+        from .sqlite_util import configure
+        configure(db, path)                           # WAL on a local disk; no memory-mapped journal elsewhere
         db.execute("PRAGMA synchronous=NORMAL")
         db.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")
         return db
@@ -232,8 +233,10 @@ class DatasetCache:
             self._pending = 0
 
     def flush(self):
+        """Commit what is pending - new rows, and the "last used" marks that cache hits write - so no write lock is
+        left held (another session or app window on the same dataset would wait for it)."""
         with self._lock:
-            if self._pending:
+            if self._pending or self.db.in_transaction:
                 self.db.commit()
                 self._pending = 0
 
@@ -293,6 +296,25 @@ class DatasetCache:
                 self.db.commit()
             return n
 
+    def rename(self, pairs) -> int:
+        """Files renamed / moved in the dataset: their cached results (labels, image info, model predictions)
+        follow them. pairs = [(old path, new path)]. -> rows moved."""
+        n = 0
+        with self._lock:
+            for a, b in pairs:
+                ra, rb = self.rel(a), self.rel(b)
+                if ra == rb:
+                    continue
+                row = self.db.execute("SELECT id FROM files WHERE rel=?", (rb,)).fetchone()
+                if row is not None:                       # stale rows under the new name: the moved file wins
+                    for sql in ("DELETE FROM labels WHERE fid=?", "DELETE FROM images WHERE fid=?",
+                                "DELETE FROM preds WHERE fid=?", "DELETE FROM files WHERE id=?"):
+                        self.db.execute(sql, (row[0],))
+                n += self.db.execute("UPDATE files SET rel=? WHERE rel=?", (rb, ra)).rowcount
+            self.db.commit()
+            self._fid.clear()
+        return n
+
     def signatures(self) -> list[dict]:
         """[{sig, rows, bytes, used}] — results per model / OCR setting / check (Storage window)."""
         with self._lock:
@@ -343,10 +365,26 @@ class DatasetCache:
                 self.db.commit()
 
     def load_all_labels(self) -> dict:
-        """Bulk snapshot {rel: (mtime, size, counts_json, error)} for a fast full-dataset index."""
-        with self._lock:
-            return {r[0]: r[1:] for r in self.db.execute(
-                "SELECT f.rel, l.mtime, l.size, l.counts, l.error FROM labels l JOIN files f ON f.id = l.fid")}
+        """Bulk snapshot {rel: (mtime, size, counts_json, error)} for a fast full-dataset index.
+
+        Read on a connection of its own (WAL: readers never wait for, or block, the writer), so the shared lock is not
+        held for the whole read - on a big dataset that took seconds, and the window waited for it to show an image."""
+        sql = "SELECT f.rel, l.mtime, l.size, l.counts, l.error FROM labels l JOIN files f ON f.id = l.fid"
+        self.flush()                                   # what this connection wrote is visible to the other one
+        try:
+            ro = sqlite3.connect(f"file:{self.path.as_posix()}?mode=ro", uri=True, timeout=30, check_same_thread=False)
+        except sqlite3.Error:
+            ro = None
+        if ro is None:
+            with self._lock:
+                return {r[0]: r[1:] for r in self.db.execute(sql)}
+        try:
+            return {r[0]: r[1:] for r in ro.execute(sql)}
+        except sqlite3.Error:
+            with self._lock:
+                return {r[0]: r[1:] for r in self.db.execute(sql)}
+        finally:
+            ro.close()
 
     def lookup_labels(self, snapshot: dict, ann_path):
         """Like get_labels() but against a snapshot from load_all_labels() (no SQL per file)."""

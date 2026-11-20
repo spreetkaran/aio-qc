@@ -4,8 +4,11 @@
 import threading
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.core.diag import ignored as _ignored
 
-class DetectWorker(QThread):
+
+class DetectWorker(RetainedThread, QThread):
     """Runs the configured models on the paused frame for the canvas overlay.
     Models load lazily in this thread; requests are coalesced (latest wins)."""
     result = pyqtSignal(int, object)      # frame idx, list[list[Detection]] per model
@@ -36,6 +39,7 @@ class DetectWorker(QThread):
             from AIO_QC.tools.frame_extractor.widgets.models_dialog import detector_kwargs
             dets = load_detectors(c["models"], min(c["conf"], c["unc_low"]), **detector_kwargs(c))
         except Exception as e:
+            _ignored(e)
             self.error.emit(str(e))
             return
         while True:
@@ -48,4 +52,5 @@ class DetectWorker(QThread):
             try:
                 self.result.emit(idx, [d.detect(bgr) for d in dets])
             except Exception as e:
+                _ignored(e)
                 self.error.emit(str(e))

@@ -18,6 +18,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 ACTIONS = {"edit": "edited", "review": "review mark", "external": "changed outside AIO QC", "revert": "reverted",
            "undo": "undone", "trash": "moved to trash", "class": "class changed", "batch": "merged from batch",
@@ -27,7 +28,8 @@ ACTIONS = {"edit": "edited", "review": "review mark", "external": "changed outsi
 def user() -> str:
     try:
         return getpass.getuser()
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return os.environ.get("USERNAME") or os.environ.get("USER") or "?"
 
 
@@ -46,7 +48,8 @@ class HistoryLog:
         if self._db is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             db = sqlite3.connect(str(self.path), timeout=30, check_same_thread=False, isolation_level=None)
-            db.execute("PRAGMA journal_mode=WAL")
+            from .sqlite_util import configure
+            configure(db, self.path)
             db.execute("PRAGMA synchronous=NORMAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, ts REAL, rel TEXT, user TEXT, tool TEXT,

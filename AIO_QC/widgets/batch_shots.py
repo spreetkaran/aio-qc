@@ -13,6 +13,9 @@ layer — so a batch screenshot looks exactly like Image QC. The view on screen 
       whole  the whole image at full resolution; outlines and tags scaled up so they read as on a ~1280 px view
     caption  a strip under the picture: file, review mark and time, the flag note
     sketch   the file's saved sketch drawing (Sketch on Image)
+    auto     auto-sketch: the shapes chosen for a file (Choose shapes…) are pointed at — an arrow from free space,
+             with a ring or a box (the batch's style and colour); the file's other shapes are hidden. Such a file is
+             saved as the whole image so every mark is in the picture. Files with no chosen shapes are saved as usual.
 
 Pipeline: images are decoded on worker threads a few files ahead, each file is drawn on the GUI thread (one per
 event-loop turn, so the app stays responsive) and written on a worker thread. Progress and Cancel are in the
@@ -37,6 +40,7 @@ from PyQt6.QtWidgets import (
 from AIO_QC.core.state import REVIEW_FLAG
 
 from .screenshot import capture_view, save_image, unique_path
+from AIO_QC.core.diag import ignored as _ignored
 
 VIEWS = [("spot", "Same spot as now — the current zoom and position on every file"),
          ("whole", "Whole image — full resolution")]
@@ -45,7 +49,7 @@ DEFAULTS = {"batch_view": "spot", "caption": True, "sketch": True, "existing": "
 REF_PX = 1280                    # whole image: outlines / tags look as they do on a view this many pixels across
 AHEAD = 3                        # images decoded ahead of the one being drawn
 WORKERS = max(1, min(4, (os.cpu_count() or 2) - 1))   # decode + encode; one core stays free for the window
-REVIEW_TEXT = {"ok": "✓ OK", "flag": "⚑ Flagged", "fixed": "🔧 Fixed"}
+REVIEW_TEXT = {"ok": "✓ OK", "flag": "⚑ Flagged", "fixed": "Fixed"}
 
 
 def option(settings, name):
@@ -94,22 +98,27 @@ class ShotRenderer:
             self._sketch_store = getattr(s, "_sketches", None) or SketchStore(s.root)
         return self._sketch_store.load(key)
 
-    def render(self, key: str, img: QImage, ann, with_sketch: bool) -> QImage:
+    def render(self, key: str, img: QImage, ann, with_sketch: bool, auto: dict | None = None) -> QImage:
+        """auto: {"chosen": [shape indices], "own": {index: text}, "style", "color", "text", "text_size"} — only those
+        shapes, with their marks."""
         c, app = self.c, self.app
         tags, fill, alpha, outline, tag_scale, pixel_view = self.style
         W, H = img.width(), img.height()
         dpr = c.viewport().devicePixelRatioF() or 1.0
         k = 1.0
-        if self.view == "whole":
+        view = "whole" if auto else self.view
+        if view == "whole":
             c.resize(max(1, math.ceil(W / dpr)), max(1, math.ceil(H / dpr)))     # 1 image px = 1 device px
-            k = max(1.0, max(W, H) / dpr / REF_PX)
-        c.show_tags, c.fill_shapes, c.fill_alpha = tags, fill, alpha
+            # outlines / tags take the share of the picture they have on a REF_PX view, in device pixels (the
+            # canvas works in logical ones: ÷ dpr); never below 60 % of their screen size (tiny images stay readable)
+            k = max(0.6, max(W, H) / REF_PX) / dpr
+        c.show_tags, c.fill_shapes, c.fill_alpha = tags and not (auto and auto.get("text")), fill, alpha
         c.outline_scale, c.tag_scale = outline * k, tag_scale * k
         c.pixmap_item.pixel_view = pixel_view
         c.display = self._display_for(key)
         c.keep_zoom = False
         c.loadPixmap(QPixmap.fromImage(img))
-        if self.view == "whole":
+        if view == "whole":
             c._apply_view(1.0 / dpr, c._image_center())
             c._finish_zoom(c.CUSTOM_MODE)
         elif self.state is not None:
@@ -117,21 +126,49 @@ class ShotRenderer:
         shapes = list(ann.shapes) if ann is not None else []
         if ann is not None and getattr(ann, "normalized", False):
             shapes = ann.scaled(W, H).shapes
-        c.loadShapes(shapes, app.label_colors, set(app.visible_labels))
-        items = app.pred_layer_items(key, W) if hasattr(app, "pred_layer_items") else []
+        marks = []
+        if auto:
+            from AIO_QC.core import autosketch as AS
+            chosen = [i for i in auto["chosen"] if 0 <= i < len(shapes)]
+            boxes = [AS.shape_box(s.get("points"), s.get("shape_type")) for s in shapes]
+            others = [b for i, b in enumerate(boxes) if b is not None and i not in set(chosen)]
+            idx = [i for i in chosen if boxes[i] is not None]
+            from .autosketch_dialog import text_scale
+            labels = AS.arrow_texts(shapes, idx, auto.get("text", ""), auto.get("own"), Path(key).name)
+            marks = AS.plan(W, H, [boxes[i] for i in idx], others, auto["style"], auto["color"], labels,
+                            text_scale=text_scale(auto))
+            if labels:                                       # the text look, worked out on this image
+                from .sketch import restyle_texts
+                marks = restyle_texts(marks, auto.get("text_look", "auto_outline"), auto["color"], img)
+            shapes = [shapes[i] for i in chosen]                    # the others are hidden
+            visible = {str(s.get("label")) for s in shapes}         # chosen shapes show even if their label is unticked
+        else:
+            visible = set(app.visible_labels)
+        c.loadShapes(shapes, app.label_colors, visible)
+        items = app.pred_layer_items(key, W) if hasattr(app, "pred_layer_items") and not auto else []
         if items:
             c.set_pred_layer(items)
         layer = None
-        if with_sketch:
-            els = self._sketch(key)
-            if els:
-                from .sketch import SketchLayer
-                layer = SketchLayer(W, H)
-                layer.render_all(els)
-                c.scene.addItem(layer)
+        els = (self._sketch(key) if with_sketch else []) + marks
+        if els:
+            from .sketch import SketchLayer
+            layer = SketchLayer(W, H)
+            layer.render_all(els)
+            c.scene.addItem(layer)
         try:
             c.layout_tags() if c.shape_groups else None
-            return capture_view(c)
+            pic = capture_view(c)
+            s = app.session
+            tags = [str(t) for t in (getattr(ann, "tags", None) or [])] if ann is not None else []
+            if s is not None and s.is_classification and not pic.isNull():   # the class, as the viewer shows it
+                from PyQt6.QtGui import QPainter as _P
+                from .review_grid import _class_chip
+                pic = pic.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+                p = _P(pic)
+                p.setRenderHint(_P.RenderHint.Antialiasing)
+                _class_chip(p, pic, tags or ["no class"], {k: v.name() for k, v in app.label_colors.items()})
+                p.end()
+            return pic
         finally:
             if layer is not None:
                 c.scene.removeItem(layer)
@@ -195,9 +232,17 @@ class BatchShots(QObject):
     """Screenshots of `keys`, in the background (see the module docstring)."""
 
     def __init__(self, app, keys: list[str], view: str, caption: bool, sketch: bool, existing: str,
-                 folder: Path | None = None):
+                 folder: Path | None = None, auto: dict | None = None):
         super().__init__(app)
         self.app, self.keys = app, list(keys)
+        self.auto = auto if auto and auto.get("auto") else None        # {"style", "color", "text", "text_size"}
+        self.auto_files = 0
+        self._choices = None
+        if self.auto:
+            from AIO_QC.core.autosketch import ChoiceStore
+            s = app.session
+            self._choices = getattr(s, "_autosketch", None) or ChoiceStore(s.root)
+            s._autosketch = self._choices
         self.view, self.caption, self.sketch, self.existing = view, caption, sketch, existing
         self.folder = folder
         self.done = self.written = self.skipped = 0
@@ -291,7 +336,14 @@ class BatchShots(QObject):
         if img is None or img.isNull():
             self.errors.append(f"{name}: the image could not be read")
             return
-        pic = self._renderer.render(key, img, ann, self.sketch)
+        auto = None
+        if self._choices is not None and ann is not None and self._choices.count(key):
+            shapes = list((ann.scaled(img.width(), img.height()) if getattr(ann, "normalized", False) else ann).shapes)
+            chosen, own = self._choices.resolve(key, shapes, with_texts=True)
+            if chosen:
+                auto = dict(self.auto, chosen=chosen, own=own)
+                self.auto_files += 1
+        pic = self._renderer.render(key, img, ann, self.sketch, auto)
         if pic.isNull():
             self.errors.append(f"{name}: nothing to draw")
             return
@@ -317,6 +369,9 @@ class BatchShots(QObject):
             if rv.get("ts"):
                 meta += f" · {rv['ts']}"
         note = (rv or {}).get("note") or ""
+        if s is not None and s.is_classification:              # a classifier's caption names the class
+            cls = ", ".join(s.tags_of(key)) or "no class"
+            meta = f"class: {cls}" + (f" · {meta}" if meta else "")
         return title, meta, note
 
     def _finish(self):
@@ -330,6 +385,7 @@ class BatchShots(QObject):
             try:
                 ok = f.result()
             except Exception as exc:
+                _ignored(exc)
                 ok, why = False, str(exc)
             else:
                 why = "could not be written"
@@ -354,6 +410,8 @@ class BatchShots(QObject):
         app = self.app
         secs = time.monotonic() - self._t0
         parts = [f"{self.written:,} saved"]
+        if self.auto_files:
+            parts.append(f"{self.auto_files:,} auto-sketched")
         if self.skipped:
             parts.append(f"{self.skipped:,} skipped (already there)")
         if self.errors:
@@ -414,6 +472,31 @@ class BatchShotsDialog(QDialog):
         self.sketch.setChecked(option(self.st, "sketch"))
         form.addRow("", self.caption)
         form.addRow("", self.sketch)
+        from .autosketch_dialog import batch_options
+        from AIO_QC.core import autosketch as AS
+        ao = batch_options(self.st)
+        aw = QWidget()
+        al = QHBoxLayout(aw)
+        al.setContentsMargins(0, 0, 0, 0)
+        self.auto = QCheckBox("Auto-sketch the chosen shapes")
+        self.auto.setToolTip("Point at the shapes chosen for each file (arrows from free space; ring / box as "
+                             "chosen); the other shapes are hidden. Files with no chosen shapes are saved as usual.")
+        self.auto.setChecked(ao["auto"])
+        self.auto.toggled.connect(lambda _on: self._update())
+        al.addWidget(self.auto)
+        self.auto_style = QComboBox()
+        for k, text in AS.STYLES:
+            self.auto_style.addItem(text, k)
+        self.auto_style.setCurrentIndex(max(0, self.auto_style.findData(ao["style"])))
+        self.auto_style.currentIndexChanged.connect(
+            lambda _i: self.st.setValue("screenshot/auto_style", self.auto_style.currentData()))
+        al.addWidget(self.auto_style)
+        from AIO_QC.utils import newButton as _nb
+        self.choose_btn = _nb("Choose shapes…", icon="sketch-arrow", slot=self.choose_shapes,
+                              tip="Per file: click the shapes to point at — the marks show live")
+        al.addWidget(self.choose_btn)
+        al.addStretch(1)
+        form.addRow("Auto-sketch:", aw)
         self.existing = QComboBox()
         for k, text in EXISTING:
             self.existing.addItem(text, k)
@@ -443,11 +526,25 @@ class BatchShotsDialog(QDialog):
         foot.addWidget(self.start_btn)
         foot.addWidget(newButton("Close", slot=self.close))
         lay.addLayout(foot)
-        self.resize(560, 360)
+        self.resize(620, 400)
         self.refresh()
+        # marks / the file list filter change while the window is open: the counts follow (debounced)
+        from PyQt6.QtCore import QTimer
+        self._live = QTimer(self, singleShot=True, interval=150, timeout=self.refresh)
+        app.session.reviewChanged.connect(self._live_refresh)
+        app.file_dock.countChanged.connect(self._live_refresh)
+
+    def _live_refresh(self, *_a):
+        try:
+            if self.isVisible() and (self.job is None or self.job.finished):
+                self._kept_choice = True              # a live refresh keeps whatever is chosen now
+                self._live.start()
+        except RuntimeError:
+            pass
 
     def set_keys(self, keys):
         self._explicit = list(keys) if keys else None
+        self._kept_choice = False                       # new files given: they are the choice
         self.refresh()
 
     def _scope_options(self):
@@ -457,24 +554,28 @@ class BatchShotsDialog(QDialog):
         flagged = s.keys_with_review({REVIEW_FLAG}, rank=dock.model.row_of)
         opts = []
         if self._explicit:
-            opts.append((f"Selected files ({len(self._explicit):,})", list(self._explicit)))
-        opts.append((f"All flagged files ({len(flagged):,})", flagged))
+            opts.append((f"Selected files ({len(self._explicit):,})", list(self._explicit), "selected"))
+        opts.append((f"All flagged files ({len(flagged):,})", flagged, "flagged"))
         if dock.proxy.filtering():
             shown = dock.visible_keys()
             seen = set(shown)
             opts.append((f"Flagged files in the current list ({sum(k in seen for k in flagged):,})",
-                         [k for k in flagged if k in seen]))
-            opts.append((f"All files in the current list ({len(shown):,})", shown))
+                         [k for k in flagged if k in seen], "flagged_list"))
+            opts.append((f"All files in the current list ({len(shown):,})", shown, "list"))
         return opts
 
     def refresh(self):
-        cur = self.scope.currentText()
+        from PyQt6.QtCore import Qt
+        role = Qt.ItemDataRole.UserRole + 1
+        cur = self.scope.currentData(role) if self.scope.count() else None      # the kind, not the text (counts change)
         self.scope.blockSignals(True)
         self.scope.clear()
-        for text, keys in self._scope_options():
+        for i, (text, keys, kind) in enumerate(self._scope_options()):
             self.scope.addItem(text, keys)
-        i = self.scope.findText(cur)
-        self.scope.setCurrentIndex(i if i >= 0 and not self._explicit else 0)
+            self.scope.setItemData(i, kind, role)
+        want = "selected" if self._explicit and not getattr(self, "_kept_choice", False) else cur
+        i = self.scope.findData(want, role) if want else -1
+        self.scope.setCurrentIndex(i if i >= 0 else 0)
         self.scope.blockSignals(False)
         self.folder_lbl.setText(str(self.app.shots.folder / (self.app.session.root.name if self.app.session else "")))
         self._update()
@@ -488,7 +589,15 @@ class BatchShotsDialog(QDialog):
         elif not keys:
             self.note.setText("No files in this choice — flag files first (X), or select files in the file list.")
         else:
-            self.note.setText(f"{len(keys):,} file(s) · {self.app.shots.fmt.upper()} · the same folder layout as E.")
+            text = f"{len(keys):,} file(s) · {self.app.shots.fmt.upper()} · the same folder layout as E."
+            if hasattr(self, "auto"):
+                n = sum(1 for k in keys if self._choices().count(k))
+                self.auto_style.setEnabled(self.auto.isChecked())
+                if self.auto.isChecked():
+                    text += (f"<br>Auto-sketch: {n:,} file(s) with chosen shapes (saved as the whole image, other "
+                             "shapes hidden); the rest as usual." if n else
+                             "<br>Auto-sketch: no shapes chosen yet — <b>Choose shapes…</b>")
+            self.note.setText(text)
 
     def _change_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Screenshots folder", str(self.app.shots.folder))
@@ -501,6 +610,35 @@ class BatchShotsDialog(QDialog):
         return {"batch_view": view, "caption": self.caption.isChecked(), "sketch": self.sketch.isChecked(),
                 "existing": self.existing.currentData()}
 
+    def auto_options(self) -> dict:
+        from .autosketch_dialog import batch_options
+        o = batch_options(self.st)
+        o["auto"] = self.auto.isChecked()
+        o["style"] = self.auto_style.currentData()
+        return o
+
+    def _choices(self):
+        from AIO_QC.core.autosketch import ChoiceStore
+        s = self.app.session
+        st = getattr(s, "_autosketch", None)
+        if st is None:
+            st = s._autosketch = ChoiceStore(s.root)
+        return st
+
+    def choose_shapes(self):
+        from .autosketch_dialog import AutoSketchDialog
+        keys = self.scope.currentData() or []
+        if not keys:
+            return
+        self.st.setValue("screenshot/auto_style", self.auto_style.currentData())
+        dlg = AutoSketchDialog(self.app, keys, self)
+        dlg.optionsChanged.connect(lambda o: self.auto_style.setCurrentIndex(
+            max(0, self.auto_style.findData(o["style"]))))
+        dlg.exec()
+        if any(self._choices().count(k) for k in keys):
+            self.auto.setChecked(True)                       # shapes were chosen: that is what they are for
+        self._update()
+
     def start(self) -> BatchShots | None:
         keys = self.scope.currentData() or []
         if not keys or (self.job is not None and not self.job.finished):
@@ -508,7 +646,11 @@ class BatchShotsDialog(QDialog):
         o = self.options()
         for k, v in o.items():                       # the dialog's choices become the defaults (Settings)
             self.st.setValue(f"screenshot/{k}", v)
-        self.job = BatchShots(self.app, keys, o["batch_view"], o["caption"], o["sketch"], o["existing"])
+        ao = self.auto_options()
+        self.st.setValue("screenshot/auto", ao["auto"])
+        self.st.setValue("screenshot/auto_style", ao["style"])
+        self._choices().flush()
+        self.job = BatchShots(self.app, keys, o["batch_view"], o["caption"], o["sketch"], o["existing"], auto=ao)
         self.job.on_finished = lambda _j: self._update()
         self.job.start()
         self._update()

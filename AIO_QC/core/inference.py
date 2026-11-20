@@ -15,6 +15,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 SERVER = Path(__file__).with_name("infer_server.py")
 RESP_PREFIX = "@@AIOQC@@ "
@@ -49,29 +50,37 @@ class InferenceClient:
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                 errors="replace", bufsize=1, env=env)
         self._dead = None
-        threading.Thread(target=self._read_stdout, daemon=True).start()
-        threading.Thread(target=self._read_stderr, daemon=True).start()
+        # the readers get this process, not self.proc: close() clears self.proc while they may still be reading
+        threading.Thread(target=self._read_stdout, args=(self.proc,), daemon=True).start()
+        threading.Thread(target=self._read_stderr, args=(self.proc,), daemon=True).start()
 
-    def _read_stdout(self):
-        for line in self.proc.stdout:
-            if line.startswith(RESP_PREFIX):
-                try:
-                    msg = json.loads(line[len(RESP_PREFIX):])
-                except ValueError:
-                    continue
-                with self._cond:
-                    self._responses[msg.get("rid")] = msg
-                    self._cond.notify_all()
-            elif line.strip():
-                self.log(line.rstrip())        # stray C-level prints
+    def _read_stdout(self, proc):
+        try:
+            for line in proc.stdout:
+                if line.startswith(RESP_PREFIX):
+                    try:
+                        msg = json.loads(line[len(RESP_PREFIX):])
+                    except ValueError:
+                        continue
+                    with self._cond:
+                        self._responses[msg.get("rid")] = msg
+                        self._cond.notify_all()
+                elif line.strip():
+                    self.log(line.rstrip())        # stray C-level prints
+        except (ValueError, OSError):              # the pipe was closed under us (app exit)
+            pass
         with self._cond:
-            self._dead = f"inference process exited (code {self.proc.poll()})"
+            if self.proc is proc or self.proc is None:  # a newer process (restart) is not marked dead
+                self._dead = f"inference process exited (code {proc.poll()})"
             self._cond.notify_all()
 
-    def _read_stderr(self):
-        for line in self.proc.stderr:
-            if line.strip():
-                self.log(line.rstrip())
+    def _read_stderr(self, proc):
+        try:
+            for line in proc.stderr:
+                if line.strip():
+                    self.log(line.rstrip())
+        except (ValueError, OSError):
+            pass
 
     @property
     def alive(self) -> bool:
@@ -83,11 +92,12 @@ class InferenceClient:
         try:
             if self.alive:
                 self.request("shutdown", timeout=timeout)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         try:
             self.proc.wait(timeout=timeout)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             self.proc.kill()
         self.proc = None
 
@@ -123,6 +133,11 @@ class InferenceClient:
 
     def export(self, spec: dict) -> dict:
         return self.request("export", timeout=None, spec=spec)
+
+    def segment(self, model: str, image, boxes, timeout=900) -> list:
+        """SAM outlines of boxes on one image (the weights download on first use) -> [polygon | None]."""
+        return self.request("segment", timeout=timeout, model=str(model), image=str(image),
+                            boxes=[list(map(float, b[:4])) for b in boxes])["polygons"]
 
     def predict(self, images, ids, conf=0.05, batch=8, classes=None, cancel=None) -> dict:
         return self.request("predict", timeout=None, cancel=cancel, images=[str(p) for p in images], ids=list(ids),

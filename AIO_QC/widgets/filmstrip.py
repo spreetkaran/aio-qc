@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSize, Qt, QThreadPool, pyqtSignal
-from PyQt6.QtGui import QIcon, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QAbstractItemView, QListView, QListWidget, QListWidgetItem
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PyQt6.QtWidgets import (QAbstractItemView, QListView, QListWidget, QListWidgetItem, QStyle,
+                             QStyledItemDelegate)
 
 from AIO_QC.utils import theme_color, LRUCache
 from .workers import ThumbSignals, ThumbTask
@@ -15,7 +16,89 @@ WINDOW = 15            # files shown before / after the current one
 
 
 QWIDGETSIZE_MAX = 16777215
-STRIP_THICKNESS = THUMB + 46   # height when horizontal, width when vertical
+TILE_W, TILE_H = THUMB + 16, 63 + 40      # 3.0 mock-up: 16:9 thumbnail + the number under it
+STRIP_THICKNESS = TILE_H + 22            # height when horizontal, width when vertical
+
+
+class _TileDelegate(QStyledItemDelegate):
+    """A rounded 16:9 thumbnail, the review dot (on the picture) and the file's number in the mono font; the
+    current file has an accent frame on a soft accent tile."""
+
+    def sizeHint(self, opt, idx):
+        return QSize(TILE_W, TILE_H)
+
+    def paint(self, p, opt, idx):
+        from PyQt6.QtCore import QRect, QRectF
+        from PyQt6.QtGui import QFontMetrics, QPainterPath
+        from AIO_QC.widgets.design import mono, tokens
+        t = tokens()
+        r = opt.rect.adjusted(2, 2, -2, -2)
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        sel = bool(opt.state & QStyle.StateFlag.State_Selected)
+        hov = bool(opt.state & QStyle.StateFlag.State_MouseOver)
+        if sel:
+            p.setPen(QPen(QColor(t["accent"]), 2))
+            p.setBrush(QColor(t["accent_soft"]))
+            p.drawRoundedRect(QRectF(r).adjusted(1, 1, -1, -1), 7, 7)
+        elif hov:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t["hover"]))
+            p.drawRoundedRect(QRectF(r), 7, 7)
+        img = QRectF(r.left() + 6, r.top() + 6, r.width() - 12, 63)
+        clip = QPainterPath()
+        clip.addRoundedRect(img, 4, 4)
+        p.setClipPath(clip)
+        p.fillRect(img, QColor(t["track"]))
+        icon = idx.data(Qt.ItemDataRole.DecorationRole)
+        if icon is not None and hasattr(icon, "pixmap"):
+            pm = icon.pixmap(QSize(THUMB * 2, THUMB * 2))
+            if not pm.isNull():
+                sc = max(img.width() / pm.width(), img.height() / pm.height())     # fill the tile (centre crop)
+                w, h = pm.width() * sc, pm.height() * sc
+                p.drawPixmap(QRectF(img.center().x() - w / 2, img.center().y() - h / 2, w, h), pm,
+                             QRectF(pm.rect()))
+        p.setClipping(False)
+        fs = self.parent()
+        key = idx.data(Qt.ItemDataRole.UserRole)
+        st = fs.session.review.status(key) if getattr(fs, "session", None) is not None and key else None
+        if st is not None:                                # review mark: a dot inside the picture's corner
+            d = 10
+            p.setPen(QPen(QColor("#FFFFFF"), 1.6))
+            p.setBrush(QColor(t[{"ok": "ok", "fixed": "info"}.get(st, "warn")]))
+            p.drawEllipse(QRectF(img.right() - d - 5, img.top() + 5, d, d))
+        sess = getattr(fs, "session", None)
+        if sess is not None and key and sess.is_classification:  # a classifier image: its class on the picture
+            tags = sess.tags_of(key)
+            text = ", ".join(tags) if tags else "no class"
+            cf = QFont(p.font())
+            cf.setPixelSize(10)
+            cf.setWeight(QFont.Weight.DemiBold)
+            p.setFont(cf)
+            fm = QFontMetrics(cf)
+            text = fm.elidedText(text, Qt.TextElideMode.ElideRight, int(img.width()) - 26)
+            w, h = fm.horizontalAdvance(text) + 18, fm.height() + 1
+            chip = QRectF(img.left() + 3, img.bottom() - h - 3, w, h)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(20, 20, 24, 215))
+            p.drawRoundedRect(chip, h / 2, h / 2)
+            cols = fs.class_colors() if callable(getattr(fs, "class_colors", None)) else {}
+            col = QColor(cols.get(tags[0])) if tags and tags[0] in cols else QColor(t["faint"])
+            p.setBrush(col)
+            p.drawEllipse(QRectF(chip.left() + 5, chip.center().y() - 3.5, 7, 7))
+            p.setPen(QColor("white"))
+            p.drawText(chip.adjusted(14, 0, -3, 0), int(Qt.AlignmentFlag.AlignVCenter), text)
+        f = mono(12)
+        if sel:
+            f.setWeight(f.Weight.DemiBold)
+        p.setFont(f)
+        p.setPen(QColor(t["accent_text"] if sel else t["muted"]))
+        text = str(idx.data(Qt.ItemDataRole.DisplayRole) or "")
+        p.drawText(QRect(r.left(), int(img.bottom()) + 4, r.width(), r.bottom() - int(img.bottom()) - 4),
+                   int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                   QFontMetrics(f).elidedText(text, Qt.TextElideMode.ElideLeft, r.width() - 8))
+        p.restore()
 
 
 class Filmstrip(QListWidget):
@@ -34,6 +117,9 @@ class Filmstrip(QListWidget):
         self.setIconSize(QSize(THUMB, THUMB))
         self.setSpacing(4)
         self.setUniformItemSizes(True)
+        self.setItemDelegate(_TileDelegate(self))
+        self.setMouseTracking(True)
+        self.setFrameShape(QListView.Shape.NoFrame)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.vertical = None
         self.set_vertical(False)
@@ -43,6 +129,7 @@ class Filmstrip(QListWidget):
         self.signals.loaded.connect(self._on_loaded)
         self.generation = 0
         self.session = None
+        self.class_colors = None              # () -> {class: QColor}: classification datasets show the class
         self._inflight: set[str] = set()
         self._placeholder = self._blank()
 
@@ -64,7 +151,7 @@ class Filmstrip(QListWidget):
         if vertical:
             self.setMinimumHeight(0)
             self.setMaximumHeight(QWIDGETSIZE_MAX)
-            self.setFixedWidth(STRIP_THICKNESS)
+            self.setFixedWidth(TILE_W + 22)
         else:
             self.setMinimumWidth(0)
             self.setMaximumWidth(QWIDGETSIZE_MAX)
@@ -75,6 +162,8 @@ class Filmstrip(QListWidget):
 
     def set_session(self, session):
         self.session = session
+        if session is not None:                     # class chips / review dots follow changes made elsewhere
+            session.annotationsChanged.connect(lambda *_a: self.viewport().update())
         self.generation += 1
         self.cache.clear()
         self._inflight.clear()
@@ -108,20 +197,17 @@ class Filmstrip(QListWidget):
             self.scrollToItem(self.currentItem(), QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _label(self, key, sample) -> str:
-        name = sample.name if len(sample.name) <= 16 else sample.name[:7] + "…" + sample.name[-7:]
-        st = self.session.review.status(key)
-        return {"ok": "✓ ", "flag": "⚑ ", "fixed": "🔧 "}.get(st, "") + name
+        import os
+        import re
+        stem = os.path.splitext(sample.name)[0]
+        m = re.search(r"(\d{2,})$", stem)                # frame-like names: just the number (0012)
+        if m and len(stem) > 12:
+            return m.group(1)
+        return stem if len(stem) <= 16 else "…" + stem[-15:]
 
     def _decorate(self, pix: QPixmap, key: str) -> QPixmap:
-        st = self.session.review.status(key) if self.session else None
-        if st is None:
-            return pix
-        out = QPixmap(pix)
-        p = QPainter(out)
-        p.setPen(QPen(theme_color({"ok": "ok", "fixed": "info"}.get(st, "warn")), 4))
-        p.drawRect(out.rect().adjusted(2, 2, -2, -2))
-        p.end()
-        return out
+        """3.0: the tile painter draws the review dot (inside the picture's corner); the pixmap stays as loaded."""
+        return pix
 
     def _on_loaded(self, key, gen, img):
         self._inflight.discard(key)

@@ -109,7 +109,8 @@ def test_keep_zoom_other_sizes_no_drift(win, qtbot):
     c.animate_to(c.current_zoom * 2, center=QPointF(100, 100), duration=0)
     _go(w, qtbot, 0)
     assert abs(c.current_zoom - z0 * 2) < 1e-6
-    assert max(abs(a - b) for a, b in zip(_centre(c), (100 / 640, 100 / 480))) < 0.02
+    want = c.clamp_center(c.current_zoom, QPointF(100 / 640 * 320, 100 / 480 * 240))   # kept off the edge
+    assert max(abs(a - b) for a, b in zip(_centre(c), (want.x() / 320, want.y() / 240))) < 0.01
 
 
 def test_keep_zoom_home_and_fit(win, qtbot):

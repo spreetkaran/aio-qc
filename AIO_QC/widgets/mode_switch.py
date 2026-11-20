@@ -3,10 +3,9 @@
 """The switch in the menu-bar corner of every mode window: Frame Extractor | Image QC | Data Studio."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QToolButton, QWidget
 
-from AIO_QC.utils import newIcon, style as apply_style
 
 MODES = (("video", "Frame Extractor", "mode-video", "Videos — play, mark and extract frames for annotation"),
          ("image", "Image QC", "app", "Annotated image datasets — LabelMe / YOLO quality control"),
@@ -14,47 +13,57 @@ MODES = (("video", "Frame Extractor", "mode-video", "Videos — play, mark and e
 
 
 class ModeSwitch(QWidget):
+    """3.0: a grey segmented track; the active mode is a white pill (names only, as in the approved mock-up)."""
     switched = pyqtSignal(str)
 
     def __init__(self, current: str, parent=None):
         super().__init__(parent)
+        from AIO_QC.widgets.chrome import Segmented
         self.setObjectName("modeSwitch")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(4, 2, 6, 2)
+        lay.setContentsMargins(4, 3, 8, 3)
         lay.setSpacing(0)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.buttons = {}
-        for i, (key, text, icon, tip) in enumerate(MODES):
+        btns = []
+        for key, text, icon, tip in MODES:
             b = QToolButton()
-            b.setText(" " + text)                         # a little air between the icon and the name
-            b.setIcon(newIcon(icon))                      # app icons: every size shipped, sharp at any scaling
-            b.setProperty("aio_icon", icon)
-            b.setIconSize(QSize(16, 16))
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setText(text)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             b.setCheckable(True)
             b.setChecked(key == current)
             b.setToolTip(f"{text} — {tip}  (Ctrl+Alt+M switches)")
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            b.setObjectName("modeLeft" if i == 0 else "modeRight" if i == len(MODES) - 1 else "modeMid")
+            b.setMinimumHeight(26)
             b.clicked.connect(lambda _c=False, k=key: self._clicked(k))
             self.group.addButton(b)
             self.buttons[key] = b
-            lay.addWidget(b)
-        apply_style(self, "QToolButton{border:1px solid @line; padding:2px 10px; background:transparent;} "
-                          "QToolButton#modeLeft{border-top-left-radius:11px; border-bottom-left-radius:11px; "
-                          "border-right:none;} "
-                          "QToolButton#modeMid{border-right:none;} "
-                          "QToolButton#modeRight{border-top-right-radius:11px; border-bottom-right-radius:11px;} "
-                          "QToolButton:checked{background:@accent; color:white; border-color:@accent;} "
-                          "QToolButton:hover:!checked{background:@surface;}")
+            btns.append(b)
+        self.track = Segmented(btns)
+        from PyQt6.QtWidgets import QSizePolicy
+        self.track.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)   # never squeezed by the chip
+        from AIO_QC.widgets.training_monitor import TrainingChip
+        self.training_chip = TrainingChip(self)          # shows only while a model trains
+        lay.addWidget(self.training_chip)
+        lay.addSpacing(6)
+        lay.addWidget(self.track)
         self.current = current
-
     def _clicked(self, key):
         if key != self.current:
-            self.buttons[self.current].setChecked(True)          # the window that opens shows its own switch
+            # the pill glides here first; the page that comes to the front continues the same glide
             self.switched.emit(key)
+            if self.current != key:                              # not switched (e.g. a mode that can't run)
+                self.buttons[self.current].setChecked(True)
 
-    def set_current(self, key):
+    def set_current(self, key, from_key=None, animate=True):
+        """The window that comes to the front shows its pill gliding over from the mode before."""
         self.current = key
-        self.buttons[key].setChecked(True)
+        b = self.buttons[key]
+        b.blockSignals(True)
+        b.setChecked(True)
+        b.blockSignals(False)
+        if animate and from_key in self.buttons and from_key != key:
+            self.track.glide_to(b, self.buttons[from_key])
+        else:
+            self.track.snap()

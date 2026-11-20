@@ -134,6 +134,103 @@ def new_box(ann, rect_px, label: str, W, H) -> dict:
     return shape
 
 
+def new_polygon(ann, pts_px: list, label: str, W, H) -> dict:
+    """A new polygon (≥ 3 corners, pixels). A YOLO file that holds boxes is a detection file: a polygon row there
+    would mix detection and segmentation, so it is refused (draw a box instead)."""
+    if len(pts_px) < 3:
+        raise EditRefused("a polygon needs at least 3 corners")
+    if ann.normalized and any(stype(s) == "rectangle" for s in ann.shapes if not s.get("_error")):
+        raise EditRefused("this YOLO file holds boxes (detection) — a polygon would mix in a segmentation row; "
+                          "draw a box (B) instead")
+    shape = {"label": label, "points": from_px(ann, [[float(x), float(y)] for x, y in pts_px], W, H),
+             "group_id": None, "description": "", "shape_type": "polygon", "flags": {},
+             "_row": None, "_class_id": None, "_geom_dirty": True, "_new": True}
+    if not ann.normalized and ann.shapes:          # LabelMe: same keys as the file's other shapes (5.x / 6.x)
+        for k, v in ann.shapes[0].items():
+            if k.startswith("_") or k in shape:
+                continue
+            shape[k] = {} if isinstance(v, dict) else [] if isinstance(v, list) else "" if isinstance(v, str) else None
+    if ann.normalized:
+        for k in ("group_id", "description", "flags"):
+            shape.pop(k, None)
+    ann.shapes.append(shape)
+    return shape
+
+
+def fit_points(pts_px: list, W, H, dx: float = 0.0, dy: float = 0.0) -> list | None:
+    """Points moved by (dx, dy) and brought inside a W × H image: shifted back in as a whole when they fit, else
+    clamped to the edges. None when nothing with a size is left (a shape from a larger image, fully outside)."""
+    pts = [[float(x) + dx, float(y) + dy] for x, y in pts_px]
+    if not pts:
+        return None
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    sx = -min(xs) if min(xs) < 0 else (W - max(xs) if max(xs) > W else 0.0)
+    sy = -min(ys) if min(ys) < 0 else (H - max(ys) if max(ys) > H else 0.0)
+    if max(xs) - min(xs) > W:
+        sx = 0.0
+    if max(ys) - min(ys) > H:
+        sy = 0.0
+    had_size = max(xs) - min(xs) >= 1 or max(ys) - min(ys) >= 1
+    pts = [[min(max(x + sx, 0.0), float(W)), min(max(y + sy, 0.0), float(H))] for x, y in pts]
+    if had_size and len(pts) > 1 and max(p[0] for p in pts) - min(p[0] for p in pts) < 1 \
+            and max(p[1] for p in pts) - min(p[1] for p in pts) < 1:
+        return None                                  # squashed onto an edge (a shape that was tiny stays as it was)
+    return pts
+
+
+def copy_shape(ann, idx: int, W, H) -> dict:
+    """A shape as clipboard data: image pixels + everything LabelMe keeps with it (group, flags, description, mask)."""
+    sh = ann.shapes[idx]
+    return {"label": str(sh.get("label", "")), "shape_type": stype(sh),
+            "points": to_px(ann, sh.get("points") or [], W, H), "group_id": sh.get("group_id"),
+            "description": sh.get("description") or "", "flags": dict(sh.get("flags") or {}),
+            "extra": {k: v for k, v in sh.items()
+                      if not k.startswith("_") and k not in ("label", "shape_type", "points", "group_id",
+                                                             "description", "flags")
+                      and isinstance(v, (str, int, float, bool, type(None), list, dict))}}
+
+
+def paste_shape(ann, src: dict, pts_px: list, W, H, can_use=None) -> dict:
+    """A copied shape into this file, as this file's format allows:
+    LabelMe  any shape type, with its group id, flags, description (keys shaped like the file's other shapes)
+    YOLO     a box (a 4-point polygon in a file of polygons) or a polygon (not into a file of boxes: that would mix
+             detection and segmentation); other types have no YOLO form."""
+    label = str(src.get("label", "")).strip()
+    if not label:
+        raise EditRefused("a shape without a label")
+    if can_use is not None and not can_use(label):
+        raise EditRefused(f"'{label}' is not a class of this dataset")
+    st = src.get("shape_type") or "polygon"
+    need = NUM_POINTS.get(st)
+    if (need is not None and len(pts_px) != need) or len(pts_px) < MIN_POINTS.get(st, 1):
+        raise EditRefused(f"a {st} with {len(pts_px)} point(s)")
+    if st == "rectangle":
+        (x1, y1), (x2, y2) = pts_px
+        if abs(x2 - x1) < 1 or abs(y2 - y1) < 1:
+            raise EditRefused("the box would be empty here")
+    if ann.normalized:
+        if st == "rectangle":
+            (x1, y1), (x2, y2) = pts_px
+            return new_box(ann, (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)), label, W, H)
+        if st == "polygon":
+            return new_polygon(ann, pts_px, label, W, H)
+        raise EditRefused(f"a {st} has no YOLO form")
+    shape = {"label": label, "points": from_px(ann, pts_px, W, H), "group_id": src.get("group_id"),
+             "description": src.get("description") or "", "shape_type": st, "flags": dict(src.get("flags") or {}),
+             "_row": None, "_class_id": None, "_geom_dirty": True, "_new": True}
+    extra = src.get("extra") or {}
+    if ann.shapes:                                 # same keys as the file's other shapes (labelme 5.x / 6.x)
+        for k, v in ann.shapes[0].items():
+            if k.startswith("_") or k in shape:
+                continue
+            shape[k] = extra[k] if k in extra else (
+                {} if isinstance(v, dict) else [] if isinstance(v, list) else "" if isinstance(v, str) else None)
+    if st == "mask" and "mask" in extra:
+        shape["mask"] = extra["mask"]
+    ann.shapes.append(shape)
+    return shape
+
+
 # ---------------------------------------------------------------------- undo / redo
 @dataclass
 class Step:
@@ -154,6 +251,9 @@ class EditHistory:
         self.undo_stack: list[Step] = []
         self.redo_stack: list[Step] = []
         self.max_steps, self.max_bytes = max_steps, max_bytes
+        # one file for many images (COCO): a step's path is "unit::<key>" and these read / write that image's part
+        self.unit_read = None                  # key -> bytes
+        self.unit_write = None                 # (key, bytes | None) -> None
 
     def _size(self) -> int:
         return sum(len(s.before or b"") + len(s.after or b"") for s in self.undo_stack + self.redo_stack)
@@ -170,8 +270,10 @@ class EditHistory:
     def can_redo(self) -> bool:
         return bool(self.redo_stack)
 
-    @staticmethod
-    def _write(path: str, data: bytes | None):
+    def _write(self, path: str, data: bytes | None):
+        if str(path).startswith("unit::") and self.unit_write is not None:
+            self.unit_write(str(path)[6:], data)
+            return
         p = Path(path)
         if data is None:
             if p.exists():
@@ -181,9 +283,13 @@ class EditHistory:
         tmp.write_bytes(data)
         os.replace(tmp, p)
 
-    @staticmethod
-    def _is(path: str, data: bytes | None, sig) -> bool:
+    def _is(self, path: str, data: bytes | None, sig) -> bool:
         """Does the file hold exactly `data` now? (signature first — cheap — then the bytes)"""
+        if str(path).startswith("unit::") and self.unit_read is not None:
+            try:
+                return self.unit_read(str(path)[6:]) == data
+            except Exception:
+                return False
         if sig is not None and file_sig(path) == sig:
             return True
         p = Path(path)
@@ -204,7 +310,7 @@ class EditHistory:
                               "the newer version)")
         self._write(st.path, st.before)
         self.undo_stack.pop()
-        st.before_sig = file_sig(st.path)
+        st.before_sig = None if str(st.path).startswith("unit::") else file_sig(st.path)
         self.redo_stack.append(st)
         return st
 
@@ -217,7 +323,7 @@ class EditHistory:
             raise EditRefused(f"{Path(st.path).name} changed since the undo — not redone")
         self._write(st.path, st.after)
         self.redo_stack.pop()
-        st.after_sig = file_sig(st.path)
+        st.after_sig = None if str(st.path).startswith("unit::") else file_sig(st.path)
         self.undo_stack.append(st)
         return st
 

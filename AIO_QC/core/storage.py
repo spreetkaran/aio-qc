@@ -25,6 +25,7 @@ from pathlib import Path
 from .backups import BackupStore, folder_bytes, legacy_folders, migrate_legacy
 from .io import TRASH_DIR_NAME
 from .state import STATE_DIR
+from AIO_QC.core.diag import ignored as _ignored
 
 DEFAULTS = {
     "backup_days": 30,        # delete backups older than this (0 = keep forever)
@@ -75,8 +76,8 @@ def usage(root, cache=None) -> list[Part]:
             tb = cache.table_bytes()
             detail = " · ".join(f"{k} {v[0]:,}" for k, v in tb.items() if k != "paths")
             items = cache.signatures()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     parts.append(Part("cache", "Cache (rebuilt automatically when needed)", size, detail, items))
 
     # backups
@@ -220,6 +221,7 @@ def housekeeping(root, cache=None, cfg: dict | None = None, alive_paths=None, ke
                     if n:
                         notes.append(f"cache forgot {n:,} row(s) of files no longer in the dataset")
         except Exception as exc:              # the cache is an optimisation: never fail housekeeping for it
+            _ignored(exc)
             notes.append(f"cache maintenance skipped ({exc})")
     clean_temp(root)
     after = dir_bytes(root)

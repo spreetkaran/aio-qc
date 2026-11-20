@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     import cv2
@@ -76,7 +77,8 @@ def render(path, boxes=(), max_side: int = 360, quality: int = 82, label_text: b
             out = io.BytesIO()
             im.save(out, "JPEG", quality=quality)
             return out.getvalue()
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 

@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔧 Fix in Editor — open flagged files in labelme (primary) or labelImg (secondary, YOLO boxes) and sync every
+ Fix in Editor — open flagged files in labelme (primary) or labelImg (secondary, YOLO boxes) and sync every
 save back into the dataset (see core.edit_session for the safety rules).
 
-Page 1  Setup    files · editor · version (+ Add source zip…) · image data · environment status
-Page 2  Session  install progress → live table of files (waiting / fixed / unchanged / rejected / conflict)
+Page 1 Setup files · editor · version (+ Add source zip…) · image data · environment status
+Page 2 Session install progress → live table of files (waiting / fixed / unchanged / rejected / conflict)
                  · editor log · Reopen editor · Sync now · Undo session · Finish
 """
 from __future__ import annotations
 
-from AIO_QC.core.dataset import DETECTION_TYPES, DatasetType
+from AIO_QC.core.dataset import FILE_TYPES, DatasetType
 
 import html
 import time
@@ -36,6 +36,7 @@ from AIO_QC.utils import later
 from .inference_service import FuncWorker
 from .process_runner import StepRunner, clean_process_env
 from .mini_session import FrameAnimator, Ghost, MiniSessionWindow, lerp_rect
+from AIO_QC.core.diag import ignored as _ignored
 
 STATUS_UI = {  # status -> (text, theme role, icon)
     "waiting": ("waiting", "muted", "review-next"),
@@ -51,8 +52,8 @@ POLL_MS = 700
 
 
 class EditorSessionDialog(QDialog):
-    TITLE, ICON = "Fix in Editor", "🔧"
-    SUPPORTED = DETECTION_TYPES | {DatasetType.CLS_LABELME}     # class folders have nothing to edit
+    TITLE, ICON = "Fix in Editor", ""
+    SUPPORTED = FILE_TYPES | {DatasetType.CLS_LABELME, DatasetType.CLS_FOLDERS}  # class folders: a flag per class
 
     def __init__(self, app, keys: list[str] | None = None, resume: Path | None = None):
         super().__init__(app)
@@ -74,7 +75,8 @@ class EditorSessionDialog(QDialog):
         self.setWindowIcon(newIcon("tool-editor"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMinimizeButtonHint |
                             Qt.WindowType.WindowMaximizeButtonHint)       # minimise = in-app mini window
-        self.resize(int(app.width() * 0.62), int(app.height() * 0.72))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_setup())
@@ -406,7 +408,7 @@ class EditorSessionDialog(QDialog):
             self._refresh_setup()
             i = next((i for i in range(self.version.count()) if self.version.itemData(i).version == src.version), 0)
             self.version.setCurrentIndex(i)
-            extra = f"\n\nPatched for modern Python:\n• " + "\n• ".join(src.patches) if src.patches else ""
+            extra = "\n\nPatched for modern Python:\n• " + "\n• ".join(src.patches) if src.patches else ""
             QMessageBox.information(self, self.TITLE, f"Added {src.title}.{extra}")
 
         def failed(msg):
@@ -510,6 +512,8 @@ class EditorSessionDialog(QDialog):
         ad = s.base_adapter
         if s.is_yolo:
             names, hints = list(ad.class_names), None
+        elif s.is_classification:                  # the editor shows one flag per class, in the class order
+            names, hints = list(s.cls_classes()), None
         else:
             names = list(s.user_classes or [])
             hints = sorted(s.label_totals(raw=True))
@@ -723,7 +727,6 @@ class EditorSessionDialog(QDialog):
         def step(t):
             ghost.setGeometry(lerp_rect(start, target, t))
             ghost.opacity = 1.0 - 0.8 * t
-            ghost.update()
 
         def done():
             ghost.hide()
@@ -762,7 +765,6 @@ class EditorSessionDialog(QDialog):
             def step(t):
                 ghost.setGeometry(lerp_rect(start, end, t))
                 ghost.opacity = 0.2 + 0.8 * t
-                ghost.update()
 
             def done():
                 self.setWindowState(Qt.WindowState.WindowNoState)
@@ -785,7 +787,9 @@ class EditorSessionDialog(QDialog):
         g = getattr(self, "_ghost_w", None)
         if g is None:
             g = self._ghost_w = Ghost(self.app, pix)
-        g.pix, g.opacity = pix, 1.0
+        else:
+            g.set_pixmap(pix)
+        g.opacity = 1.0
         self._last_snapshot = pix
         g.setGeometry(rect)
         g.show()
@@ -799,6 +803,20 @@ class EditorSessionDialog(QDialog):
             self._minimising = True
             QTimer.singleShot(0, self._minimise_to_mini)
         super().changeEvent(e)
+
+    def custom_minimise(self):
+        """The window's own minimise button: straight into the in-app mini window (no taskbar round trip); before a
+        session has started, into the shelf like every feature window."""
+        if self.es is None:
+            from AIO_QC.widgets import window_shelf
+            if not window_shelf.shelve(self):
+                self.showMinimized()
+            return
+        self.to_mini(self.grab())
+
+    def handles_minimise(self) -> bool:
+        """A running session minimises into its own mini window (changeEvent), not the shelf."""
+        return self.es is not None
 
     def _minimise_to_mini(self):
         try:
@@ -876,11 +894,15 @@ class EditorSessionDialog(QDialog):
             es.mark_seen(e)
             self._paint_row(e)
             return
+        if es.class_folders:                           # class folders: the ticked flag is the class; the image moves
+            self._apply_class_folder(es, e, upd)
+            return
         try:
             es.backup_original(e, sample)
             s.locked.pop(e.key, None)                  # our own write is allowed
             s.write_external(e.key, lambda ann: (upd.apply(ann), True)[1])
         except Exception as exc:
+            _ignored(exc)
             e.status, e.message = "error", f"could not write: {exc}"
             es.mark_seen(e)
             self._paint_row(e)
@@ -891,6 +913,44 @@ class EditorSessionDialog(QDialog):
         es.after_write(e, sample, upd.summary)
         s.set_review([e.key], REVIEW_FIXED, f"Fixed in {es.source_title} · {time.strftime('%Y-%m-%d %H:%M')} · "
                                             f"{upd.summary}")
+        self._paint_row(e)
+
+    def _apply_class_folder(self, es, e, upd):
+        """A class-folder image edited in the editor: the ticked flag is its class — the image moves to that class
+        folder through AIO QC (review mark, caches and history follow; Ctrl+Z undoes it)."""
+        from types import SimpleNamespace
+        s = self.app.session
+        sample = s.by_key.get(e.key)
+        ns = SimpleNamespace(shapes=[], raw={}, tags=list(s.tags_of(e.key)),
+                             image_path=sample.image_path if sample is not None else None)
+        upd.apply(ns)
+        new = [t for t in dict.fromkeys(ns.tags) if t]
+        if len(new) != 1:
+            e.status, e.message = "rejected", ("tick exactly one class (flag) — an image in a class folder has one "
+                                               "class; fix it in the editor and save again")
+            es.mark_seen(e)
+            self._paint_row(e)
+            return
+        old_key = e.key
+        s.locked.pop(old_key, None)
+        try:
+            done, errors = s.set_tags([old_key], tags=new, what=f"class → {new[0]} ({es.source_title})")
+        except Exception as exc:                       # noqa: BLE001 — shown in the row
+            done, errors = [], [str(exc)]
+        if errors:
+            if es.active:
+                s.locked[old_key] = es.source_title
+            e.status, e.message = "error", f"could not change the class: {errors[0]}"
+            es.mark_seen(e)
+            self._paint_row(e)
+            return
+        if done and done[0] != old_key:
+            e.key = done[0]                            # the image moved: follow it
+        if es.active:
+            s.locked[e.key] = es.source_title
+        es.after_write(e, s.by_key.get(e.key), f"class → {new[0]}")
+        s.set_review([e.key], REVIEW_FIXED, f"Fixed in {es.source_title} · {time.strftime('%Y-%m-%d %H:%M')} · "
+                                            f"class → {new[0]}")
         self._paint_row(e)
 
     def _editor_closed(self, code, _status, failed: bool = False):

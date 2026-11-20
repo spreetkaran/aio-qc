@@ -3,7 +3,7 @@
 """
 Shapes / Review tab tools (dialogs). The tab a tool appears in is defined in app.QC_TOOLS.
 
-    📐 Dimension / Area filter · 🚨 Outliers · 🧠 Smart Filter
+     Dimension / Area filter · Outliers · Smart Filter
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from AIO_QC.utils import later
 from .base_scan import BaseScanDialog, ResultRow, dspin, ispin
 from .charts import ScatterBrush, StripChart
 from .card_gallery import Card, CardView, Panel, Shape, box_points
+from AIO_QC.core.diag import ignored as _ignored
 
 NO_LIMIT = "∞"
 
@@ -61,7 +62,7 @@ class DimAreaDialog(BaseScanDialog):
     with the size / area / label limits; “Selection…” acts on it like on any other selection.
     """
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
-    TITLE, ICON = "Dim / Area", "📐"
+    TITLE, ICON = "Dim / Area", ""
     HELP = ("Scan once, then drag a rectangle on the scatter (or type limits) to find shapes of a given size — "
             f"e.g. the cloud of tiny boxes in the bottom-left corner. Max {NO_LIMIT} = no limit. Region: draw where in "
             "the picture (images of one exact size only). Deleting shapes updates everything in place.")
@@ -98,7 +99,7 @@ class DimAreaDialog(BaseScanDialog):
         form.addRow("Unit:", self.unit)
         form.addRow(grid_w)
         self.add_action("↺ Clear limits", self._clear_limits, "Show every shape")
-        self.sel_btn = self.add_action("🧹 Selection…", self._act_on_selection,
+        self.sel_btn = self.add_action("Selection…", self._act_on_selection,
                                        "Delete, relabel or flag EVERY shape inside the drawn rectangle (and the "
                                        "Area / Label limits) — not just the rows shown in the table")
         self.add_action("🗑 Delete ticked", self._delete_ticked, "Delete only the ticked (or selected) shapes")
@@ -125,7 +126,8 @@ class DimAreaDialog(BaseScanDialog):
         ll.addWidget(self.scatter, 1)
         self.views = QTabWidget()
         self.views.addTab(left, "Size")
-        self.views.addTab(self._build_region_panel(), "Region")
+        from AIO_QC.utils.qt_utils import scrolled
+        self.views.addTab(scrolled(self._build_region_panel()), "Region")     # scrolls only on short screens
         self.views.setTabToolTip(1, "Keep only the shapes in a part of the picture — images of one exact size")
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.views)
@@ -327,7 +329,8 @@ class DimAreaDialog(BaseScanDialog):
                     from .workers import load_qimage
                     ann = self.session.adapter.load(s)
                     img = load_qimage(None, ann.image_data)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 img = None
             self.bg_label.setText(f"{self._bg_i + 1}/{len(self._bg_keys)} · {s.name if s else ''}")
             self.bg_label.setToolTip(s.display if s else key)
@@ -449,7 +452,8 @@ class DimAreaDialog(BaseScanDialog):
             return
         try:                                       # exact pixel size of THIS image (Region view)
             psize = ad.image_size(s, ann)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             psize = None
         pw, ph = (int(psize[0]), int(psize[1])) if psize else (0, 0)
         fid = ctx["fid_of"].setdefault(s.key, len(ctx["fid_of"]))
@@ -737,6 +741,7 @@ class DimAreaDialog(BaseScanDialog):
                 try:
                     self._measure(extra, s, extra)
                 except Exception as exc:
+                    _ignored(exc)
                     self.errors.append(f"{s.name}: {exc}")
         for f in self.LIST_FIELDS:
             d[f] = list(d[f]) + extra[f]
@@ -827,7 +832,7 @@ METRICS = ["area", "width", "height", "aspect ratio (w/h)"]
 
 class OutlierDialog(BaseScanDialog):
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
-    TITLE, ICON = "Outliers", "🚨"
+    TITLE, ICON = "Outliers", ""
     HELP = ("Per-class IQR on (log) shape size relative to the image, so mixed resolutions are comparable. "
             "Flags shapes far outside their class's typical range — often wrong labels, merged/split boxes or "
             "stray clicks. Classes with fewer samples than the minimum are skipped.")
@@ -977,8 +982,8 @@ class OutlierDialog(BaseScanDialog):
 # 🧠 Smart filter
 # =============================================================================
 class SmartFilterDialog(BaseScanDialog):
-    SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
-    TITLE, ICON = "Smart Filter", "🧠"
+    SUPPORTED = None                     # classification: classes per image (multi-label: with A and B, not C …)
+    TITLE, ICON = "Smart Filter", ""
     HELP = ("File-level query: files containing any/all of the included labels, none of the excluded ones, "
             "and an object count in range. Push the result to the file list to review one by one.")
     COLUMNS = ["Objects", "Labels"]
@@ -1028,7 +1033,7 @@ class SmartFilterDialog(BaseScanDialog):
         for sp in self.session.splits:
             self.split.addItem(sp, sp)
         form.addRow(lists)
-        form.addRow("Objects per file:", rng)
+        form.addRow("Classes per image:" if self.session.is_classification else "Objects per file:", rng)
         if self.session.splits:
             form.addRow("Split:", self.split)
         if not labels:
@@ -1039,7 +1044,8 @@ class SmartFilterDialog(BaseScanDialog):
         return {w.item(i).text() for i in range(w.count()) if w.item(i).checkState() == Qt.CheckState.Checked}
 
     def make_context(self):
-        return {"adapter": self.session.adapter, "inc": self._checked(self.include),
+        return {"adapter": self.session.adapter, "cls": self.session.is_classification,
+                "inc": self._checked(self.include),
                 "all": self.inc_mode.currentIndex() == 1, "exc": self._checked(self.exclude),
                 "min": self.min_obj.value(), "max": self.max_obj.value() or math.inf,
                 "split": self.split.currentData() or ""}
@@ -1047,7 +1053,8 @@ class SmartFilterDialog(BaseScanDialog):
     def scan_sample(self, ctx, s):
         if ctx["split"] and s.split != ctx["split"]:
             return []
-        counts = ctx["adapter"].load(s, light=True).label_counts()
+        ann = ctx["adapter"].load(s, light=True)
+        counts = Counter(ann.tags or []) if ctx["cls"] else ann.label_counts()    # a classifier: its classes
         n = sum(counts.values())
         present = set(counts)
         if not ctx["min"] <= n <= ctx["max"]:
@@ -1060,5 +1067,8 @@ class SmartFilterDialog(BaseScanDialog):
             return []
         return [ResultRow(s.key, (n, ", ".join(f"{l}×{c}" for l, c in counts.most_common())))]
 
+    def columns_for(self, ctx):
+        return ["Classes", "Class(es)"] if (ctx or {}).get("cls") else None
+
     def summarize(self):
-        return f"{len([r for r in self.rows if r]):,} matching file(s) — use 👁 Show in file list to review"
+        return f"{len([r for r in self.rows if r]):,} matching file(s) — use Show in file list to review"

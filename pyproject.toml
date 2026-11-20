@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=77", "wheel"]   # 77+: SPDX `license` + `license-files` (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aio-qc"                       # the PyPI name: check it is free at https://pypi.org/project/aio-qc/
+name = "aio-qc"
 dynamic = ["version"]                 # read from AIO_QC/__init__.py (__version__): bump it in one place
 description = "Find and fix annotation errors in LabelMe and YOLO datasets before training: one desktop app for dataset QC, video frame extraction and table analysis"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "GPL-3.0-only"          # SPDX (PEP 639); bundled third-party: THIRD_PARTY_NOTICES.md, licenses/
+license = "GPL-3.0-only"              # SPDX expression (PEP 639; no License classifier any more)
 license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Preetkaran Singh" }]
 keywords = ["annotation", "quality control", "labelme", "yolo", "dataset", "computer vision", "qc", "video", "frame extraction", "model evaluation"]
@@ -39,16 +39,29 @@ data = ["pandas>=2.0", "pyarrow>=14", "openpyxl>=3.1"]        # Data Studio (tab
 video = ["av>=11", "imageio-ffmpeg>=0.4.9", "Pillow>=9.5", "psutil>=5.9", "py7zr>=0.20; sys_platform == 'win32'"]   # Frame Extractor: PyAV decoder (VFR /
                                                                            # exact seeking), bundled ffmpeg (clips,
                                                                            # real-time playback, search), CPU budget
+augment = ["albumentations>=1.4", "imgaug>=0.4"]              # Image Augmentation: extra effects (optional — the 48
+                                                              # built-in ones need nothing)
 models = ["onnxruntime>=1.16", "PyYAML>=6.0", "Pillow>=9.5"]   # ONNX models in-app (Testing, Frame Extractor);
                                                                 # .pt / .engine run in their own Python environment
 # libmpv (optional playback engine of the Frame Extractor) is not a pip package: Settings ▸ Playback, or put
 # libmpv-2.dll / libmpv.so.2 next to the app (AIO_QC/tools/frame_extractor/lib/README.txt).
 
+[dependency-groups]
+# Development tools (PEP 735) — not installed for users. `uv sync` installs this group by default; with pip 25.1+:
+# pip install -e . --group dev
+dev = ["pytest>=8", "pytest-qt>=4.4", "pytest-cov>=5", "pytest-timeout>=2.3", "ruff>=0.6"]
+build = ["pyinstaller>=6.6"]          # standalone builds: uv run --group build python packaging/build.py
+
+[tool.uv]
+# `uv sync` sets up everything a developer needs: the app, every optional part (video, models, tables …) and the
+# dev tools, from uv.lock — the same versions on Windows, macOS and Linux.
+default-groups = ["dev"]
+
 [project.urls]
 Homepage = "https://github.com/spreetkaran/aio-qc"
 Issues = "https://github.com/spreetkaran/aio-qc/issues"
-Releases = "https://github.com/spreetkaran/aio-qc/releases/tag/v2.4.0"
 Changelog = "https://github.com/spreetkaran/aio-qc/blob/main/AIO_QC/CHANGES.md"
+Download = "https://github.com/spreetkaran/aio-qc/releases"
 
 [project.gui-scripts]
 aio-qc = "AIO_QC.__main__:main"       # `aio-qc` command (no console window on Windows)
@@ -57,7 +70,7 @@ aio-qc = "AIO_QC.__main__:main"       # `aio-qc` command (no console window on W
 aio-qc-console = "AIO_QC.__main__:main"   # same app, with a console (logs visible) — handy for troubleshooting
 
 [tool.setuptools]
-include-package-data = true                 # everything MANIFEST.in lists
+include-package-data = true                 # with MANIFEST.in
 
 [tool.setuptools.dynamic]
 version = { attr = "AIO_QC.__version__" }
@@ -68,11 +81,41 @@ include = ["AIO_QC*"]
 
 [tool.setuptools.package-data]
 # the bundled LabelMe / labelImg sources ("Fix in Editor") are not importable packages — ship them as data, whole
-"AIO_QC" = ["editors/**/*", "icons/**/*", "fonts/**/*", "validators/**/*", "CHANGES.md",
-            "INTEGRATION.md", "tools/frame_extractor/docs/**/*", "tools/frame_extractor/icons/**/*",
+"AIO_QC" = ["editors/**/*", "icons/**/*", "fonts/**/*", "validators/**/*", "CHANGES.md", "INTEGRATION.md",
+            "tools/frame_extractor/docs/**/*", "tools/frame_extractor/icons/**/*",
             "tools/frame_extractor/lib/**/*"]
 "*" = ["*.svg", "*.png", "*.ico", "*.ttf", "*.otf", "*.woff", "*.json", "*.yaml", "*.md", "*.txt", "*.zip",
        "*.toml", "*.qrc", "*.ui", "*.cfg", "*.py", "*.html"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.pyc"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["AIO_QC/editors/sources"]      # vendored LabelMe / labelImg: kept as released
+
+[tool.ruff.lint]
+select = ["E9", "F"]                             # syntax errors and pyflakes (unused / undefined names …)
+ignore = ["F403", "F405"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]                      # re-exports
+"tests/**" = ["F811"]                            # pytest fixtures imported by name
+
+[tool.coverage.run]
+# .cov_runner: where test runs put the copy of the training runner (AIOQC_RUNNER_DIR, see tests/conftest.py)
+source = ["AIO_QC", ".cov_runner"]
+omit = ["AIO_QC/editors/sources/*", "*/__main__.py", "*/.cov_runner/aioqc_augment.py"]
+concurrency = ["thread"]
+# the model servers and the training runner are separate Python processes: measure them too (they write their own
+# data files, combined at the end)
+patch = ["subprocess"]
+parallel = true
+
+[tool.coverage.paths]
+runner = ["AIO_QC/core/", ".cov_runner/", "*/.cov_runner/"]
+
+[tool.coverage.report]
+skip_empty = true
+precision = 1

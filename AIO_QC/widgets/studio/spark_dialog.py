@@ -15,6 +15,7 @@ from AIO_QC.core.tabular import spark as SP
 from AIO_QC.utils import newButton, style as apply_style
 
 from .step_form import _mono
+from AIO_QC.core.diag import ignored as _ignored
 
 
 class SparkDialog(QDialog):
@@ -38,8 +39,8 @@ class SparkDialog(QDialog):
             from AIO_QC.core.env_manager import discover_envs
             for name, exe in discover_envs():
                 self.py.addItem(f"{name} — {exe}", exe)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         last = settings.value("studio/spark_python", "") or ""
         if last:
             i = self.py.findData(last)
@@ -122,6 +123,7 @@ class SparkDialog(QDialog):
         try:
             r = SP.probe(py)
         except Exception as exc:
+            _ignored(exc)
             r = {"pyspark": None, "error": str(exc)}
         if r.get("pyspark"):
             java = "" if r.get("java") else " · ⚠ Java not found (JAVA_HOME / java on PATH) — local Spark needs it"

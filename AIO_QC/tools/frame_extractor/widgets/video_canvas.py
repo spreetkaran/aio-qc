@@ -46,7 +46,9 @@ class CanvasMixin:
         self._zoom = 1.0
         self._cx = self._cy = 0.0
         self._roi = None
-        self._dets = []         # [(x1, y1, x2, y2, text, QColor, dashed)] in video pixels
+        self._dets = []         # [(x1, y1, x2, y2, text, QColor, dashed[, badge])] in video pixels (det_paint)
+        self._det_opts = {"fill": False, "labels": True, "scale": 1.0, "shade": False, "glide": False, "thin": False}
+        self._det_painter = None
         self._hud = None        # timecode overlay lines (bottom-left)
         self._stats = None      # playback statistics lines (top-right)
         self._roi_mode = False
@@ -107,7 +109,69 @@ class CanvasMixin:
 
     def set_detections(self, dets):
         self._dets = list(dets or [])
+        if not self._dets and self._det_painter is not None:
+            self._det_painter.reset()
         self.update()
+
+    def _det_hover(self, pos, ev):
+        """Hovering a box: its model, class, confidence and size — the smallest box under the pointer."""
+        if not self._dets or not self._has_picture():
+            if getattr(self, "_det_tip", None):
+                self._det_tip = None
+                from PyQt6.QtWidgets import QToolTip
+                QToolTip.hideText()
+            return
+        vx, vy = self.w2v(pos.x(), pos.y())
+        under = [d for d in self._dets if d[0] <= vx <= d[2] and d[1] <= vy <= d[3]
+                 and not (len(d) > 9 and d[9] == "class")]              # a classifier's answer is not a box
+        from PyQt6.QtWidgets import QToolTip
+        if not under:
+            if getattr(self, "_det_tip", None):
+                self._det_tip = None
+                QToolTip.hideText()
+            return
+        d = min(under, key=lambda d: (d[2] - d[0]) * (d[3] - d[1]))
+        badge = d[7] if len(d) > 7 else None
+        model = badge[2] if badge and len(badge) > 2 else ""
+        tip = ((f"{model}\n" if model else "") + f"{d[4] or '(label hidden)'}\n"
+               f"{d[2] - d[0]:.0f} × {d[3] - d[1]:.0f} px at {d[0]:.0f}, {d[1]:.0f}" +
+               ("\nnot analysed on this frame — interpolated / held" if d[6] else "") +
+               (f"\n{len(under) - 1} more box(es) here" if len(under) > 1 else ""))
+        if tip != getattr(self, "_det_tip", None):
+            self._det_tip = tip
+            QToolTip.showText(ev.globalPosition().toPoint(), tip, self)
+
+    def set_detection_style(self, fill=None, labels=None, scale=None, shade=None, glide=None, thin=None):
+        """Light fill, labels on / off, label size factor, confidence shading, gliding labels, thin outlines — for
+        every detection overlay."""
+        for k, v in (("fill", fill), ("labels", labels), ("scale", scale), ("shade", shade), ("glide", glide),
+                     ("thin", thin)):
+            if v is not None:
+                self._det_opts[k] = v
+        self.update()
+
+    def frame_with_detections(self):
+        """The frame at full video resolution with the detections drawn (as on screen) — None without a frame."""
+        from PyQt6.QtGui import QImage, QPainter
+        from AIO_QC.tools.frame_extractor.widgets import det_paint
+        bgr = self._bgr
+        if bgr is not None:
+            import numpy as np
+            a = np.ascontiguousarray(bgr[:, :, ::-1]) if bgr.ndim == 3 else np.ascontiguousarray(bgr)
+            h, w = a.shape[:2]
+            fmt = QImage.Format.Format_RGB888 if a.ndim == 3 else QImage.Format.Format_Grayscale8
+            img = QImage(a.data, w, h, a.strides[0], fmt).copy()
+        elif self._image is not None and self._vw:
+            img = self._image.scaled(self._vw, self._vh).convertToFormat(QImage.Format.Format_RGB888)
+        else:
+            return None
+        p = QPainter(img)
+        o = self._det_opts
+        det_paint.paint(p, self._dets, lambda x, y: QPointF(x, y), QRectF(0, 0, img.width(), img.height()),
+                        det_paint.font_pt_for(img.height(), o["scale"]) * 1.3, o["fill"], True,
+                        line_w=max(2.0, img.height() / 400), shade=o["shade"])     # a saved frame: always labelled
+        p.end()
+        return img
 
     def set_text(self, text):
         self._image = self._bgr = None
@@ -388,20 +452,15 @@ class CanvasMixin:
     def _paint_dets(self, p):
         if not self._dets:
             return
-        f = QFont(self.font())
-        f.setPointSize(8)
-        p.setFont(f)
-        fm = p.fontMetrics()
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for x1, y1, x2, y2, text, color, dashed in self._dets:
-            r = QRectF(self.v2w(x1, y1), self.v2w(x2, y2))
-            p.setPen(QPen(color, 2, Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine))
-            p.drawRect(r)
-            tw, th = fm.horizontalAdvance(text) + 6, fm.height()
-            tr = QRectF(r.left(), r.top() - th if r.top() - th > 0 else r.top(), tw, th)
-            p.fillRect(tr, color)
-            p.setPen(QColor(255, 255, 255))
-            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, text)
+        from AIO_QC.tools.frame_extractor.widgets import det_paint
+        o = self._det_opts
+        if self._det_painter is None:
+            self._det_painter = det_paint.Painter()           # remembers label spots from frame to frame
+        moving = self._det_painter.paint(p, self._dets, self.v2w, QRectF(self.rect()),
+                                         det_paint.font_pt_for(self.height(), o["scale"]), o["fill"], o["labels"],
+                                         line_w=1.5 if o["thin"] else 2.0, shade=o["shade"], glide=o["glide"])
+        if moving:
+            QTimer.singleShot(16, self.update)                # a label is still gliding into place
 
     def _paint_hud(self, p):
         from PyQt6.QtGui import QFontDatabase
@@ -513,6 +572,7 @@ class CanvasMixin:
             self.cursor_moved.emit((int(vx), int(vy)) if inside and self._has_picture() else None)
         d = self._drag
         if d is None:
+            self._det_hover(pos, ev)
             if self._roi_mode:
                 hit = self._hit(pos)
                 self.setCursor(self._CURSORS.get(hit, Qt.CursorShape.CrossCursor))

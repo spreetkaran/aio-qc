@@ -27,11 +27,13 @@ import cv2
 import numpy as np
 
 from AIO_QC.tools.frame_extractor.core.imageio import imread
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     import onnxruntime as ort
     HAVE_ORT = True
-except Exception:  # pragma: no cover
+except Exception as _exc:  # pragma: no cover
+    _ignored(_exc)
     ort = None
     HAVE_ORT = False
 
@@ -182,8 +184,47 @@ def _rows(boxes):
     return np.asarray(boxes or [], np.float32).reshape(-1, 6)
 
 
+def cls_rows(top, w, h) -> np.ndarray:
+    """A classifier's answer for one frame as detection rows: one whole-frame row per class, best first —
+    [0, 0, w, h, conf, class]. Everything that stores, samples or draws detections handles it as it is; scoring
+    (core.testing.cls_eval) reads class + conf, the player shows the best one as the frame's label."""
+    rows = [[0.0, 0.0, float(w), float(h), float(c), float(k)] for k, c in top]
+    return np.asarray(rows, np.float32).reshape(-1, 6)
+
+
+def is_cls_rows(arr, w=None, h=None) -> bool:
+    """Rows of a classifier (every row spans the whole frame from 0, 0)."""
+    a = np.asarray(arr) if arr is not None else None
+    if a is None or a.ndim != 2 or not len(a):
+        return False
+    return bool(np.all(a[:, 0] == 0) and np.all(a[:, 1] == 0) and np.all(a[:, 2] == a[0, 2])
+                and np.all(a[:, 3] == a[0, 3]) and (w is None or abs(a[0, 2] - w) < 1))
+
+
+def _cls_blob(frames, size):
+    """Ultralytics' classification transform: shorter side -> size, centre crop size x size, RGB, 0 … 1."""
+    out = []
+    for f in frames:
+        h, w = f.shape[:2]
+        k = size / max(1, min(h, w))
+        nw, nh = max(size, round(w * k)), max(size, round(h * k))
+        r = cv2.resize(f, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        x0, y0 = (nw - size) // 2, (nh - size) // 2
+        out.append(r[y0:y0 + size, x0:x0 + size])
+    return cv2.dnn.blobFromImages(out, 1 / 255.0, swapRB=True)
+
+
+def _softmax_rows(p: np.ndarray) -> np.ndarray:
+    p = np.asarray(p, np.float32).reshape(len(p), -1)
+    if np.all(p >= 0) and np.allclose(p.sum(1), 1.0, atol=1e-2):     # already probabilities (exported softmax)
+        return p
+    e = np.exp(p - p.max(1, keepdims=True))
+    return e / e.sum(1, keepdims=True)
+
+
 class YoloDetector:
     max_det = 300
+    task = "detect"                 # "classify": a -cls model (detect_batch -> whole-frame rows, cls_rows)
 
     def __init__(self, path, conf=0.25, iou=0.45, imgsz=0, device="auto", threads=0):
         self.path = path
@@ -203,7 +244,12 @@ class YoloDetector:
                                   f"or export once: yolo export model={os.path.basename(path)} format=onnx")
             self._ul = YOLO(path)
             self.names = _parse_names(self._ul.names)
-            self.imgsz = self.imgsz or (640, 640)
+            self.task = getattr(self._ul, "task", "detect") or "detect"
+            if not self.imgsz:                       # the size it was trained at (train_args), not a fixed 640
+                tr = (getattr(self._ul, "overrides", None) or {}).get("imgsz") or \
+                     ((getattr(self._ul, "ckpt", None) or {}).get("train_args") or {}).get("imgsz")
+                tr = max(tr) if isinstance(tr, (list, tuple)) else tr
+                self.imgsz = (int(tr), int(tr)) if tr else (640, 640)
             self.provider = "ultralytics"
         elif ext == ".onnx":
             if HAVE_ORT:
@@ -231,6 +277,9 @@ class YoloDetector:
         self._fp16 = "float16" in inp.type
         meta = self._sess.get_modelmeta().custom_metadata_map
         self.names = _parse_names(meta.get("names"))
+        oshape = self._sess.get_outputs()[0].shape
+        if meta.get("task") == "classify" or (len(oshape) == 2 and meta.get("task") in (None, "classify")):
+            self.task = "classify"                    # (batch, classes): a classifier
         if not self.imgsz:
             shp = inp.shape
             if isinstance(shp[2], int) and isinstance(shp[3], int):
@@ -256,10 +305,35 @@ class YoloDetector:
         return np.column_stack([b[keep], np.asarray(scores, np.float32)[keep],
                                 np.asarray(cls, np.float32)[keep]]).astype(np.float32).reshape(-1, 6)
 
+    def classify_batch(self, frames, k=5):
+        """A classifier: list of BGR frames -> per frame [(class id, conf), …] best first (top k)."""
+        if self._ul is not None:
+            res = self._ul.predict(list(frames), imgsz=self.imgsz[0], verbose=False)
+            out = []
+            for r in res:
+                p = getattr(r, "probs", None)
+                out.append([] if p is None else [(int(c), float(v)) for c, v in
+                                                  zip(list(p.top5)[:k], p.top5conf.cpu().numpy().tolist()[:k])])
+            return out
+        size = int(self.imgsz[0])
+        if self._sess is not None and getattr(self, "dynamic_batch", False) and len(frames) > 1:
+            probs = _softmax_rows(self._forward(_cls_blob(frames, size)))
+        else:
+            probs = np.concatenate([_softmax_rows(self._forward(_cls_blob([f], size))) for f in frames]) \
+                if frames else np.zeros((0, 1), np.float32)
+        out = []
+        for p in probs:
+            top = np.argsort(-p)[:k]
+            out.append([(int(c), float(p[c])) for c in top])
+        return out
+
     def detect_batch(self, frames, conf=None):
         """List of BGR frames -> list of (n, 6) float32 arrays (model class ids). One forward pass per batch
-        when the ONNX model has a dynamic batch axis (or ultralytics in-process); else frame by frame."""
+        when the ONNX model has a dynamic batch axis (or ultralytics in-process); else frame by frame.
+        A classifier: its top classes as whole-frame rows (cls_rows)."""
         conf = self.conf if conf is None else conf
+        if self.task == "classify":
+            return [cls_rows(t, f.shape[1], f.shape[0]) for t, f in zip(self.classify_batch(frames), frames)]
         if self._ul is not None:
             res = self._ul.predict(list(frames), conf=conf, iou=self.iou, imgsz=self.imgsz[0], max_det=self.max_det,
                                    verbose=False)
@@ -298,6 +372,10 @@ class YoloDetector:
     def detect(self, bgr, conf=None):
         conf = self.conf if conf is None else conf
         h, w = bgr.shape[:2]
+        if self.task == "classify":                    # the frame's best class, as a whole-frame detection
+            top = (self.classify_batch([bgr], k=1) or [[]])[0]
+            return [Detection(0.0, 0.0, float(w), float(h), float(c), int(k), self.name_of(k), self.label)
+                    for k, c in top if c >= conf]
         if self._ul is not None:
             r = self._ul.predict(bgr, conf=conf, iou=self.iou, imgsz=self.imgsz[0], verbose=False)[0]
             b = r.boxes
@@ -334,8 +412,8 @@ def shutdown_clients():
     for c in list(_CLIENTS.values()):
         try:
             c.close(timeout=3)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     _CLIENTS.clear()
 
 
@@ -383,9 +461,24 @@ class RemoteDetector:
     def name_of(self, c):
         return self.names.get(int(c), str(int(c)))
 
+    def classify_batch(self, frames, k=5, cancel=None):
+        """A classifier (served): per frame [(class id, conf), …] best first."""
+        res = self.client.predict_frames(frames, [self.id], conf=0.0, batch=self.batch, cancel=cancel)
+        out = []
+        for r in res:
+            p = (r.get("probs") or {}).get(self.id)
+            if p is None and r.get("error"):
+                raise RuntimeError(r["error"])
+            out.append([(int(c), float(v)) for c, v in (p or [])[:k]])
+        return out
+
     def detect_batch(self, frames, conf=None, cancel=None):
-        """In-memory frames (shared memory, batched on the server) -> list of (n, 6) float32 arrays."""
+        """In-memory frames (shared memory, batched on the server) -> list of (n, 6) float32 arrays.
+        A classifier: its top classes as whole-frame rows (cls_rows)."""
         conf = self.conf if conf is None else conf
+        if self.task == "classify":
+            return [cls_rows(t, f.shape[1], f.shape[0])
+                    for t, f in zip(self.classify_batch(frames, cancel=cancel), frames)]
         res = self.client.predict_frames(frames, [self.id], conf=conf, batch=self.batch, cancel=cancel)
         out = []
         for r in res:
@@ -401,12 +494,22 @@ class RemoteDetector:
         out = []
         for p in paths:
             r = res.get(str(p)) or {}
+            if self.task == "classify":                   # whole-image classes, as whole-frame rows
+                top = (r.get("probs") or {}).get(self.id)
+                out.append(None if top is None and r.get("error") else
+                           cls_rows([(int(c), float(v)) for c, v in (top or [])], r.get("w") or 0, r.get("h") or 0))
+                continue
             boxes = (r.get("by_model") or {}).get(self.id)
             out.append(None if boxes is None and r.get("error") else _rows(boxes))
         return out
 
     def detect(self, bgr, conf=None):
         conf = self.conf if conf is None else conf
+        if self.task == "classify":
+            h, w = bgr.shape[:2]
+            top = (self.classify_batch([bgr], k=1) or [[]])[0]
+            return [Detection(0.0, 0.0, float(w), float(h), float(c), int(k), self.name_of(k), self.label)
+                    for k, c in top if c >= conf]
         p = _FrameFile.path_for(bgr)
         res = self.client.predict_arrays([p], [self.id], conf=conf)[p]
         if res.get("error") and not res["by_model"].get(self.id):
@@ -425,8 +528,8 @@ def model_backend(path, env_python=""):
         import importlib.util
         if importlib.util.find_spec("ultralytics"):
             return "ultralytics (in-process)"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     return "needs environment"
 
 
@@ -495,20 +598,54 @@ def _unmatched(a, b, thr):
 
 
 # ------------------------------------------------------- pre-annotations
-def write_labelme(json_path, image_name, w, h, dets, flags=None):
+def write_labelme(json_path, image_name, w, h, dets, flags=None, source=None):
     import json
-    shapes = [{
-        "label": d.name,
-        "points": [[round(d.x1, 2), round(d.y1, 2)], [round(d.x2, 2), round(d.y2, 2)]],
-        "group_id": None,
-        "description": f"conf={d.conf:.3f} model={d.model}",
-        "shape_type": "rectangle",
-        "flags": {},
-    } for d in dets]
+    from AIO_QC.core import provenance as PV
+    origins = {}
+    shapes = []
+    for d in dets:
+        sh = {"label": d.name,
+              "points": [[round(d.x1, 2), round(d.y1, 2)], [round(d.x2, 2), round(d.y2, 2)]],
+              "group_id": None,
+              "description": f"conf={d.conf:.3f} model={d.model}",
+              "shape_type": "rectangle",
+              "flags": {}}
+        if PV.enabled():
+            o = origins.get(d.model)
+            if o is None:
+                o = origins[d.model] = PV.make_origin("model", "Frame Extractor pre-labels", model=str(d.model or ""))
+            sh[PV.KEY] = PV.shape_record(o, score=d.conf)
+        shapes.append(sh)
     data = {"version": "5.2.1", "flags": flags or {}, "shapes": shapes, "imagePath": image_name,
             "imageData": None, "imageHeight": int(h), "imageWidth": int(w)}
+    PV.stamp_labelme(data, o=PV.make_origin("model", "Frame Extractor pre-labels"), old=None, source=source)
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+
+def class_answer(dets, conf=0.0):
+    """A classifier's detections for a frame (whole-frame rows) -> its best class name when sure enough, else None."""
+    best = max(dets or [], key=lambda d: d.conf, default=None)
+    return best.name if best is not None and best.conf >= conf else None
+
+
+def write_class_labelme(json_path, image_name, w, h, cls_name=None, reasons=()):
+    """A classifier's pre-annotation: a LabelMe file with no shapes whose flag names the image's class (unsure:
+    no flag set — Image QC lists it under "no class"). Mining reasons are kept under their own key."""
+    import json
+    data = {"version": "5.2.1", "flags": {cls_name: True} if cls_name else {}, "shapes": [], "imagePath": image_name,
+            "imageData": None, "imageHeight": int(h), "imageWidth": int(w)}
+    if reasons:
+        data["aio_mined"] = list(reasons)
+    from AIO_QC.core import provenance as PV
+    PV.stamp_labelme(data, o=PV.make_origin("model", "Frame Extractor pre-labels",
+                                            detail=f"class {cls_name}" if cls_name else "no sure class"), old=None)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def class_dir(name: str) -> str:
+    return "".join("_" if c in '<>:"/\\|?*' else c for c in str(name)).strip(" .") or "_"
 
 
 def write_yolo(txt_path, w, h, dets):

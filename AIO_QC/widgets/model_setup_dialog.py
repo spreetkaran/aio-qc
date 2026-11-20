@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🤖 Models & Environment
+ Models & Environment
 
 Tab 1 · Environment: pick an existing Python env (conda / venv / system; auto-discovered or browsed),
         check it (Python, ultralytics, torch + CUDA devices, sahi), or build a TEMPORARY env — optionally
@@ -39,7 +39,7 @@ from .base_scan import dspin, ispin, readable_table
 
 MODEL_COLORS = ["#ff2bd6", "#00b7ff", "#ffae00", "#5bd900", "#b36bff", "#ff5252", "#00d5a0", "#ffd400"]
 IMGSZ_PRESETS = [0, 320, 416, 512, 640, 768, 960, 1024, 1280, 1536, 1920]
-OK, BAD, WARN = "✅", "❌", "⚠️"
+OK, BAD, WARN = "", "", "⚠️"
 
 
 def model_color(i: int) -> str:
@@ -150,11 +150,11 @@ class ClassMapDialog(QDialog):
             box.setValidator(labelValidator())
             self.table.setCellWidget(r, 2, box)
             self.combos[cid] = box
-        auto = newButton("✨ Auto-match", slot=lambda: self._auto())
+        auto = newButton("Auto-match", slot=lambda: self._auto())
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        info = QLabel("Map each model class to a dataset label (as shown in the viewer, i.e. after 🔀 label mapping). "
+        info = QLabel("Map each model class to a dataset label (as shown in the viewer, i.e. after label mapping)."
                       "'(ignore)' classes are skipped entirely.")
         info.setWordWrap(True)
         lay = QVBoxLayout(self)
@@ -185,15 +185,17 @@ class ModelSetupDialog(QDialog):
         self.app, self.svc, self.session = app, app.inference, app.session
         self.setWindowTitle("Models & Environment")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(int(app.width() * 0.7), int(app.height() * 0.88))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
         self.proc: QProcess | None = None
         self.steps: list = []
         self.models: list[dict] = list((load_models_config(self.session.root) if self.session else {}).get("models", []))
         self._busy_count = 0
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_env_tab(), "1 · Environment")
-        tabs.addTab(self._build_models_tab(), "2 · Models")
+        from AIO_QC.utils.qt_utils import scrolled
+        tabs.addTab(scrolled(self._build_env_tab(), horizontal=True), "1 · Environment")   # scroll on small screens
+        tabs.addTab(scrolled(self._build_models_tab(), horizontal=True), "2 · Models")
         self.tabs = tabs
 
         # console ---------------------------------------------------------------
@@ -401,11 +403,11 @@ class ModelSetupDialog(QDialog):
                                     + ("its PyTorch can be reused, so only the missing packages are downloaded."
                                        if info.get("torch") else "PyTorch will be installed too."))
         else:
-            self._log("✅ Environment is ready.")
+            self._log("Environment is ready.")
 
     def _on_probe_failed(self, err):
         self._busy(False)
-        self._log(f"❌ {err}")
+        self._log(f"{err}")
         self._refresh_env_status()
 
     def _refresh_env_status(self):
@@ -490,7 +492,7 @@ class ModelSetupDialog(QDialog):
     def _on_step_finished(self, code, _status):
         self.proc = None
         if code != 0:
-            self._log(f"❌ step failed (exit code {code})")
+            self._log(f"step failed (exit code {code})")
             return self._install_finished(False)
         self._step += 1
         self._run_next_step()
@@ -499,6 +501,19 @@ class ModelSetupDialog(QDialog):
         if self.proc is not None:
             self._log("⏹ cancelling…")
             self.proc.kill()
+
+    def _kill_proc(self):
+        """Stop the running step for good: its finished handler must not run on a closing dialog, and Qt must
+        never destroy a process that is still running."""
+        p, self.proc = self.proc, None
+        if p is None:
+            return
+        try:
+            p.finished.disconnect()
+        except TypeError:
+            pass
+        p.kill()
+        p.waitForFinished(3000)
 
     def _install_finished(self, ok):
         self._busy(False)
@@ -515,7 +530,7 @@ class ModelSetupDialog(QDialog):
         if self.svc.temp_env and self.svc.temp_env != str(env_dir):
             remove_env(Path(self.svc.temp_env))
         self.svc.set_temp_env(str(env_dir), self.delete_on_exit.isChecked())
-        self._log(f"✅ Installed in {mins:.1f} min ({dir_size_mb(env_dir):,.0f} MB). "
+        self._log(f"Installed in {mins:.1f} min ({dir_size_mb(env_dir):,.0f} MB). "
                   + ("It will be deleted when AIO QC closes." if self.delete_on_exit.isChecked() else ""))
         self.check_env(str(env_python(env_dir)))
         self._refresh_state()
@@ -530,7 +545,7 @@ class ModelSetupDialog(QDialog):
             self.svc.set_python("")
         self.svc.stop()
         ok = remove_env(path)
-        self._log(f"{'✅ removed' if ok else '❌ could not remove'} {path}")
+        self._log(f"{'removed' if ok else 'could not remove'} {path}")
         if ok:
             self.svc.set_temp_env("", self.delete_on_exit.isChecked())
         self._refresh_state()
@@ -825,7 +840,7 @@ class ModelSetupDialog(QDialog):
             m["runtime"] = fmt
             self._save()
             self._refresh_models()
-            self._log(f"✅ {fmt} ready in {res.get('seconds')}s → {dest} (now used for {m['name']})")
+            self._log(f"{fmt} ready in {res.get('seconds')}s → {dest} (now used for {m['name']})")
 
         self.svc.run_async(run, done, self._failed)
 
@@ -882,11 +897,11 @@ class ModelSetupDialog(QDialog):
             n_ok = sum(1 for v in loaded.values() if v.get("ok"))
             dt = time.monotonic() - t0
             if n_ok == len(loaded):
-                self._log(f"✅ {n_ok}/{len(loaded)} model(s) ready in {dt:.1f}s")
+                self._log(f"{n_ok}/{len(loaded)} model(s) ready in {dt:.1f}s")
             else:
                 for v in loaded.values():
                     if not v.get("ok"):
-                        self._log(f"❌ {v.get('id')}: {v.get('error', 'could not be loaded')}")
+                        self._log(f"{v.get('id')}: {v.get('error', 'could not be loaded')}")
                 self._log(f"⚠ {n_ok}/{len(loaded)} model(s) ready in {dt:.1f}s - see the errors above")
             if then:
                 then()
@@ -920,7 +935,7 @@ class ModelSetupDialog(QDialog):
             self._busy(False)
             r = res.get(str(img)) or next(iter(res.values()))
             if r.get("error"):
-                self._log(f"❌ {r['error']}")
+                self._log(f"{r['error']}")
             overlay, counts = [], []
             for mid in ids:
                 boxes = r["by_model"].get(mid) or []
@@ -949,7 +964,7 @@ class ModelSetupDialog(QDialog):
     # ------------------------------------------------------------------ misc
     def _failed(self, err):
         self._busy(False)
-        self._log(f"❌ {err}")
+        self._log(f"{err}")
         self._refresh_models()
 
     def _busy(self, on: bool):
@@ -965,7 +980,7 @@ class ModelSetupDialog(QDialog):
         n = sum(1 for m in self.models if m.get("enabled", True))
         env = Path(svc.python).parent.parent.name if svc.python else "—"
         tmp = " (temporary)" if svc.temp_env and svc.python.startswith(svc.temp_env) else ""
-        ready = "✅ ready" if svc.ready else ("⚠ missing: " + ", ".join(svc.missing()) if svc.info else "⚪ not checked")
+        ready = "ready" if svc.ready else ("⚠ missing: " + ", ".join(svc.missing()) if svc.info else "⚪ not checked")
         self.state.setText(f"Env: <b>{env}</b>{tmp} · {ready} · mode: <b>{svc.mode}</b> · device: "
                            f"<b>{svc.opts['device']}</b> · models: <b>{n}</b>")
         if svc.temp_env and Path(svc.temp_env).exists():
@@ -985,7 +1000,7 @@ class ModelSetupDialog(QDialog):
                     != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self.proc.kill()
+            self._kill_proc()
         self._save()
         for sig, slot in ((self.svc.log, self._log), (self.svc.changed, self._refresh_state)):
             try:

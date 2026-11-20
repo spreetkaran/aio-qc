@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🎯 QC sampling: review a random (stratified) sample instead of every file, and get a statistically
+ QC sampling: review a random (stratified) sample instead of every file, and get a statistically
 sound estimate of the dataset's error rate with a pass / fail verdict.
 
 Workflow: create sample → it opens as a file-list filter → review with S (OK) / X (flag) →
@@ -44,7 +44,8 @@ class SamplingDialog(QDialog):
         self.app, self.session = app, app.session
         self.plan: SamplePlan | None = None
         self.setWindowTitle(self.TITLE)
-        self.resize(int(app.width() * 0.55), int(app.height() * 0.8))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
 
         # ---------------------------------------------------------------- create
         create = QGroupBox("1 · Create a sample")
@@ -111,7 +112,7 @@ class SamplingDialog(QDialog):
         self.existing = QComboBox()
         self.existing.currentIndexChanged.connect(self._load_selected)
         show = newButton("👁 Show in file list", slot=lambda: self.show_in_list())
-        nxt = newButton("⏭ Next unreviewed", slot=lambda: self.next_unreviewed(), tip="Also: N in the main window")
+        nxt = newButton("Next unreviewed", slot=lambda: self.next_unreviewed(), tip="Also: N in the main window")
         p.addWidget(QLabel("Sample:"))
         p.addWidget(self.existing, 1)
         p.addWidget(show)
@@ -163,8 +164,18 @@ class SamplingDialog(QDialog):
         r.addWidget(self.table, 1)
 
         lay = QVBoxLayout(self)
-        lay.addWidget(create)
-        lay.addWidget(pick)
+        from PyQt6.QtWidgets import QSizePolicy
+        from AIO_QC.utils.qt_utils import scrolled
+        steps = QWidget()                         # 1 and 2: whole on a tall screen, scrolling on a short one
+        stl = QVBoxLayout(steps)
+        stl.setContentsMargins(0, 0, 0, 0)
+        stl.addWidget(create)
+        stl.addWidget(pick)
+        top_area = scrolled(steps)
+        top_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        top_area.setMaximumHeight(steps.sizeHint().height() + 2)
+        top_area.setMinimumHeight(min(200, steps.sizeHint().height()))
+        lay.addWidget(top_area)
         lay.addWidget(res, 1)
         self.session.reviewChanged.connect(self.update_results)
         self._recompute()
@@ -262,7 +273,7 @@ class SamplingDialog(QDialog):
             if self.session.review.status(k) is None:
                 self.app.open_sample(k)
                 return
-        QMessageBox.information(self, self.TITLE, "Every file in this sample has been reviewed. 🎉")
+        QMessageBox.information(self, self.TITLE, "Every file in this sample has been reviewed. ")
 
     # ---------------------------------------------------------------- results
     def update_results(self, *_):
@@ -277,8 +288,8 @@ class SamplingDialog(QDialog):
         self.progress.setRange(0, max(est.target, 1))
         self.progress.setValue(est.reviewed)
         text, score = {
-            "pass": ("✅ PASS", 1.0), "fail": ("❌ FAIL", 0.0),
-            "undecided": ("⏳ Keep reviewing", 0.5), "not started": ("— not started", None),
+            "pass": ("PASS", 1.0), "fail": ("FAIL", 0.0),
+            "undecided": ("Keep reviewing", 0.5), "not started": ("— not started", None),
         }[est.verdict]
         self.verdict.setText(text)
         if score is None:

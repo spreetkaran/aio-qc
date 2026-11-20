@@ -1,8 +1,8 @@
 # conda-forge recipe for AIO QC — submit to https://github.com/conda-forge/staged-recipes as recipes/aio-qc/meta.yaml
 # (after the release is on PyPI: the source is the PyPI sdist). Fill the sha256 with:
-#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-2.4.0.tar.gz | sha256sum
+#   curl -sL https://pypi.io/packages/source/a/aio-qc/aio-qc-3.0.0.tar.gz | sha256sum
 {% set name = "aio-qc" %}
-{% set version = "2.4.0" %}
+{% set version = "3.0.0" %}
 
 package:
   name: {{ name|lower }}
@@ -24,12 +24,12 @@ requirements:
   host:
     - python {{ python_min }}
     - pip
-    - setuptools >=77
+    - setuptools >=68
     - wheel
   run:
     - python >={{ python_min }}
     # Qt 6 bindings: check the conda-forge name first (`conda search -c conda-forge pyqt6` / anaconda.org) —
-    # if PyQt6 is not packaged there, conda-forge will not accept the recipe.
+    # if PyQt6 is not packaged there, conda-forge will not accept the recipe; see PUBLISHING.md for alternatives.
     - pyqt6 >=6.5
     - numpy >=1.23
     - opencv >=4.7                  # conda-forge name of OpenCV with Python bindings

@@ -21,8 +21,9 @@ from pathlib import Path
 
 from loguru import logger
 from PyQt6.QtCore import QThread, QThreadPool, QTimer, QtMsgType, qInstallMessageHandler
+from AIO_QC.core.diag import ignored as _ignored
 
-_STATE = {"reason": None, "code": None, "start": time.time(), "crash_file": None}
+_STATE = {"reason": None, "code": None, "start": time.time(), "crash_file": None, "prev_crash": ""}
 _ORPHANS: set = set()                   # threads detached from a closing window: kept alive until they finish
 
 
@@ -39,12 +40,53 @@ def retain(thread):
     thread.finished.connect(lambda t=thread: _RUNNING.discard(t))
 
 
+def detach(thread):
+    """A running thread must never be deleted with the window or dialog it belongs to: Qt deletes a widget's
+    children BEFORE it says it is going (so there is no moment to rescue them), and deleting a running QThread
+    aborts the whole app ("QThread: Destroyed while thread … is still running"). So a thread is owned by Python
+    from start() until it finishes: no Qt parent, a strong reference, its owner remembered for stop_threads()."""
+    import weakref
+    p = thread.parent()
+    if p is not None:
+        try:
+            thread._aioqc_owner = weakref.ref(p)
+        except TypeError:
+            thread._aioqc_owner = lambda p=p: p
+        thread.setParent(None)
+    retain(thread)
+
+
+def owner_of(thread):
+    ref = getattr(thread, "_aioqc_owner", None)
+    o = ref() if ref is not None else None
+    try:
+        from PyQt6 import sip
+        if o is not None and sip.isdeleted(o):
+            return None
+    except ImportError:
+        pass
+    return o if o is not None else thread.parent()
+
+
 class RetainedThread:
-    """Mixin for QThread subclasses: start() also retain()s the thread until it finishes."""
+    """Mixin for EVERY QThread subclass of the app: start() names it (for the log), takes it out of its window's
+    ownership and keeps it alive until it finishes (detach()); deleteLater() of a running one waits for its end."""
 
     def start(self, *a):
-        retain(self)
+        if not self.objectName():
+            self.setObjectName(type(self).__name__)
+        detach(self)
         super().start(*a)
+
+    def deleteLater(self):
+        try:
+            running = self.isRunning()
+        except RuntimeError:
+            return
+        if running:                                  # never delete a running thread: try again shortly
+            QTimer.singleShot(100, self.deleteLater)
+            return
+        super().deleteLater()
 
 
 def set_exit_reason(reason: str, override: bool = False):
@@ -137,11 +179,15 @@ def _install_crash_hooks(log_dir: Path):
 
     sys.unraisablehook = unraisable
     # native crashes (segfaults in C extensions / Qt): Python cannot log them, faulthandler writes the stack
-    crash = Path(log_dir) / "aio_qc_crash.log"
+    crash = Path(log_dir) / "aio-qc-crash.log"
     try:
         if crash.is_file() and crash.stat().st_size > 0:
             logger.warning(f"The previous run ended with a native crash — see {crash}")
-            crash.rename(crash.with_name(f"aio_qc_crash_{time.strftime('%Y%m%d_%H%M%S')}.log"))
+            try:
+                _STATE["prev_crash"] = crash.read_text(encoding="utf-8", errors="replace")[:20000]
+            except OSError:
+                pass
+            crash.rename(crash.with_name(f"aio-qc-crash-{time.strftime('%Y-%m-%d_%H-%M-%S')}.log"))
         fh = open(crash, "w", encoding="utf-8")
         faulthandler.enable(file=fh, all_threads=True)
         _STATE["crash_file"] = (crash, fh)
@@ -167,8 +213,13 @@ def _at_exit():
             pass
     try:
         logger.complete()
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
+
+
+def previous_crash() -> str:
+    """The native-crash dump of the previous run ("" when it ended normally)."""
+    return _STATE.get("prev_crash") or ""
 
 
 def install(app, log_dir: str | Path = "."):
@@ -195,6 +246,20 @@ def stop_threads(owner, why: str = "", timeout_ms: int = 3000) -> int:
     """Stop the owner's running QThreads before the owner is destroyed. Never destroys a running thread: a thread that
     does not finish in time is detached and kept alive until it ends (logged). Returns how many were running."""
     running = [t for t in owner.findChildren(QThread) if t.isRunning()]
+    for t in list(_RUNNING):                         # threads detached at start() that belong to this owner
+        try:
+            if t in running or not t.isRunning():
+                continue
+        except RuntimeError:
+            continue
+        o = owner_of(t)
+        while o is not None and o is not owner:
+            try:
+                o = o.parent()
+            except RuntimeError:
+                o = None
+        if o is owner:
+            running.append(t)
     for t in running:
         name = thread_name(t)
         logger.debug(f"stopping {name}" + (f" ({why})" if why else ""))
@@ -203,8 +268,8 @@ def stop_threads(owner, why: str = "", timeout_ms: int = 3000) -> int:
             if callable(fn):
                 try:
                     fn()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
         ev = getattr(t, "cancel_event", None)
         if ev is not None:
             ev.set()
@@ -217,7 +282,8 @@ def stop_threads(owner, why: str = "", timeout_ms: int = 3000) -> int:
             name = thread_name(t)
             logger.warning(f"{name} is still running after {timeout_ms} ms ({why or 'owner closing'}) — detached, "
                            "it will finish in the background")
-            t.setParent(None)
+            if t.parent() is not None:
+                t.setParent(None)
             _ORPHANS.add(t)
             t.finished.connect(lambda t=t: (_ORPHANS.discard(t), logger.debug(f"{thread_name(t)} finished (detached)")))
     return len(running)
@@ -226,6 +292,26 @@ def stop_threads(owner, why: str = "", timeout_ms: int = 3000) -> int:
 def stop_everything(window, why: str, timeout_ms: int = 4000):
     """App shutdown: every thread under the main window, detached stragglers and the thread pool."""
     n = stop_threads(window, why, timeout_ms)
+    rest = []
+    for t in list(_RUNNING):                         # anything else still going (any window, any mode)
+        try:
+            if t.isRunning():
+                rest.append(t)
+        except RuntimeError:
+            pass
+    for t in rest:
+        for attr in ("stop", "cancel"):
+            fn = getattr(t, attr, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception as _exc:
+                    _ignored(_exc)
+        t.requestInterruption()
+        t.quit()
+    for t in rest:
+        if not t.wait(timeout_ms):
+            _ORPHANS.add(t)
     for t in list(_ORPHANS):
         if t.isRunning() and not t.wait(timeout_ms):
             logger.warning(f"{thread_name(t)} did not finish before exit")
@@ -236,3 +322,31 @@ def stop_everything(window, why: str, timeout_ms: int = 4000):
         pool.waitForDone(timeout_ms)
     if n:
         logger.debug(f"{n} background thread(s) stopped ({why})")
+
+
+def still_running() -> list:
+    out = []
+    for t in list(_RUNNING | _ORPHANS):
+        try:
+            if t.isRunning():
+                out.append(t)
+        except RuntimeError:
+            pass
+    return out
+
+
+def final_exit(code: int):
+    """The very end: a thread that is STILL running (stuck in a slow network read, say) would be destroyed by
+    Python's own shutdown — an abort and a crash report for a normal exit. Then leave at once, log written."""
+    left = still_running()
+    if not left:
+        return
+    logger.warning(f"{len(left)} background thread(s) still busy at exit ({', '.join(thread_name(t) for t in left)})"
+                   " — leaving without waiting for them")
+    _at_exit()
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception as _exc:
+        _ignored(_exc)
+    os._exit(code if isinstance(code, int) else 0)

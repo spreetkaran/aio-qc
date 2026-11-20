@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-Visual view for 🖼️ Duplicate Images: one row per duplicate group.
+Visual view for Duplicate Images: one row per duplicate group.
 
-    [ info panel ][ thumb ][ thumb ][ thumb ] …  +N
-      E0012 · exact          KEEP      ☑ marked    split chip · distance · file name
+    [ info panel ][ thumb ][ thumb ][ thumb ] … +N
+      E0012 · exact KEEP ☑ marked split chip · distance · file name
       3 images · train, val
       ⚠ leakage
 

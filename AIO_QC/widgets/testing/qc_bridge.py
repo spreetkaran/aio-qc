@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 
 from loguru import logger
+from AIO_QC.core.diag import ignored as _ignored
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff")
 
@@ -34,8 +35,6 @@ class QCBridge:
         s = self.session
         if s is None:
             return "No dataset is open in Image QC."
-        if s.is_classification:
-            return "The open dataset is a classification dataset; Testing measures object detectors."
         if not s.samples:
             return "The open dataset has no images."
         return None
@@ -45,6 +44,12 @@ class QCBridge:
         if self.unavailable():
             return None
         s = self.session
+        if s.is_classification:            # (image, annotation, classes) per file; the class list in its order
+            pairs = [(str(smp.image_path) if smp.image_path is not None else "",
+                      str(smp.ann_path) if smp.ann_path is not None else "", list(s.tags_of(smp.key)))
+                     for smp in s.samples]
+            return dict(root=str(s.root), fmt="classify", pairs=pairs, cls_type=s.type,
+                        names={i: n for i, n in enumerate(s.cls_classes())} or None, label=s.root.name)
         # (image, annotation) per file as plain strings. LabelMe files are keyed by their JSON; an image not
         # resolved yet ("") is found by the worker with AIO QC's rules (imagePath, then a same-name image)
         pairs = [(str(smp.image_path) if smp.image_path is not None else "",
@@ -117,6 +122,27 @@ class QCBridge:
                     logger.warning(f"[testing] refresh after label fix: {exc}")
         return res
 
+    def set_class(self, paths, new_class):
+        """A classification dataset open in Image QC: give one image another class the way AIO QC does it (class
+        folders: the image moves; LabelMe flags rewritten; backups, File History and Undo included).
+        paths: (annotation, image). Returns the image's path afterwards. Raises ValueError."""
+        s = self.session
+        keys = self.keys_for([paths])
+        if s is None or not keys:
+            raise ValueError("The image is not in the dataset open in Image QC")
+        done, errors = s.set_tags(keys[:1], tags=[new_class], what=f"class → {new_class} (Testing)")
+        if errors:
+            raise ValueError(errors[0])
+        k = done[0] if done else keys[0]
+        cur = getattr(self.win, "current_key", None)
+        if cur in (k, keys[0]) and hasattr(self.win, "reload_current_annotation") and k in s.by_key:
+            try:
+                self.win.reload_current_annotation()
+            except Exception as exc:                 # the change succeeded; a refresh problem is only logged
+                logger.warning(f"[testing] refresh after class change: {exc}")
+        smp = s.by_key.get(k)
+        return str(smp.image_path) if smp is not None and smp.image_path is not None else None
+
     # ------------------------------------------------------------------ review
     def send_to_review(self, image_paths, note: str) -> int:
         """Flag these images in AIO QC's review queue. Returns how many were in the open dataset."""
@@ -128,8 +154,8 @@ class QCBridge:
         s.set_review(keys, REVIEW_FLAG, note)
         try:
             s.log(keys, "review", f"sent to review from Testing — {note}", tool="Testing")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         dock = getattr(self.win, "file_dock", None)
         if dock is not None and hasattr(dock, "set_key_filter"):
             try:

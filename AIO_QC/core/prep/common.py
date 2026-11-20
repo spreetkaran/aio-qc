@@ -27,6 +27,7 @@ import time
 import zlib
 from collections import defaultdict
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     import orjson  # type: ignore
@@ -103,7 +104,7 @@ def scan(roots, skip=(), images=True, jsons=True, zips=False, cancel=None):
                         if images and x in IMAGE_EXTS:
                             imgs.append(e.path)
                             sizes[e.path] = e.stat().st_size
-                        elif jsons and x == ".json" and not e.name.startswith("_"):
+                        elif jsons and x == ".json" and not e.name.startswith(("_", ".")):
                             js.append(e.path)
                         elif zips and x == ".zip":
                             zs.append(e.path)
@@ -247,6 +248,7 @@ def verify_bytes(raw: bytes) -> tuple[bool, str]:
     except ImportError:
         pass
     except Exception as exc:
+        _ignored(exc)
         return False, f"{type(exc).__name__}: {exc}"[:160]
     try:
         import cv2
@@ -254,6 +256,7 @@ def verify_bytes(raw: bytes) -> tuple[bool, str]:
         img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
         return (img is not None and img.size > 0), ("" if img is not None else "cannot be decoded")
     except Exception as exc:
+        _ignored(exc)
         return False, str(exc)[:160]
 
 
@@ -274,7 +277,8 @@ def verify_file(path) -> tuple[bool, str, tuple | None]:
     try:
         from .. import io as cio
         return True, "", cio.image_size(path)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return True, "", None
 
 
@@ -471,7 +475,7 @@ class RunLog:
             for f in (self._csv_f, self._j):
                 try:
                     f.close()
-                except Exception:
+                except OSError:
                     pass
 
 
@@ -547,6 +551,7 @@ def undo_run(jsonl, progress=None) -> dict:
                     else:
                         os.remove(dst)
         except Exception as exc:
+            _ignored(exc)
             st["errors"].append(f"{r.get('src') or r.get('dst')}: {exc}")
         if progress is not None and i % 50 == 0:
             progress(i, len(ops))

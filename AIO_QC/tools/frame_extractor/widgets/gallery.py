@@ -22,6 +22,8 @@ import threading
 import cv2
 import numpy as np
 from PyQt6.QtCore import Qt, QThread, QSize, QRectF, QUrl, pyqtSignal
+
+from AIO_QC.widgets.lifecycle import RetainedThread
 from PyQt6.QtGui import QImage, QPixmap, QIcon, QPainter, QColor, QPen, QFont, QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem, QComboBox, QLabel, QPushButton,
@@ -30,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 from AIO_QC.tools.frame_extractor.core.common import IMG_EXTS
 from AIO_QC.tools.frame_extractor.core.imageio import imread
+from AIO_QC.core.diag import ignored as _ignored
 REJECTED = "_rejected"
 VIEWS = [("Frames", ""), ("Blurry negatives", "negatives_blurry"), ("Rejected", REJECTED)]
 _num = re.compile(r"(\d+)")
@@ -44,7 +47,7 @@ def _sidecars(img_path):
     return [p for p in (stem + ".json", stem + ".txt") if os.path.exists(p)]
 
 
-class ThumbLoader(QThread):
+class ThumbLoader(RetainedThread, QThread):
     loaded = pyqtSignal(str, QImage)
 
     def __init__(self, paths, size):
@@ -62,7 +65,8 @@ class ThumbLoader(QThread):
                 return
             try:
                 img = imread(p, cv2.IMREAD_REDUCED_COLOR_2)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 img = None
             if img is None:
                 continue
@@ -108,8 +112,8 @@ class Preview(QWidget):
                         conf = sh.get("description", "")
                         conf = conf.split()[0].replace("conf=", " ") if conf.startswith("conf=") else ""
                         out.append((*pts.min(0), *pts.max(0), sh.get("label", "") + conf))
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         elif os.path.exists(stem + ".txt"):
             names = []
             cls_file = os.path.join(os.path.dirname(path), "classes.txt")
@@ -152,8 +156,8 @@ class ReviewGallery(QDialog):
     def __init__(self, parent=None, folder=None):
         super().__init__(parent)
         self.setWindowTitle("Review extracted frames")
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 1180, 740)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")      # by the screen it opens on
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         self.folder = None
         self.loader = None
@@ -270,8 +274,8 @@ class ReviewGallery(QDialog):
                 for row in csv.DictReader(open(f, encoding="utf-8")):
                     if row.get("reasons"):
                         self.reasons[row["file"]] = row["reasons"].split("|")
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         found = sorted({r for rs in self.reasons.values() for r in rs})
         self.reason_cb.blockSignals(True)
         self.reason_cb.clear()

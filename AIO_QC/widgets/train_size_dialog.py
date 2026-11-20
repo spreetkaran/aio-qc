@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-📏 Training Size — every object measured at the size the detector will actually see it: the image shrunk so its
+ Training Size — every object measured at the size the detector will actually see it: the image shrunk so its
 longer side equals the training imgsz, optionally shrunk further by scale augmentation. Lists the objects that
 become too small to learn, and per class the imgsz that would keep 95 % of them above the limit.
 """
@@ -26,7 +26,7 @@ def default_imgsz(root) -> int:
 
 class TrainSizeDialog(BaseScanDialog):
     TITLE = "Training Size"
-    ICON = "📏"
+    ICON = ""
     HELP = ("How big is each object when the image is shrunk to the training size (longer side = imgsz, like "
             "Ultralytics)? Objects only a few pixels across are hard to learn and are often missed later — scale "
             "augmentation shrinks them further. Lists the objects below the limit and, per class, the imgsz that "

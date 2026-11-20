@@ -19,15 +19,19 @@ import time
 import numpy as np
 from PyQt6.QtCore import (Qt, QThread, QObject, pyqtSignal, QRectF, QSize, QByteArray, QPointF, QTimer,
                           QAbstractTableModel, QModelIndex)
+
+from AIO_QC.widgets.lifecycle import RetainedThread
 from PyQt6.QtGui import QPainter, QPixmap, QImage, QGuiApplication, QPalette
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QToolTip, QMenu, QFileDialog, QApplication, QFrame,
     QSizePolicy, QScrollArea, QPushButton,
 )
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     from PyQt6.QtSvg import QSvgRenderer
-except Exception:          # pragma: no cover - QtSvg ships with PyQt6; keep the app usable without it
+except Exception as _exc:          # pragma: no cover - QtSvg ships with PyQt6; keep the app usable without it
+    _ignored(_exc)
     QSvgRenderer = None
 
 
@@ -106,7 +110,7 @@ class _Chan:
         return self._pub.disconnect(*a)
 
 
-class Job(QThread):
+class Job(RetainedThread, QThread):
     """Runs fn(job) off the UI thread. fn reports with job.progress.emit(...) / job.log.emit(text) and checks
     job.cancelled (a callable, pass it straight to core functions as cancel=). done / failed / progress / log are
     delivered on the UI thread, and only while the owner (the parent passed in) is alive."""
@@ -163,15 +167,15 @@ class Job(QThread):
             try:
                 from loguru import logger
                 logger.error(traceback.format_exc())
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             self.failed.emit(f"{type(exc).__name__}: {exc}")
         finally:
             for fn in Job.thread_cleanups:
                 try:
                     fn()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
 
 
 class FuncWorker(Job):
@@ -680,8 +684,8 @@ def fit_pixmap(img, size):
     dpr = 2.0
     try:
         dpr = max(1.0, QGuiApplication.primaryScreen().devicePixelRatio())
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     pm = bgr_pixmap(img, int(size.width() * dpr), int(size.height() * dpr))
     pm.setDevicePixelRatio(dpr)
     return pm
@@ -746,6 +750,7 @@ class SerialWorker(QObject):
             try:
                 res = fn()
             except Exception as exc:                   # noqa: BLE001
+                _ignored(exc)
                 self._deliver_error(key, tok, f"{type(exc).__name__}: {exc}")
                 return tok
             self._deliver(key, tok, res)
@@ -781,8 +786,8 @@ class SerialWorker(QObject):
                 try:
                     from loguru import logger
                     logger.debug(traceback.format_exc())
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
                 try:
                     self._error.emit(key, tok, f"{type(exc).__name__}: {exc}")
                 except RuntimeError:                   # deleted meanwhile

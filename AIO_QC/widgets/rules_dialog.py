@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔗 Relationship Rules — how annotations relate to each other and to the image (parent / part, counts, co-occurrence,
+ Relationship Rules — how annotations relate to each other and to the image (parent / part, counts, co-occurrence,
 overlaps, size, shape type, attributes, groups, classification). Configure once per dataset, or let AIO QC suggest
 rules that already hold for nearly all of the data.
 
@@ -26,6 +26,7 @@ from AIO_QC.utils import hexc, newButton, newIcon, style as apply_style
 from .base_scan import BaseScanDialog, ResultRow
 from .card_gallery import Card, CardView, Panel, Shape, box_points
 from .inference_service import FuncWorker
+from AIO_QC.core.diag import ignored as _ignored
 
 GROUP_TITLES = {"objects": "Between objects", "image": "Per image", "object": "Per object",
                 "classification": "Classification"}
@@ -299,7 +300,7 @@ class RuleForm(QDialog):
 
 
 class RulesDialog(BaseScanDialog):
-    TITLE, ICON = "Relationship Rules", "🔗"
+    TITLE, ICON = "Relationship Rules", ""
     HELP = ("Checks how annotations relate, for any classes (* = any class) and any shape type. Parent / part: a "
             "part lies inside its parent, is not larger than it, each parent has min–max parts (wheels on a car, "
             "heads on persons, nuclei in cells, any object inside a region). Also counts per image, classes that "
@@ -326,7 +327,7 @@ class RulesDialog(BaseScanDialog):
         form.addRow(self.rtable)
         row = QHBoxLayout()
         add = QToolButton()
-        add.setText("Add rule ▾")
+        add.setText("Add rule")
         add.setIcon(newIcon("new"))
         add.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         add.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -375,13 +376,15 @@ class RulesDialog(BaseScanDialog):
         for s in samples:
             try:
                 ann = adapter.load(s, light=True)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 continue
             W, H = ann.width, ann.height
             if not (W and H):
                 try:
                     size = adapter.image_size(s, ann)
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     size = None
                 W, H = size if size else (None, None)
             st.add(ann.shapes, ann.tags, W, H, normalized=bool(ann.normalized))
@@ -571,7 +574,7 @@ class RulesDialog(BaseScanDialog):
         self.fix_btn = self.add_action("✔ Apply proposed fix", self.apply_fixes,
                                        "Apply each ticked (or selected) row's proposed fix — e.g. fit a part inside its "
                                        "parent, delete a stray part or a duplicate, rectangle ↔ polygon. One backup: "
-                                       "Undo puts the files back. The files are marked 🔧 Fixed.")
+                                       "Undo puts the files back. The files are marked Fixed.")
         self.undo_btn = self.add_action("↶ Undo", self._undo, "Put back the files changed by the last Apply")
         self.undo_btn.setEnabled(False)
         self.add_action("🗑 Delete the shape", lambda: self.delete_shape_rows(self.target_rows()),
@@ -788,7 +791,7 @@ class RulesDialog(BaseScanDialog):
             from AIO_QC.core.state import REVIEW_FIXED
             self.session.set_review(st["changed"], REVIEW_FIXED, "Relationship Rules: fixed — check it")
         self.after_edit(files)
-        lines = [f"Applied {st['done']:,} fix(es) in {st['files']:,} file(s); they are marked 🔧 Fixed."]
+        lines = [f"Applied {st['done']:,} fix(es) in {st['files']:,}file(s); they are marked Fixed."]
         if st["missing"]:
             lines.append(f"{st['missing']:,} skipped: the shape changed since the scan.")
         if st["refused"]:
@@ -814,6 +817,6 @@ class RulesDialog(BaseScanDialog):
         fixable = sum(1 for r in live if r.payload[3])
         files = len({r.key for r in live})
         if not live:
-            return "✅ Every file follows every rule"
+            return "Every file follows every rule"
         return (f"{len(live):,} problem(s) in {files:,} file(s) · " + " · ".join(f"{n:,} {k}" for k, n in c.most_common())
                 + (f" · {fixable:,} with a proposed fix (✔ Apply)" if fixable else ""))

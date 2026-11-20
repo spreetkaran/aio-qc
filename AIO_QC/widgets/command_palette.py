@@ -9,11 +9,13 @@ commands come first for an empty query and win ties. Disabled actions are listed
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QVBoxLayout
+from PyQt6.QtCore import QEvent, QSize, Qt
+from PyQt6.QtGui import QAction, QFont, QKeySequence
+from PyQt6.QtWidgets import (QApplication, QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
+                             QStyledItemDelegate, QVBoxLayout)
 
 from AIO_QC.utils import style as apply_style
+from AIO_QC.core.diag import ignored as _ignored
 
 ROLE = Qt.ItemDataRole.UserRole
 RECENT_MAX = 12
@@ -24,9 +26,9 @@ def collect_actions(menubar) -> list[tuple[str, QAction]]:
     out, seen = [], set()
 
     def walk(menu: QMenu, path: list[str]):
-        for act in menu.actions():
+        for act in getattr(menu, "_aio_all_actions", None) or menu.actions():
             if act.isSeparator() or not act.isVisible():
-                continue
+                continue                  # (Simple menus take commands out of the menus — never out of here)
             sub = act.menu()
             if sub is not None:
                 walk(sub, path + [_clean(act.text())])
@@ -37,7 +39,7 @@ def collect_actions(menubar) -> list[tuple[str, QAction]]:
             out.append((" ▸ ".join(path + [_clean(act.text())]), act))
 
     for act in menubar.actions():
-        if act.menu() is not None:
+        if act.menu() is not None and act.isVisible():
             walk(act.menu(), [_clean(act.text())])
     return out
 
@@ -69,6 +71,65 @@ def score(query: str, text: str) -> float | None:
     return s - len(t) * 0.01
 
 
+DESC_ROLE = Qt.ItemDataRole.UserRole + 7
+
+
+def describe(act) -> str:
+    """One line in plain words under a command: what it does — or, while it can't run, why."""
+    base = act.property("aio_base_tip")
+    tip = base if base is not None else act.toolTip()
+    tip = (tip or "").split("\n")[0].strip()
+    if tip and _clean(tip).rstrip("…") == _clean(act.text()).rstrip("…"):
+        tip = ""
+    if not act.isEnabled():
+        full = act.toolTip() or ""
+        why = full.split("Not available yet:", 1)[1].strip() if "Not available yet:" in full else ""
+        return f"Not available yet — {why}" if why else (tip or "Not available right now")
+    return tip
+
+
+class _Delegate(QStyledItemDelegate):
+    """The command (and its key) on the first line, its description in a quieter colour under it."""
+
+    def sizeHint(self, opt, index):
+        s = super().sizeHint(opt, index)
+        return QSize(s.width(), 44 if index.data(DESC_ROLE) else 30)
+
+    def paint(self, p, opt, index):
+        from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
+        o = QStyleOptionViewItem(opt)
+        self.initStyleOption(o, index)
+        desc = index.data(DESC_ROLE) or ""
+        text = o.text
+        o.text = ""
+        w = o.widget
+        st = w.style() if w is not None else QApplication.style()
+        st.drawControl(QStyle.ControlElement.CE_ItemViewItem, o, p, w)
+        r = o.rect.adjusted(36, 4, -10, -4)
+        enabled = bool(o.state & QStyle.StateFlag.State_Enabled)
+        p.save()
+        ink = o.palette.color(o.palette.ColorRole.HighlightedText if o.state & QStyle.StateFlag.State_Selected
+                              else o.palette.ColorRole.Text)
+        if not enabled:
+            ink.setAlphaF(0.5)
+        p.setPen(ink)
+        f = o.font
+        p.setFont(f)
+        top = r.adjusted(0, 0, 0, -(r.height() // 2) if desc else 0)
+        p.drawText(top, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)
+        if desc:
+            from AIO_QC.utils import theme_color
+            mut = theme_color("muted") if not (o.state & QStyle.StateFlag.State_Selected) else ink
+            p.setPen(mut)
+            f2 = QFont(f)
+            f2.setPointSizeF(max(7.0, f.pointSizeF() - 1))
+            p.setFont(f2)
+            low = r.adjusted(0, r.height() // 2, 0, 0)
+            p.drawText(low, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                       p.fontMetrics().elidedText(desc, Qt.TextElideMode.ElideRight, low.width()))
+        p.restore()
+
+
 class CommandPalette(QDialog):
     def __init__(self, window, settings):
         super().__init__(window, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
@@ -81,7 +142,8 @@ class CommandPalette(QDialog):
         self.edit.textChanged.connect(self._fill)
         self.edit.installEventFilter(self)
         self.list = QListWidget()
-        self.list.setUniformItemSizes(True)
+        self.list.setItemDelegate(_Delegate(self.list))
+        self.list.setIconSize(QSize(18, 18))
         self.list.itemActivated.connect(self._run)
         self.list.itemClicked.connect(self._run)
         hint = QLabel("↑ ↓ choose · Enter run · Esc close")
@@ -109,7 +171,8 @@ class CommandPalette(QDialog):
     def _recent(self) -> list[str]:
         try:
             return list(self.settings.value("palette/recent", []) or [])
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return []
 
     def _fill(self, text: str):
@@ -129,6 +192,8 @@ class CommandPalette(QDialog):
             it = QListWidgetItem(act.icon(), path + (f"      {sc}" if sc else ""))
             it.setData(ROLE, (path, act))
             tip = act.toolTip()
+            desc = describe(act)
+            it.setData(DESC_ROLE, desc)
             if tip and tip != _clean(act.text()):
                 it.setToolTip(tip)
             if not act.isEnabled():

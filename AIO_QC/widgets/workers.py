@@ -12,6 +12,7 @@ from PyQt6.QtGui import QImage, QImageReader
 from AIO_QC.core import AnnotationError
 from AIO_QC.core.io import decode_image
 from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.core.diag import ignored as _ignored
 
 
 def load_qimage(path, image_data_b64: str | None = None) -> QImage:
@@ -41,8 +42,8 @@ def load_qimage(path, image_data_b64: str | None = None) -> QImage:
             img = reader.read()
             buf.close()
             return img
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     return QImage()
 
 
@@ -65,13 +66,18 @@ class IndexWorker(RetainedThread, QThread):
     def run(self):
         out, last, total = [], time.monotonic(), len(self.samples)
         cache, snap = self.cache, {}
+        if getattr(self.adapter, "shared_ann", False):
+            cache = None                                  # one file for every image (COCO): read from memory
         if cache is not None:
             try:
                 cache.ensure_label_namespace(self.namespace)
                 snap = cache.load_all_labels()
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 cache = None
+        from AIO_QC.core.ui_yield import yield_to_ui
         for i, s in enumerate(self.samples, 1):
+            yield_to_ui(stop=lambda: self._stop)          # never compete with a zoom / pan for the interpreter
             if self._stop:
                 break
             hit = cache.lookup_labels(snap, s.ann_path) if cache is not None and s.ann_path else None
@@ -90,6 +96,7 @@ class IndexWorker(RetainedThread, QThread):
                     if cache is not None and s.ann_path:
                         cache.put_labels(s.ann_path, None, str(exc))
                 except Exception as exc:  # never let one file kill the index (not cached: may be transient)
+                    _ignored(exc)
                     out.append((s.key, None, f"{type(exc).__name__}: {exc}"))
             now = time.monotonic()
             if now - last > 0.25 or i == total:
@@ -116,7 +123,8 @@ class PreloadTask(QRunnable):
         try:
             ann = self.adapter.load(self.sample)
             img = load_qimage(ann.image_path, ann.image_data)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.signals.loaded.emit(self.sample.key, self.generation, img)
 
@@ -146,6 +154,7 @@ class ThumbTask(QRunnable):
                     k = min(self.size / max(src.width(), src.height()), 1.0)
                     reader.setScaledSize(src * k)
                 img = reader.read()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.signals.loaded.emit(self.sample.key, self.generation, img)

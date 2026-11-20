@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🩺 Image Quality — integrity (corrupt / truncated files, EXIF rotation and size disagreements: errors) and low-priority
+ Image Quality — integrity (corrupt / truncated files, EXIF rotation and size disagreements: errors) and low-priority
 information (blurry, under- / over-exposed, low contrast). Also: the background IntegritySweep that checks every image
 after a dataset opens, and the per-image check behind the viewer's red banner.
 """
@@ -21,6 +21,7 @@ from AIO_QC.utils import hexc
 from .base_scan import BaseScanDialog, ResultRow, dspin
 from .card_gallery import Card, CardView, Panel
 from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.core.diag import ignored as _ignored
 
 SIG_INTEGRITY = "integrity|v1"          # structural + EXIF header (cache key)
 SIG_FULL = "iq|v1"                      # full decode + metrics
@@ -31,7 +32,8 @@ def image_of(adapter, sample):
     """(image path, annotation width, height) — light load (LabelMe knows the annotated size)."""
     try:
         ann = adapter.load(sample, light=True)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return sample.image_path, None, None
     return (ann.image_path or sample.image_path), (None if ann.normalized else ann.width), \
         (None if ann.normalized else ann.height)
@@ -67,7 +69,9 @@ class IntegritySweep(RetainedThread, QThread):
     def run(self):
         self.setPriority(QThread.Priority.LowestPriority)
         found, checked = {}, []
+        from AIO_QC.core.ui_yield import yield_to_ui
         for i, s in enumerate(self.samples, 1):
+            yield_to_ui(stop=lambda: self._stop)          # never compete with a zoom / pan for the interpreter
             if self._stop:
                 return
             path, w, h = image_of(self.adapter, s)
@@ -75,6 +79,7 @@ class IntegritySweep(RetainedThread, QThread):
                 try:
                     f = integrity_findings(self.cache, path, w, h)
                 except Exception as exc:
+                    _ignored(exc)
                     f = [("unreadable", IQ.ERROR, str(exc))]
                 if f:
                     found[s.key] = f
@@ -88,7 +93,7 @@ class IntegritySweep(RetainedThread, QThread):
 
 
 class ImageQualityDialog(BaseScanDialog):
-    TITLE, ICON = "Image Quality", "🩺"
+    TITLE, ICON = "Image Quality", ""
     HELP = ("Errors: corrupt or truncated image files (“Corrupt JPEG data”, “Premature end of JPEG file”, bad PNG "
             "chunks), images that cannot be decoded, EXIF rotation that disagrees with the annotation, annotation size ≠ "
             "image size. Information only: blurry, under- / over-exposed and low-contrast images.")
@@ -324,4 +329,4 @@ class ImageQualityDialog(BaseScanDialog):
         err = sum(n for (s, _t), n in c.items() if s == IQ.ERROR)
         parts = [f"{n:,} {t}" for (s, t), n in sorted(c.items(), key=lambda x: (IQ.SEVERITY_ORDER[x[0][0]], -x[1]))]
         lead = (f"<span style='color:{hexc('error')}'>⚠ {err:,} broken / inconsistent image(s)</span> · " if err else "")
-        return (lead + " · ".join(parts)) if parts else "✅ Every image is intact"
+        return (lead + " · ".join(parts)) if parts else "Every image is intact"

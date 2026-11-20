@@ -16,7 +16,8 @@ Then:
 Exact duplicate images (by content, whatever their names — files, embedded imageData and what the flat folder
 already holds) are added once. Kept copy: already in the flat folder > annotated > real file > restored from
 imageData > first. Every other copy goes to <orphans>/duplicates WITH its own JSON, unchanged; the plan says whether
-its labels are identical to the kept copy's or DIFFERENT (review). Name clashes of different images get _1, _2 ….
+its labels are identical to the kept copy's or DIFFERENT (review). Name clashes of different images get a name from
+the naming scheme (Options.naming, core.naming: folder prefix, path prefix, your own pattern …) or _1, _2 ….
 Everything is logged (CSV + undo log); empty source folders are removed after a move.
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from . import common as C
+from AIO_QC.core.diag import ignored as _ignored
 
 R_NOT_LABELME = "not a LabelMe JSON"
 R_INVALID = "unreadable / invalid JSON"
@@ -51,6 +53,7 @@ class Options:
     dedupe: bool = True
     background_images: bool = False       # images without JSON -> flat folder (negatives) instead of orphans
     remove_empty_dirs: bool = True
+    naming: dict = field(default_factory=dict)   # core.naming.Scheme (dict) for names that clash; {} = _1, _2 …
     workers: int = max(4, min(32, (os.cpu_count() or 4) * 2))
 
     def orph(self):
@@ -81,6 +84,8 @@ class Plan:
         rows += [("Duplicate images (exact same bytes) → orphans/duplicates", s["dups"])]
         rows += [(f"    {k}", v) for k, v in self.dup_kinds.most_common()]
         rows += [("imagePath corrected", s["ip_fixed"]), ("Renamed (different images, same name)", s["renamed"])]
+        if s.get("renamed_by_scheme"):
+            rows.append(("    of them by the naming scheme (the log lists old → new)", s["renamed_by_scheme"]))
         if self.other:
             rows.append(("Other files (left in place)", sum(self.other.values())))
         return rows
@@ -89,7 +94,8 @@ class Plan:
 def _inspect(path):
     try:
         data = C.read_json(path)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return {"kind": "invalid"}
     if not isinstance(data, dict) or "shapes" not in data:
         return {"kind": "notlabelme"}
@@ -210,7 +216,8 @@ def plan(opts: Options, progress=None, cancel=None) -> Plan:
             import hashlib
             try:
                 return hashlib.sha256(C.b64_bytes(C.read_json(c["json"]).get("imageData") or "")).hexdigest()
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 return None
         idx = list(range(len(cands)))
         groups = C.exact_groups(idx, lambda i: cands[i]["size"], lambda i: cands[i]["img"],
@@ -243,6 +250,14 @@ def plan(opts: Options, progress=None, cancel=None) -> Plan:
 
     # ---- names + actions
     n_dst, n_oi, n_oj, n_dup = C.Names(dst), C.Names(o_img), C.Names(o_json), C.Names(o_dup)
+    planned = {}
+    if opts.naming:                               # a naming scheme for the files that would share a name
+        planned = plan_names(opts, [img for _j, img, _i in pairs] + [jp for jp, _i in restorable] +
+                             (orphan_images if opts.background_images else []), rel, n_dst.taken, len(dst))
+        P.stats["renamed_by_scheme"] = sum(1 for p, st in planned.items() if st != C.stem(p))
+
+    def base(p):
+        return planned.get(p, C.stem(p))
     A = P.actions
 
     def plan_dup(files, keep, kind):
@@ -259,7 +274,7 @@ def plan(opts: Options, progress=None, cancel=None) -> Plan:
         if ci in dup_of:
             plan_dup([jp, img], cands[dup_of[ci]], dup_kind(cands[ci], cands[dup_of[ci]]))
         else:
-            s = n_dst.get(C.stem(img))
+            s = n_dst.get(base(img))
             img_dst = os.path.join(dst, s + C.ext(img))
             new = os.path.basename(img_dst)
             if info["ip"] != new:
@@ -276,13 +291,13 @@ def plan(opts: Options, progress=None, cancel=None) -> Plan:
             plan_dup([jp], cands[dup_of[ci]], dup_kind(cands[ci], cands[dup_of[ci]]))
         else:
             ip = info["ip"]
-            base = C.stem(C.ip_basename(ip)) if ip else C.stem(jp)
+            b0 = C.stem(C.ip_basename(ip)) if ip else C.stem(jp)
             x = info["data_ext"]
             if ip:
                 ie = C.ext(C.ip_basename(ip)).lower()
                 if C.SAME_FORMAT.get(ie, ie) == x:
                     x = C.ext(C.ip_basename(ip))
-            s = n_dst.get(base)
+            s = n_dst.get(planned.get(jp, b0))
             P.stats["restore"] += 1
             A.append(("restore", jp, os.path.join(dst, s + ".json"), {"img_dst": os.path.join(dst, s + x)}))
         ci += 1
@@ -291,7 +306,7 @@ def plan(opts: Options, progress=None, cancel=None) -> Plan:
             plan_dup([p], cands[dup_of[ci]], D_NO_JSON)
         else:
             if opts.background_images:
-                s = n_dst.get(C.stem(p))
+                s = n_dst.get(base(p))
                 A.append(("orphan_img", p, os.path.join(dst, s + C.ext(p)), {"note": "background image"}))
             else:
                 s = n_oi.get(C.stem(p))
@@ -311,9 +326,21 @@ def plan(opts: Options, progress=None, cancel=None) -> Plan:
         P.reasons[reason] += 1
         P.stats["orphan_json"] += 1
         P.details["JSONs without image"].append(f"{rel(jp)}  ({reason})")
-    P.stats["renamed"] = n_dst.renamed + n_oi.renamed + n_oj.renamed
+    P.stats["renamed"] = n_dst.renamed + n_oi.renamed + n_oj.renamed + P.stats.get("renamed_by_scheme", 0)
     P.stats["images"], P.stats["jsons"] = len(images), len(jsons)
     return P
+
+
+def plan_names(opts: Options, paths, rel, taken: set, root_len: int) -> dict:
+    """{path: new stem} for the files going to the flat folder, under opts.naming (core.naming): only the ones
+    that would share a name (or all, as the scheme says); verified against each other and the folder's files."""
+    from AIO_QC.core import naming as N
+    items = [N.Item(p, rel(p).replace(os.sep, "/"), path=p, extra_exts=(".json",)) for p in paths]
+    sc = N.Scheme.from_dict(opts.naming)
+    P = N.plan(items, sc, flat=True, existing={"": set(taken)}, root_len=root_len)
+    if not P.ok:
+        P = N.resolve(P, existing={"": set(taken)}, root_len=root_len)
+    return {it.key: P.new[it.key] for it in P.items}
 
 
 def run(P: Plan, progress=None, cancel=None) -> dict:
@@ -417,6 +444,7 @@ def run(P: Plan, progress=None, cancel=None) -> dict:
                 put(s, t, f"{R_BAD_DATA}: {err}", "orphan_json")
                 done["orphan_json"] += 1
             except Exception as exc:
+                _ignored(exc)
                 errors.append(f"{s}: {exc}")
         removed = 0
         if not o.copy and o.remove_empty_dirs:

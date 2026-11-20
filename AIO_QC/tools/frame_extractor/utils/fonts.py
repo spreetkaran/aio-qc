@@ -12,6 +12,7 @@ Inter, the typeface of the Model Lab's charts and plotted images (box labels), a
 import os
 
 from AIO_QC.core.testing.textdraw import FONT_DIR   # AIO QC's one font folder
+from AIO_QC.core.diag import ignored as _ignored
 FAMILY = "Inter"
 _loaded = None
 
@@ -32,7 +33,8 @@ def load():
                     fams.update(QFontDatabase.applicationFontFamilies(fid))
         if FAMILY in fams or any(f.startswith(FAMILY) for f in fams):
             _loaded = FAMILY
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         _loaded = ""
     return _loaded
 
@@ -51,8 +53,8 @@ def ui_font(base=None, scale=1.0, weight=None):
         f.setWeight(weight)
     try:
         f.setFeature(QFont.Tag("tnum"), 1)            # tabular figures (Qt >= 6.7)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     return f
 
 

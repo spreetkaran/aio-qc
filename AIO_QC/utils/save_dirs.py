@@ -23,7 +23,7 @@ KINDS = {   # key -> (title, what goes there)
                                    "guidelines, flagged lists, settings, data tables and scripts"),
     "reports": ("Reports", "QC report, review report, model report cards, OCR reads, data profiles"),
     "images": ("Images", "sketches, ROI crops, plotted images and charts"),
-    "datasets": ("Dataset outputs", "Export & Split, copies of flagged files, hand-off batches, exported originals"),
+    "datasets": ("Dataset outputs", "Convert & Split, copies of flagged files, hand-off batches, exported originals"),
 }
 KEY = {k: f"saves/{k}" for k in KINDS}
 KEY["screenshots"] = "screenshot/dir"          # kept from 2.3.0 betas

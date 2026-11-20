@@ -148,6 +148,9 @@ def save_labels(item, boxes, cls, origin, names, data_fmt="yolo", testset=None):
         d["shapes"] = new_shapes + keep_other
         if isinstance(d.get("flags"), dict):
             d["flags"].pop("prelabel", None)
+        from AIO_QC.core import provenance as PV
+        with PV.unless_active("manual", "Testing — test-set labels"):
+            PV.stamp_labelme(d, path)
         _atomic_write(path, json.dumps(d, indent=2, ensure_ascii=False))
     item.boxes, item.cls, item.label_path = boxes, cls, path
     item.reviewed = True

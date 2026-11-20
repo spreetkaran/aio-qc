@@ -97,6 +97,8 @@ def summarize(run, videos=None):
             s.update(best=rows[0]["model"], map5095=round(rows[0]["map5095"], 4), map50=round(rows[0]["map50"], 4),
                      models=len(run.specs), images=len(run.eval_idx),
                      ground="reference" if run.ground == "reference" else "labels")
+            if getattr(run, "task", "") == "classify":          # a classifier: accuracy, not mAP
+                s.update(task="classify", top1=round(rows[0]["top1"], 4), f1=round(rows[0]["f1"], 4))
     if videos:
         s["videos"] = len(videos)
     return s

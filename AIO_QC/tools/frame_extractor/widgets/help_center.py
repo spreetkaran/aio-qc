@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from AIO_QC.widgets import motion as anim
+from AIO_QC.core.diag import ignored as _ignored
 
 DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "guide")
 SHORTCUTS_PAGE = "shortcuts"
@@ -79,7 +80,8 @@ def generated(name, shortcuts=None, mouse_help=None):
             def example(k):
                 try:
                     return ("{" + k + "}").format(**ctx.values()) or "20250502"
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     return ""
             return _table(["Token", "Meaning", "Example"],
                           [[_code("{" + k + "}"), _html.escape(v), _code(example(k))] for k, v in naming.TOKENS.items()])
@@ -111,6 +113,7 @@ def generated(name, shortcuts=None, mouse_help=None):
         if name == "shortcuts":
             return shortcuts_html(shortcuts or [], mouse_help or [])
     except Exception as e:                 # never break the guide over a reference table
+        _ignored(e)
         return f"<p><i>(could not build this table: {_html.escape(str(e))})</i></p>"
     return ""
 
@@ -202,8 +205,8 @@ class _HelpBrowser(QTextBrowser):
                 img = self._hc.icon_loader(url.path() or url.toString()[9:], self.devicePixelRatioF())
                 if img is not None:
                     return img
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         return super().loadResource(typ, url)
 
 
@@ -283,8 +286,8 @@ class HelpCenter(QMainWindow):
         QShortcut(QKeySequence("Ctrl+W"), self, activated=self.close)
         QShortcut(QKeySequence.StandardKey.ZoomIn, self, activated=lambda: self._zoom_by(1))
         QShortcut(QKeySequence.StandardKey.ZoomOut, self, activated=lambda: self._zoom_by(-1))
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 1000, 700)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")      # by the screen it opens on
         anim.fade_on_show(self, 180)
         self._update_nav()
 

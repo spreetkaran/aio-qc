@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔎 Visual Similarity — find mislabels by how objects LOOK, with a vision model you already have (DINOv3 / DINOv2 /
+ Visual Similarity — find mislabels by how objects LOOK, with a vision model you already have (DINOv3 / DINOv2 /
 SigLIP2 / CLIP …), running in your Python environment (Models & Environment), never inside the app.
 
 Models: add a model FOLDER, a model ZIP (extracted once into a models folder you choose, reused afterwards), or
@@ -23,7 +23,7 @@ import numpy as np
 from loguru import logger
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPlainTextEdit, QProgressDialog, QVBoxLayout, QWidget,
 )
 
@@ -47,7 +47,7 @@ def _human(n):
 
 
 class SimilarityDialog(BaseScanDialog):
-    TITLE, ICON = "Visual Similarity", "🔎"
+    TITLE, ICON = "Visual Similarity", ""
     HELP = ("Every object (or, for classification datasets, every image) is turned into a vector by a vision model; "
             "objects that look alike end up close together. Reported: likely mislabels (its closest look-alikes "
             "carry one other label), objects atypical for their label, and near-identical objects with different "
@@ -59,6 +59,11 @@ class SimilarityDialog(BaseScanDialog):
 
     # ------------------------------------------------------------------ parameters
     def build_params(self, form):
+        self._model_rows(form)
+        self._similarity_params(form)
+
+    def _model_rows(self, form):
+        """Model (folder / zip / download), environment and scope rows — shared with Search in Words."""
         st = self.app.settings
         self.models: list[dict] = []
         try:
@@ -94,10 +99,6 @@ class SimilarityDialog(BaseScanDialog):
         self.label_box.addItem("(all labels)", None)
         for lab, _n in self.session.label_totals().most_common():
             self.label_box.addItem(lab, lab)
-        self.cap = ispin(0, 10_000_000, int(st.value("embed/cap", 0)))
-        self.cap.setSpecialValueText("all")
-        self.cap.setToolTip("At most this many objects per label (random sample) — for a quick first look at a huge "
-                            "dataset; 'all' checks everything")
         self.device = QComboBox()
         self.device.setEditable(True)
         self.device.addItems(["auto", "cpu", "cuda:0", "cuda:1", "mps"])
@@ -107,26 +108,6 @@ class SimilarityDialog(BaseScanDialog):
         self.pad = ispin(0, 100, 10)
         self.pad.setSuffix(" % context")
         self.pad.setToolTip("Margin around each object in its crop")
-        self.k = ispin(3, 50, 10)
-        self.k.setToolTip("How many closest look-alikes vote on each object's label")
-        self.vote = dspin(0.5, 1.0, 0.6, 2, step=0.05)
-        self.vote.setToolTip("Report a likely mislabel when look-alikes with ONE other label hold at least this share "
-                             "of the (similarity-weighted) vote")
-        self.zlim = dspin(2.0, 10.0, 3.5, 1, step=0.5)
-        self.zlim.setToolTip("Atypical: this many robust standard deviations below the label's usual similarity")
-        self.dup = dspin(0.8, 1.0, 0.97, 3, step=0.005)
-        self.dup.setToolTip("Look-alike pair: similarity at least this (mutual nearest neighbours only)")
-        grid = QWidget()
-        g = QGridLayout(grid)
-        g.setContentsMargins(0, 0, 0, 0)
-        for c, (t, w) in enumerate((("max / label", self.cap), ("device", self.device), ("", self.half),
-                                    ("batch", self.batch), ("crop", self.pad))):
-            g.addWidget(QLabel(t), 0, 2 * c)
-            g.addWidget(w, 0, 2 * c + 1)
-        for c, (t, w) in enumerate((("look-alikes k", self.k), ("vote ≥", self.vote), ("atypical z ≥", self.zlim),
-                                    ("look-alike sim ≥", self.dup))):
-            g.addWidget(QLabel(t), 1, 2 * c)
-            g.addWidget(w, 1, 2 * c + 1)
         form.addRow("Model:", mrow)
         form.addRow("", self.model_note)
         form.addRow("Runs in:", erow)
@@ -137,6 +118,28 @@ class SimilarityDialog(BaseScanDialog):
         sl.addWidget(QLabel("Label:"))
         sl.addWidget(self.label_box, 1)
         form.addRow("Scope:", sc)
+        self._fill_models()
+        self._env_text()
+
+    def _similarity_params(self, form):
+        st = self.app.settings
+        self.cap = ispin(0, 10_000_000, int(st.value("embed/cap", 0)))
+        self.cap.setSpecialValueText("all")
+        self.cap.setToolTip("At most this many objects per label (random sample) — for a quick first look at a huge "
+                            "dataset; 'all' checks everything")
+        self.k = ispin(3, 50, 10)
+        self.k.setToolTip("How many closest look-alikes vote on each object's label")
+        self.vote = dspin(0.5, 1.0, 0.6, 2, step=0.05)
+        self.vote.setToolTip("Report a likely mislabel when look-alikes with ONE other label hold at least this share "
+                             "of the (similarity-weighted) vote")
+        self.zlim = dspin(2.0, 10.0, 3.5, 1, step=0.5)
+        self.zlim.setToolTip("Atypical: this many robust standard deviations below the label's usual similarity")
+        self.dup = dspin(0.8, 1.0, 0.97, 3, step=0.005)
+        self.dup.setToolTip("Look-alike pair: similarity at least this (mutual nearest neighbours only)")
+        from AIO_QC.utils.qt_utils import flow_row
+        grid = flow_row([("max / label", self.cap), ("device", self.device), self.half, ("batch", self.batch),
+                         ("crop", self.pad), ("look-alikes k", self.k), ("vote ≥", self.vote),
+                         ("atypical z ≥", self.zlim), ("look-alike sim ≥", self.dup)])
         form.addRow("Settings:", grid)
         self.add_action("✓ Use suggested label", self._relabel,
                         "Relabel the ticked (or selected) rows to the suggested label — backed up, undoable")
@@ -145,8 +148,6 @@ class SimilarityDialog(BaseScanDialog):
         self.add_action("🧩 Crop Gallery", self._gallery,
                         "Open the Crop Gallery for the selected row's label, least typical first")
         self._last_backup = None
-        self._fill_models()
-        self._env_text()
 
     def _fill_models(self, select: str | None = None):
         self.model_box.blockSignals(True)
@@ -336,6 +337,8 @@ class SimilarityDialog(BaseScanDialog):
                                                  self.app.embedder.shutdown()))
         runner.start()
         log.exec()
+        runner.cancel()                               # closing the window stops an install that is still running
+        log.deleteLater()
 
     # ------------------------------------------------------------------ scan
     def samples_to_scan(self):
@@ -354,16 +357,19 @@ class SimilarityDialog(BaseScanDialog):
             raise ValueError("Choose the Python environment that should run the model (Environment…).")
         st = self.app.settings
         st.setValue("embed/last", path)
-        st.setValue("embed/cap", self.cap.value())
         st.setValue("embed/batch", self.batch.value())
+        sim = hasattr(self, "k")                      # Visual Similarity's own settings (Search in Words has none)
+        if sim:
+            st.setValue("embed/cap", self.cap.value())
         unit = "image" if self.session.is_classification else "shape"
         m = next((x for x in self.models if x["path"] == path), {"name": Path(path).name, "kind": model_kind(path)})
         return {"adapter": self.session.adapter, "unit": unit, "label": self.label_box.currentData(),
                 "keys": [], "idx": [], "labels": [], "boxes": [], "wh": [], "images": [], "ids": [],
                 "python": py, "path": path, "model": m, "device": self.device.currentText().strip() or "auto",
                 "half": self.half.isChecked(), "batch": self.batch.value(), "pad": self.pad.value() / 100,
-                "k": self.k.value(), "vote": self.vote.value(), "z": self.zlim.value(), "dup": self.dup.value(),
-                "cap": self.cap.value(), "cancel": threading.Event(), "root": str(self.session.root),
+                "k": self.k.value() if sim else 10, "vote": self.vote.value() if sim else 0.6,
+                "z": self.zlim.value() if sim else 3.5, "dup": self.dup.value() if sim else 0.97,
+                "cap": self.cap.value() if sim else 0, "cancel": threading.Event(), "root": str(self.session.root),
                 "classes": {s.key: self.session.class_of(s.key) for s in self.session.samples}
                 if unit == "image" else None}
 
@@ -458,6 +464,29 @@ class SimilarityDialog(BaseScanDialog):
         for f in ("keys", "idx", "labels", "boxes", "wh", "images", "ids"):
             ctx[f] = [ctx[f][i] for i in keep]
         n = len(ctx["ids"])
+        tmp = Path(tempfile.mkdtemp(prefix="aioqc_embed_"))
+        try:
+            vecs, valid = self._embed_all(ctx, tmp)
+            svc = self.app.embedder
+            self._progress("Finding look-alikes …", 0, 1)
+            np.save(tmp / "all.npy", vecs)
+            svc.knn(tmp / "all.npy", min(ctx["k"], n - 1), str(tmp / "nn"), cancel=ctx["cancel"])
+            nn_idx, nn_sim = np.load(tmp / "nn_idx.npy"), np.load(tmp / "nn_sim.npy")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        found = analyze(vecs, ctx["labels"], nn_idx, nn_sim, ctx["vote"], 0.0, ctx["z"], ctx["dup"], valid=valid)
+        tones = {"mislabel": "error", "lookalike": "warning", "atypical": "muted"}
+        out = []
+        for f in sorted(found, key=lambda f: -f.score):
+            i = f.i
+            out.append(ResultRow(ctx["keys"][i], (KINDS[f.kind], f.label, f.suggest, round(f.score, 3), f.evidence),
+                                 None if ctx["idx"][i] < 0 else ctx["idx"][i], payload=(f, i), tone=tones[f.kind]))
+        return out
+
+    def _embed_all(self, ctx, tmp: Path):
+        """Vectors for every item of ctx (cache first, the rest embedded, the cache updated) -> (vecs, valid).
+        Sets ctx load_info / vecs / valid / n_new; raises with ctx['env_missing'] when packages are missing."""
+        n = len(ctx["ids"])
         svc, py = self.app.embedder, ctx["python"]
         self._progress("Starting the model …", 0, 1)
         info = svc.probe(py)
@@ -480,55 +509,40 @@ class SimilarityDialog(BaseScanDialog):
         else:
             missing = list(range(n))
         valid = np.ones(n, bool)
-        tmp = Path(tempfile.mkdtemp(prefix="aioqc_embed_"))
-        try:
-            # group the missing crops by image: each image is decoded once
-            order = sorted(missing, key=lambda i: ctx["images"][i])
-            done = 0
-            for a in range(0, len(order), CHUNK):
-                if ctx["cancel"].is_set():
-                    raise ValueError("stopped")
-                part = order[a:a + CHUNK]
-                items, flat = [], []
-                for i in part:
-                    if items and items[-1]["image"] == ctx["images"][i]:
-                        items[-1]["boxes"].append(ctx["boxes"][i])
-                    else:
-                        items.append({"image": ctx["images"][i], "boxes": [ctx["boxes"][i]]})
-                    flat.append(i)
-                out = tmp / f"c{a}.npy"
-                res = svc.embed(items, out, ctx["batch"], ctx["pad"], cancel=ctx["cancel"])
-                arr = np.load(out)
-                vecs[flat] = arr[:len(flat)]
-                for start, cnt, _err in res.get("failed", []):
-                    for q in range(start, start + cnt):
-                        valid[flat[q]] = False
-                done += len(part)
-                self._progress(f"Embedding with {ctx['model'].get('name')}:", done, len(order))
-            # keep the cache to what exists: old ids of files still in the dataset + everything computed now
-            alive = {os.path.relpath(k, ctx["root"]).replace("\\", "/") for k in self.session.by_key}
-            now = set(ctx["ids"])
-            keep_old = [(k, r) for k, r in cache.index.items() if k.split("|", 1)[0] in alive and k not in now] \
-                if cache.vecs is not None and cache.vecs.shape[1] == dim else []
-            ids = ctx["ids"] + [k for k, _r in keep_old]
-            allv = np.concatenate([vecs, cache.vecs[[r for _k, r in keep_old]]]) if keep_old else vecs
-            ok_ids = [i for i, v in zip(ids, list(valid) + [True] * len(keep_old)) if v]
-            cache.save(ok_ids, allv[np.array(list(valid) + [True] * len(keep_old), bool)])
-            self._progress("Finding look-alikes …", 0, 1)
-            np.save(tmp / "all.npy", vecs)
-            svc.knn(tmp / "all.npy", min(ctx["k"], n - 1), str(tmp / "nn"), cancel=ctx["cancel"])
-            nn_idx, nn_sim = np.load(tmp / "nn_idx.npy"), np.load(tmp / "nn_sim.npy")
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        # group the missing crops by image: each image is decoded once
+        order = sorted(missing, key=lambda i: ctx["images"][i])
+        done = 0
+        for a in range(0, len(order), CHUNK):
+            if ctx["cancel"].is_set():
+                raise ValueError("stopped")
+            part = order[a:a + CHUNK]
+            items, flat = [], []
+            for i in part:
+                if items and items[-1]["image"] == ctx["images"][i]:
+                    items[-1]["boxes"].append(ctx["boxes"][i])
+                else:
+                    items.append({"image": ctx["images"][i], "boxes": [ctx["boxes"][i]]})
+                flat.append(i)
+            out = tmp / f"c{a}.npy"
+            res = svc.embed(items, out, ctx["batch"], ctx["pad"], cancel=ctx["cancel"])
+            arr = np.load(out)
+            vecs[flat] = arr[:len(flat)]
+            for start, cnt, _err in res.get("failed", []):
+                for q in range(start, start + cnt):
+                    valid[flat[q]] = False
+            done += len(part)
+            self._progress(f"Embedding with {ctx['model'].get('name')}:", done, len(order))
+        # keep the cache to what exists: old ids of files still in the dataset + everything computed now
+        alive = {os.path.relpath(k, ctx["root"]).replace("\\", "/") for k in self.session.by_key}
+        now = set(ctx["ids"])
+        keep_old = [(k, r) for k, r in cache.index.items() if k.split("|", 1)[0] in alive and k not in now] \
+            if cache.vecs is not None and cache.vecs.shape[1] == dim else []
+        ids = ctx["ids"] + [k for k, _r in keep_old]
+        allv = np.concatenate([vecs, cache.vecs[[r for _k, r in keep_old]]]) if keep_old else vecs
+        ok_ids = [i for i, v in zip(ids, list(valid) + [True] * len(keep_old)) if v]
+        cache.save(ok_ids, allv[np.array(list(valid) + [True] * len(keep_old), bool)])
         ctx["vecs"], ctx["valid"], ctx["n_new"] = vecs, valid, len(missing)
-        found = analyze(vecs, ctx["labels"], nn_idx, nn_sim, ctx["vote"], 0.0, ctx["z"], ctx["dup"], valid=valid)
-        tones = {"mislabel": "error", "lookalike": "warning", "atypical": "muted"}
-        out = []
-        for f in sorted(found, key=lambda f: -f.score):
-            i = f.i
-            out.append(ResultRow(ctx["keys"][i], (KINDS[f.kind], f.label, f.suggest, round(f.score, 3), f.evidence),
-                                 None if ctx["idx"][i] < 0 else ctx["idx"][i], payload=(f, i), tone=tones[f.kind]))
-        return out
+        return vecs, valid
 
     def on_scan_complete(self, ctx):
         miss = ctx.get("env_missing")
@@ -539,6 +553,9 @@ class SimilarityDialog(BaseScanDialog):
             self.app.embed_index = {"model": ctx["model"].get("name"),
                                     "map": {(k, i): r for r, (k, i) in enumerate(zip(ctx["keys"], ctx["idx"]))},
                                     "vecs": ctx["vecs"]}
+            gal = self.app.open_dialogs.get("class_gallery")                  # an open Class Gallery re-sorts
+            if gal is not None and ctx.get("unit") == "image":
+                gal._reload_view(resort=True)
         li = ctx.get("load_info") or {}
         logger.info(f"[similarity] {ctx['model'].get('name')} on {li.get('device')} · {len(ctx['ids']):,} objects · "
                     f"{ctx.get('n_new', 0):,} newly embedded")
@@ -583,7 +600,7 @@ class SimilarityDialog(BaseScanDialog):
         if st["files"]:
             self._last_backup = st["backup"]
             self.undo_btn.setEnabled(True)
-            self.session.set_review(st["changed"], REVIEW_FLAG, "Visual Similarity: relabelled — check it")
+            self.session.set_review(st["changed"], REVIEW_FLAG, f"{self.TITLE}: relabelled — check it")
         ids = {id(r) for r in rows}
         self.remove_rows(lambda x: id(x) in ids)
         lines = [f"Relabelled {st['done']:,} object(s) in {st['files']:,} file(s); the files are flagged for a look."]
@@ -606,7 +623,8 @@ class SimilarityDialog(BaseScanDialog):
     def _gallery(self):
         rows = self.target_rows()
         label = rows[0].payload[0].label if rows and rows[0].payload else self.label_box.currentData()
-        self.app.open_tool("crop_gallery")
-        dlg = self.app.open_dialogs.get("crop_gallery")
+        key = "class_gallery" if self.session.is_classification else "crop_gallery"   # whole images / crops
+        self.app.open_tool(key)
+        dlg = self.app.open_dialogs.get(key)
         if dlg is not None and label:
             dlg.show_label(label, sort="Least typical first")

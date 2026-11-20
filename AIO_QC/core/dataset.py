@@ -29,6 +29,7 @@ from typing import Any
 from .class_map import ClassMap, find_class_map
 from .io import (IMAGE_EXTENSIONS, any_file, atomic_write_text, dump_labelme, image_size, load_json, load_json_light,
                  natural_key, walk_files)
+from AIO_QC.core.diag import ignored as _ignored
 
 SPLIT_ORDER = {"train": 0, "val": 1, "valid": 1, "validation": 1, "test": 2}
 SPLIT_NAMES = frozenset(SPLIT_ORDER)          # the ONLY folder names treated as splits (case-insensitive)
@@ -129,19 +130,21 @@ class DatasetType(str, Enum):
     YOLO_SPLIT = "yolo_split"
     CLS_FOLDERS = "cls_folders"        # classification: <class>/<image> (optionally under train/val/test)
     CLS_LABELME = "cls_labelme"        # classification: LabelMe JSON image flags
+    COCO = "coco"                      # COCO JSON file(s), opened in place (core.coco_dataset)
 
     @property
     def title(self) -> str:
         return {"labelme": "LabelMe", "yolo": "YOLO (images/labels)", "yolo_split": "YOLO split / sub-folders",
                 "cls_folders": "Classification (class folders)",
-                "cls_labelme": "Classification (LabelMe flags)"}[self.value]
+                "cls_labelme": "Classification (LabelMe flags)", "coco": "COCO JSON"}[self.value]
 
     @property
     def is_classification(self) -> bool:
         return self in (DatasetType.CLS_FOLDERS, DatasetType.CLS_LABELME)
 
 
-DETECTION_TYPES = {DatasetType.LABELME, DatasetType.YOLO, DatasetType.YOLO_SPLIT}       # shapes (object detection)
+DETECTION_TYPES = {DatasetType.LABELME, DatasetType.YOLO, DatasetType.YOLO_SPLIT, DatasetType.COCO}   # shapes
+FILE_TYPES = {DatasetType.LABELME, DatasetType.YOLO, DatasetType.YOLO_SPLIT}    # one annotation file per image
 CLASSIFICATION_TYPES = {DatasetType.CLS_FOLDERS, DatasetType.CLS_LABELME}
 
 
@@ -173,16 +176,19 @@ class Annotation:
     notes: list[str] = field(default_factory=list)
     tags: list = field(default_factory=list)       # image-level classes (classification datasets)
     orig_tags: list | None = None                  # tags before label mapping
+    count_shapes: bool = True                      # classification with flags: shapes in the file are not classes
+    flag_issues: list = field(default_factory=list)   # [(kind, flag, value)] — LabelMe-flag classification
 
     def label_counts(self) -> Counter:
         """Shape labels + image-level classes."""
-        c = Counter(str(s.get("label", "")) for s in self.shapes)
+        c = Counter(str(s.get("label", "")) for s in self.shapes) if self.count_shapes else Counter()
         c.update(self.tags)
         return c
 
     def raw_label_counts(self) -> Counter:
         """Like label_counts, but with the ORIGINAL labels when a label mapping is active."""
-        c = Counter(str(s.get("_orig_label", s.get("label", ""))) for s in self.shapes)
+        c = Counter(str(s.get("_orig_label", s.get("label", ""))) for s in self.shapes) if self.count_shapes \
+            else Counter()
         c.update(self.orig_tags if self.orig_tags is not None else self.tags)
         return c
 
@@ -301,7 +307,8 @@ class LabelMeAdapter:
             raise AnnotationError(f"Unreadable JSON: {exc}") from exc
         ok, missing = is_labelme(data)
         if not ok:
-            raise AnnotationError(f"Not a LabelMe JSON (missing: {', '.join(missing)})")
+            from .formats import labelme_report
+            raise AnnotationError(f"Not a LabelMe JSON — looks like {labelme_report(data).looks_like}")
         shapes = [s for s in data["shapes"] if isinstance(s, dict)]
         ann = Annotation(
             shapes=shapes,
@@ -323,6 +330,8 @@ class LabelMeAdapter:
             raise AnnotationError("internal: refusing to save a light (imageData-less) annotation")
         data = ann.raw
         data["shapes"] = [{k: v for k, v in s.items() if not k.startswith("_")} for s in ann.shapes]
+        from . import provenance
+        provenance.stamp_labelme(data, sample.ann_path)          # what made / changed each shape (no person)
         dump_labelme(sample.ann_path, data)
 
     def image_size(self, sample: Sample, ann: Annotation | None = None) -> tuple[int, int] | None:
@@ -348,8 +357,26 @@ class LabelMeAdapter:
 # =============================================================================
 # YOLO (converted and split)
 # =============================================================================
+TRUE_WORDS = {"true", "yes", "y", "1", "on"}
+FALSE_WORDS = {"false", "no", "n", "0", "off", ""}
+
+
+def flag_value(v) -> tuple[bool, bool]:
+    """A LabelMe flag value -> (is it set, was it written as a proper true / false). 1, "true", "yes" … count as set
+    (and are reported, and written back as true / false when the file is saved)."""
+    if v is True or v is False:
+        return v, True
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v != 0, False
+    if isinstance(v, str):
+        w = v.strip().lower()
+        return w in TRUE_WORDS, False
+    return False, False
+
+
 class LabelMeClassAdapter(LabelMeAdapter):
-    """Classification with LabelMe image flags: the flags set to true are the image's classes."""
+    """Classification with LabelMe image flags: the flags that are set are the image's classes. Shapes a file may
+    also hold are kept as they are but are not classes. Values like 1 or "true" count as set and are reported."""
     type = DatasetType.CLS_LABELME
 
     def __init__(self, root: str | Path):
@@ -358,30 +385,89 @@ class LabelMeClassAdapter(LabelMeAdapter):
 
     @property
     def class_names(self) -> list[str]:
-        return sorted(self._flag_names)
+        return sorted(self._flag_names, key=lambda n: (n.lower(), n))
 
     def load(self, sample: Sample, image_size=None, light: bool = False) -> Annotation:
         ann = super().load(sample, image_size, light=light)
-        flags = ann.raw.get("flags") if isinstance(ann.raw, dict) else None
-        flags = flags if isinstance(flags, dict) else {}
+        ann.count_shapes = False
+        raw = ann.raw if isinstance(ann.raw, dict) else {}
+        flags = raw.get("flags")
+        if not isinstance(flags, dict):
+            if ann.exists:
+                ann.flag_issues.append(("no_flags", "", None if flags is None else flags))
+            flags = {}
         self._flag_names.update(str(k) for k in flags)
-        ann.tags = [str(k) for k, v in flags.items() if v is True]
+        tags = []
+        for k, v in flags.items():
+            on, clean = flag_value(v)
+            if not clean:
+                ann.flag_issues.append(("value", str(k), v))
+            if on:
+                tags.append(str(k))
+        ann.tags = tags
         return ann
 
-    def save(self, sample: Sample, ann: Annotation) -> None:
-        flags = dict(ann.raw.get("flags") or {})
-        for k in flags:
-            flags[k] = k in ann.tags
+    def save(self, sample: Sample, ann: Annotation, drop=()) -> None:
+        flags = {str(k): k in ann.tags for k in (ann.raw.get("flags") or {}) if k not in drop}   # real true / false
         for t in ann.tags:
             flags[t] = True
         ann.raw["flags"] = flags
         super().save(sample, ann)
 
     def set_class(self, sample: Sample, new_class: str) -> Sample:
+        return self.set_tags(sample, [new_class])
+
+    def set_tags(self, sample: Sample, tags: list[str], drop=()) -> Sample:
+        """The image's classes (flags set true); `drop`: flag names removed from the file altogether."""
         ann = self.load(sample)
-        ann.tags = [new_class]
-        self.save(sample, ann)
+        ann.tags = [t for t in dict.fromkeys(tags) if t and t not in drop]
+        self.save(sample, ann, drop=drop)
+        self._flag_names.update(ann.tags)
         return sample
+
+    def forget_names(self, names):
+        self._flag_names.difference_update(names)
+
+    def flags_of(self, sample: Sample) -> dict | None:
+        """The file's flags exactly as written (None: no flags key) — for undo."""
+        ann = LabelMeAdapter.load(self, sample)
+        f = ann.raw.get("flags") if isinstance(ann.raw, dict) else None
+        return dict(f) if isinstance(f, dict) else None
+
+    def write_flags(self, sample: Sample, flags: dict | None) -> None:
+        """Put a file's flags back exactly (undo / redo)."""
+        ann = LabelMeAdapter.load(self, sample)
+        if flags is None:
+            ann.raw.pop("flags", None)
+        else:
+            ann.raw["flags"] = dict(flags)
+        LabelMeAdapter.save(self, sample, ann)
+        self._flag_names.update(str(k) for k in (flags or {}))
+
+    def rename_class(self, sample: Sample, mapping: dict) -> bool:
+        """Flags renamed / merged / removed (mapping old -> new name, or None = removed). True when the file changed."""
+        ann = self.load(sample)
+        flags = dict(ann.raw.get("flags") or {}) if isinstance(ann.raw, dict) else {}
+        if not any(k in mapping for k in flags):
+            return False
+        out = {}
+        for k, v in flags.items():
+            on, _c = flag_value(v)
+            if k in mapping:
+                new = mapping[k]
+                if new is None:
+                    continue
+                out[new] = bool(out.get(new)) or on
+            else:
+                out[k] = bool(out.get(k)) or on
+        ann.raw["flags"] = out
+        ann.tags = [k for k, v in out.items() if v]
+        LabelMeAdapter.save(self, sample, ann)
+        for old, new in mapping.items():
+            self._flag_names.discard(old)
+            if new:
+                self._flag_names.add(new)
+        return True
 
 
 class ClassFolderAdapter:
@@ -400,26 +486,34 @@ class ClassFolderAdapter:
         self.bases = self._bases()
 
     def _bases(self) -> list[tuple[str, Path]]:
-        dirs = {d.name.lower(): d for d in self.root.iterdir() if d.is_dir() and not d.name.startswith(".")} \
-            if self.root.is_dir() else {}
-        has_val = next((dirs[n] for n in ("val", "valid", "validation") if n in dirs), None)
-        if "train" in dirs and has_val is not None:
-            out = [("train", dirs["train"]), ("val", has_val)]
-            if "test" in dirs:
-                out.append(("test", dirs["test"]))
+        out = class_folder_splits(self.root)
+        if out:
             self.split_note = "splits: " + ", ".join(n for n, _d in out)
             return out
         return [("", self.root)]
 
     @property
     def class_names(self) -> list[str]:
-        return list(self._classes)
+        """The class folders that still exist (one renamed, merged or removed in the app drops out)."""
+        alive = [c for c in self._classes if any((b / c).is_dir() for _s, b in self.bases)]
+        if len(alive) != len(self._classes):
+            self._classes = alive
+        return list(alive)
+
+    def _issues_dirs(self) -> set[str]:
+        """Top-level folders AIO QC made for set-aside images (core.issues_folder): never classes."""
+        from .issues_folder import is_issues_dir
+        return {d.name for d in _subdirs(self.root) if is_issues_dir(d)}
 
     def discover(self) -> list[Sample]:
         out, classes = [], set()
+        self._skip = self._issues_dirs()
         for split, base in self.bases:
             for img in walk_files(base, IMAGE_EXTENSIONS):
                 parts = img.relative_to(base).parts
+                if len(parts) > 1 and base == self.root and (parts[0].lower() in ("runs", "labels")
+                                                             or parts[0] in self._skip):
+                    continue                          # training runs / a stray labels folder / issues: not classes
                 cls = parts[0] if len(parts) > 1 else ""
                 if cls:
                     classes.add(cls)
@@ -493,6 +587,10 @@ class ClassFolderAdapter:
         parts = p.relative_to(base).parts
         if any(x.startswith(".") for x in parts[:-1]):
             return None, False
+        if len(parts) > 1 and base == self.root:
+            from .issues_folder import is_issues_dir
+            if parts[0] in (getattr(self, "_skip", None) or set()) or is_issues_dir(base / parts[0]):
+                return None, False                    # an image set aside in the issues folder
         cls = parts[0] if len(parts) > 1 else ""
         if cls and cls not in self._classes:            # a new class folder changes the class list -> reload
             return None, True
@@ -512,42 +610,126 @@ class ClassFolderAdapter:
                 "annotations_without_image": []}
 
 
-def _looks_like_class_folders(root: Path) -> bool:
-    """>= 2 sub-folders with images and no annotation files (at the root, or inside train/)."""
-    if not root.is_dir() or (root / "labels").is_dir() or (root / "images").is_dir():
+CLS_SPLITS = {"train": "train", "val": "val", "valid": "val", "validation": "val", "test": "test"}
+
+
+def _subdirs(root: Path) -> list[Path]:
+    """The visible sub-folders, sorted — from one directory listing (os.scandir knows file / folder without a disk
+    call per entry: a folder of 100,000 images costs one listing, not 100,000 stat calls)."""
+    try:
+        with os.scandir(root) as it:
+            names = [e.name for e in it if not e.name.startswith(".") and _is_dir(e)]
+    except OSError:
+        return []
+    return [Path(root) / n for n in sorted(names)]
+
+
+def _is_dir(e) -> bool:
+    try:
+        return e.is_dir()
+    except OSError:
         return False
-    subs = {d.name.lower(): d for d in root.iterdir() if d.is_dir() and not d.name.startswith(".")}
-    base = subs.get("train") if "train" in subs and any(n in subs for n in ("val", "valid", "validation")) else root
-    classes = [d for d in base.iterdir() if d.is_dir() and not d.name.startswith(".")
-               and d.name.lower() not in ("images", "labels")]
-    with_images = [d for d in classes[:200] if any_file(d, IMAGE_EXTENSIONS)]
-    return len(with_images) >= 2 and not any(any_file(d, {".json", ".txt", ".xml"}) for d in with_images[:20])
 
 
-def _looks_like_labelme_flags(root: Path, probe: int = 40) -> bool:
-    """Most JSONs have no shapes and at least one true flag."""
-    n = hit = 0
+def class_folder_splits(root: Path) -> list[tuple[str, Path]]:
+    """train / val / test folders that each hold class folders (any of them — train + test without val too).
+    [] when the root's own sub-folders are the classes."""
+    subs = _subdirs(root)
+    splits = [(CLS_SPLITS[d.name.lower()], d) for d in subs if d.name.lower() in CLS_SPLITS]
+    if not splits:
+        return []
+    from .issues_folder import is_issues_dir
+    others = [d for d in subs if d.name.lower() not in CLS_SPLITS and d.name.lower() not in ("labels", "runs")
+              and not is_issues_dir(d) and _shallow_images(d)]
+    if others:                                    # "train" next to "cat" and "dog": train is a class
+        return []
+    order = {"train": 0, "val": 1, "test": 2}
+    seen, out = set(), []
+    for name, d in sorted(splits, key=lambda x: (order[x[0]], x[1].name)):
+        if name not in seen and _subdirs(d):
+            seen.add(name)
+            out.append((name, d))
+    return out
+
+
+def _shallow_images(d: Path, limit: int = 400) -> bool:
+    n = 0
+    for _dp, _dn, fns in os.walk(d):
+        for f in fns:
+            if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS:
+                return True
+            n += 1
+            if n > limit:
+                return False
+    return False
+
+
+def _folder_profile(d: Path, limit: int = 300) -> tuple[int, int]:
+    """(images, annotation files) among the first files of a folder tree."""
+    imgs = anns = 0
+    for _dp, dns, fns in os.walk(d):
+        dns[:] = [x for x in dns if not x.startswith(".")]
+        for f in fns:
+            e = os.path.splitext(f)[1].lower()
+            if e in IMAGE_EXTENSIONS:
+                imgs += 1
+            elif e in (".json", ".txt", ".xml"):
+                anns += 1
+            if imgs + anns >= limit:
+                return imgs, anns
+    return imgs, anns
+
+
+def _looks_like_class_folders(root: Path) -> bool:
+    """>= 2 sub-folders with images where annotation files are rare (a stray notes.txt is fine) — at the root, or
+    inside train / val / test."""
+    if not root.is_dir() or (root / "images").is_dir():
+        return False
+    splits = class_folder_splits(root)
+    bases = [d for _n, d in splits] or [root]
+    imgs = anns = 0
+    n_cls = 0
+    for base in bases:
+        from .issues_folder import is_issues_dir
+        for d in _subdirs(base)[:200]:
+            if d.name.lower() in ("images", "labels", "runs") or is_issues_dir(d):
+                continue
+            i, a = _folder_profile(d, 120)
+            if i:
+                n_cls += 1
+                imgs += i
+                anns += a
+    return n_cls >= 2 and anns <= 0.2 * imgs
+
+
+def labelme_flags_profile(root: Path, probe: int = 60) -> tuple[int, int, int]:
+    """Among the first LabelMe JSONs: (how many, with image flags, without shapes)."""
+    n = flagged = shapeless = 0
     for p in walk_files(root, {".json"}):
         try:
             d = load_json_light(p)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             continue
         if not isinstance(d, dict) or "shapes" not in d:
             continue
         n += 1
-        flags = d.get("flags") or {}
-        hit += (not d.get("shapes")) and isinstance(flags, dict) and any(v is True for v in flags.values())
+        flags = d.get("flags")
+        flagged += isinstance(flags, dict) and bool(flags)
+        shapeless += not d.get("shapes")
         if n >= probe:
             break
-    return n > 0 and hit / n >= 0.8
+    return n, flagged, shapeless
+
+
+def _looks_like_labelme_flags(root: Path, probe: int = 60) -> bool:
+    """The JSONs carry image flags and (mostly) no shapes: classification."""
+    n, flagged, shapeless = labelme_flags_profile(root, probe)
+    return n > 0 and flagged > 0 and shapeless / n >= 0.5
 
 
 def _yolo_children(root: Path) -> list[Path]:
-    try:
-        children = [c for c in root.iterdir() if c.is_dir() and not c.name.startswith(".")]
-    except OSError:
-        return []
-    return [c for c in children if (c / "images").is_dir() and (c / "labels").is_dir()]
+    return [c for c in _subdirs(root) if (c / "images").is_dir() and (c / "labels").is_dir()]
 
 
 def find_yolo_splits(root: Path) -> list[Path]:
@@ -758,6 +940,13 @@ class YoloAdapter:
         if not lines and not sample.ann_path.exists():
             return
         atomic_write_text(sample.ann_path, text)
+        from . import provenance                                 # YOLO text has no room: one log line per save
+        try:
+            rel = os.path.relpath(sample.ann_path, self.root)
+        except ValueError:
+            rel = Path(sample.ann_path).name
+        provenance.log_yolo(self.root, rel, provenance.yolo_counts(
+            [list(r) for r in (ann.raw or [])], [ln.split() for ln in lines]))
 
     @staticmethod
     def _geometry_tokens(s: dict, ann: Annotation) -> list[str]:
@@ -802,16 +991,31 @@ def detect_dataset_types(root: str | Path) -> list[DatasetType]:
         found.append(DatasetType.YOLO)
     if find_yolo_splits(root) or _yolo_children(root):      # split set, or per-folder images + labels
         found.append(DatasetType.YOLO_SPLIT)
+    folders = _looks_like_class_folders(root)
+    from .coco_dataset import find_coco_files
+    coco = bool(find_coco_files(root)) if root.is_dir() else False
+    n = 0
     if any_file(root, {".json"}, skip_dirs={"labels"}):
-        if _looks_like_labelme_flags(root):
-            found.append(DatasetType.CLS_LABELME)          # offered first: the JSONs only carry image flags
-        found.append(DatasetType.LABELME)
-    if not found and _looks_like_class_folders(root):
-        found.append(DatasetType.CLS_FOLDERS)
+        n, flagged, shapeless = labelme_flags_profile(root)
+        if n and flagged and shapeless / n >= 0.5 and not folders:
+            found.append(DatasetType.CLS_LABELME)          # offered first: the JSONs (mostly) only carry image flags
+        if n or (not folders and not coco):
+            found.append(DatasetType.LABELME)
+        if n and flagged and DatasetType.CLS_LABELME not in found:
+            found.append(DatasetType.CLS_LABELME)          # boxes AND image flags: their flags as classes, too
+    if coco:                                               # after LabelMe when LabelMe JSONs are there too (a stray
+        at = len(found) if n else next((i for i, t in enumerate(found)  # coco.json in a LabelMe folder)
+                                         if t in (DatasetType.LABELME, DatasetType.CLS_LABELME)), len(found))
+        found.insert(at, DatasetType.COCO)
+    if folders:
+        found.insert(0, DatasetType.CLS_FOLDERS)          # images dominate: a stray JSON / notes.txt does not matter
     return found
 
 
 def open_dataset(root: str | Path, dtype: DatasetType):
+    if dtype == DatasetType.COCO:
+        from .coco_dataset import CocoAdapter
+        return CocoAdapter(root)
     if dtype == DatasetType.LABELME:
         return LabelMeAdapter(root)
     if dtype == DatasetType.CLS_LABELME:

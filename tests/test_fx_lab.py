@@ -15,7 +15,12 @@ from .fx_fixtures import D  # noqa: E402  (generated media + models)
 def lab(qapp, qtbot, tmp_path, monkeypatch):
     from AIO_QC.widgets.testing import lab_common, model_lab
     monkeypatch.setattr(lab_common, "open_path", lambda *a, **k: None)
-    monkeypatch.setattr(model_lab, "open_path", lambda *a, **k: None)
+    from AIO_QC.widgets.testing import model_lab_parts as _parts
+    import importlib, pkgutil
+    for _m in [model_lab] + [importlib.import_module(f"{_parts.__name__}.{i.name}")
+                             for i in pkgutil.iter_modules(_parts.__path__)]:   # (the Lab is split by area)
+        if hasattr(_m, "open_path"):
+            monkeypatch.setattr(_m, "open_path", lambda *a, **k: None)
     lab = model_lab.ModelLab(None, {"models": []}, lambda: None, "test")
     qtbot.addWidget(lab)
     lab.show()

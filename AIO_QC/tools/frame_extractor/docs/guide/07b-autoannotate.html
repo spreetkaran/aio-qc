@@ -1,0 +1,80 @@
+<!--title: Auto-Annotate-->
+<!--keywords: ai annotate vlm vision model gemini gpt claude qwen litellm openai api key grounding dino owlv2 florence yolo-world sam polygons yolo txt classes.txt data.yaml auto annotate auto-annotate autoannotate pre-annotate pre-label labelme 5.11.4 6.3.1 imageData model onnx pt yolo imgsz confidence iou classes rename keep rule extra_images similar dedup duplicates package parts split zip setup recipe run folder command line-->
+<h1>Auto-Annotate</h1>
+<p><span class="k">Ctrl</span>+<span class="k">Shift</span>+<span class="k">U</span> (also in Image QC ▸ Tools) turns a folder of
+videos into unique frames with a LabelMe file each, drawn by your model — in five steps. Tick the steps you want and
+press <b>Run</b>; every page also has <b>Run only this step</b>.</p>
+
+<table class="t">
+<tr><th>Step</th><th>What it does</th><th>Where the result goes</th></tr>
+<tr><td><b>1 Frames</b></td><td>Every Nth frame, or the sharpest of every N; skips repeats within a video as it is decoded
+(and, if ticked, frames already taken from another video or an earlier run); optional blur filter. With
+<i>Images</i> instead of <i>Videos</i>, an image folder is linked in (no extra disk space; your folder is never
+changed).</td><td><code>frames/&lt;video&gt;/</code></td></tr>
+<tr><td><b>2 Similar frames</b></td><td>Compares every frame with all frames kept so far — across videos too — and sets
+aside the ones that look the same (strict / balanced / loose); of two similar frames the sharper can be kept.</td>
+<td><code>similar/</code></td></tr>
+<tr><td><b>3 Annotate</b></td><td><i>Your trained model</i> or <i>AI annotate</i> (below). Your model (.onnx here, .pt in
+your Python environment) writes one LabelMe and/or YOLO file next to every frame. Its classes and image size are read from the model file. Confidence, IoU, max boxes, smallest box, a
+minimum confidence per class, renaming or leaving out classes. LabelMe <b>6.3.1</b> or <b>5.11.4</b>;
+<b>imageData</b> off by default; YOLO .txt files optional.</td><td>next to the frames</td></tr>
+<tr><td><b>4 Keep rule</b></td><td>Keep a frame when it has at least one / all of the classes you choose, any box at all,
+or always. Other frames (with their files) are moved, or kept.</td><td><code>extra_images/</code></td></tr>
+<tr><td><b>5 Package</b></td><td>One folder, a folder per video, or folders named by a pattern in the file name; parts of
+N frames (<code>part_001</code> or <code>part_0, part_200</code>), each zipped. Files as hard links (no extra disk space; the default) or as copies (independent of <code>frames/</code>).</td>
+<td><code>package/</code> + <code>parts.csv</code></td></tr>
+</table>
+
+<h2>AI annotate</h2>
+<p>Annotate ▸ <b>Who annotates ▸ AI annotate</b>: no trained model — describe the classes in plain words, add a few
+examples, and a vision model annotates. Everything is set in the app; the project is saved as a config.yaml
+(<b>Export…</b> to share it or run it with <code>--ai-config</code>).</p>
+<ul>
+<li><b>Is everything ready?</b> comes first: the app, the Python environment (for models on your computer: PyTorch,
+transformers …, with an <b>Install</b> button), the API key and the AI service. A missing key is asked once and saved as
+the environment variable the project names (Windows: your user environment variables; macOS/Linux: your shell
+profile) — never in the project file, a log or a report.</li>
+<li><b>New…</b> starts from a template (find objects · detector + check · read text with its parts · look inside a
+bigger object · yes/no questions) or an example project.</li>
+<li><b>1 Connect</b> LiteLLM, OpenAI, Azure, Gemini, Claude, Bedrock, OpenRouter, Qwen (DashScope), Together, Groq,
+Mistral, xAI, vLLM, Ollama, LM Studio, any OpenAI-compatible address, or a model in your Python environment ·
+<b>2 Model</b> the model (List models), what the AI does, the detector, polygons (SAM), advanced settings · <b>3
+Classes</b> names in YOLO order, plain-word descriptions, min confidence, at most per image, inside another class, read
+text with a pattern and a check digit (ISO 6346 / Luhn), parts · <b>4 Examples</b> per camera, with their boxes (draw
+them in the app) · <b>5 Checks</b> extra answers and rules to keep an image, look only inside a class, budget, targets,
+prices · <b>6 Output</b> YOLO txt (default) / LabelMe / both, data.yaml, review flag · <b>7 Try</b> a few images with the
+boxes next to the AI's answer, and an estimate for the whole run.</li>
+<li>Answers are cached: Try again, re-runs and Stop/continue never pay twice. Rejected images go to
+<code>rejected/</code> with <code>reports/rejected.csv</code>; every answer is kept in
+<code>reports/ai_audit.jsonl</code>.</li>
+<li>The box format of the model (Gemini 0–1000 [y,x,y,x], Qwen pixels, …) is set from its family; <b>Detect…</b> asks
+the model to box an example whose boxes are known and keeps the format that fits.</li>
+</ul>
+
+<h2>Stop and continue</h2>
+<ul>
+<li><b>Stop</b> is always safe. <b>Run</b> continues: extraction from its checkpoints, annotation from the files already
+written.</li>
+<li>Running a step again first puts back what that step and the later ones set aside, so a new threshold or rule applies
+to the whole set again.</li>
+<li>Annotation files the run did not write, and files you edited after it wrote them, are never overwritten (unless
+<i>Existing files ▸ Replace</i>).</li>
+<li>Changing the frame settings asks before replacing the previous frames. Your videos are never touched — only the run
+folder.</li>
+</ul>
+
+<h2>Try it first</h2>
+<p><b>Try on 4 frames</b> (Annotate page) runs the model with the current settings on a few frames and shows the boxes
+and whether the keep rule would keep each frame. Nothing is written.</p>
+
+<h2>Setups</h2>
+<p><b>Save</b> keeps every choice under a name (the project); pick it next time and only the video folder changes.
+<b>More ▸ Command line for this setup</b> copies the same run as a command, e.g. for a GPU server:</p>
+<pre>aio-qc autoannotate D:/runs/batch_12 --videos D:/videos/batch_12 --setup project.aasetup.json
+aio-qc autoannotate D:/runs/batch_12 --only annotate,rules --conf 0.4     # again, on the frames already there
+aio-qc autoannotate D:/runs/batch_12 --status</pre>
+
+<h2>The run folder</h2>
+<p><code>frames/</code> (the working set) · <code>similar/</code> · <code>extra_images/</code> · <code>package/</code> ·
+<code>reports/summary.html</code> (what every step did) · <code>.autoannotate/</code> (the run's own records).
+<b>Open in Image QC</b> reviews the frames and their annotations.</p>

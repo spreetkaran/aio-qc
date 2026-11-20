@@ -6,7 +6,6 @@ Pure QC checks. No Qt, no file writes. Each GUI tool is a thin view over these.
 from __future__ import annotations
 
 import difflib
-import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -88,6 +87,132 @@ def find_duplicate_pairs(shapes: list[dict], mode: str = "exact", iou_thr: float
             if iou >= iou_thr:
                 out.append((i, j, iou))
                 claimed.add(j)
+    return out
+
+
+# =============================================================================
+# Overlapping shapes
+# =============================================================================
+OVERLAP_KINDS = {
+    "double": "same object marked twice",          # IoU very high
+    "overlap": "overlapping",                      # IoU above the threshold
+    "inside": "one inside the other",              # a smaller shape mostly inside a bigger one
+}
+
+
+def find_overlaps(shapes: list[dict], iou_thr: float = 0.3, inside_thr: float = 0.85, double_thr: float = 0.85,
+                  nested_other_class: bool = False, ignore: set | None = None,
+                  labels: list | None = None) -> list[tuple]:
+    """Every pair of shapes in one image that overlaps: (i, j, iou, inside, kind) with i < j, j the smaller.
+    kind: "double" IoU ≥ double_thr · "overlap" IoU ≥ iou_thr · "inside" the smaller one ≥ inside_thr inside the
+    bigger. A smaller shape of ANOTHER class inside a bigger one (a plate on a car, a wheel on a truck) is a part of it,
+    not a mistake: reported only with nested_other_class. ignore: unordered class pairs that are expected.
+    labels: only pairs where at least one shape has one of these labels."""
+    from .geometry import containment, polygon_area
+    polys = [to_polygon(s) for s in shapes]
+    areas = [polygon_area(p) if p is not None else 0.0 for p in polys]
+    want = set(labels) if labels else None
+    out = []
+    for a in range(len(shapes)):
+        if polys[a] is None or areas[a] <= 0:
+            continue
+        for b in range(a + 1, len(shapes)):
+            if polys[b] is None or areas[b] <= 0:
+                continue
+            la, lb = str(shapes[a].get("label")), str(shapes[b].get("label"))
+            if want is not None and la not in want and lb not in want:
+                continue
+            if ignore and tuple(sorted((la, lb))) in ignore:
+                continue
+            iou = shape_iou(shapes[a], shapes[b], polys[a], polys[b])
+            if iou <= 0:
+                continue
+            big, small = (a, b) if areas[a] >= areas[b] else (b, a)
+            inside = containment(shapes[small], shapes[big]) if iou < double_thr else 1.0
+            if iou >= double_thr:
+                kind = "double"
+            elif iou >= iou_thr:
+                kind = "overlap"
+            elif inside >= inside_thr and (la == lb or nested_other_class):
+                kind = "inside"
+            else:
+                continue
+            if kind == "overlap" and la != lb and inside >= inside_thr and not nested_other_class:
+                continue                                    # a part on its object (plate on a small car)
+            out.append((big, small, round(float(iou), 3), round(float(inside), 3), kind))
+    return out
+
+
+PAIR_KINDS = ("exact", "double", "overlap", "inside")
+
+
+def find_shape_pairs(shapes: list[dict], iou_thr: float = 0.3, double_thr: float = 0.85, inside_thr: float = 0.85,
+                     decimals: int = 2, same_class_only: bool = False, nested_other_class: bool = False,
+                     ignore: set | None = None) -> list[tuple]:
+    """Duplicate & Overlapping Shapes, one pass: (a, b, iou, inside, kind) per pair worth a look, no redundancy.
+      exact    identical geometry after rounding to `decimals` (start vertex, direction and rectangle vs
+               4-point polygon do not matter) — any class: two labels on one shape is a duplicate too
+      double   marked twice: IoU ≥ double_thr
+      overlap  IoU ≥ iou_thr
+      inside   a shape at least inside_thr inside a bigger one of its class (other classes: a part, e.g. a plate
+               on a car — reported only with nested_other_class)
+    Duplicates (exact / double) are grouped: every copy is paired with the FIRST shape of its group (a = kept,
+    b = the copy), so A~B~C gives A–B and A–C, never B–C; an overlap with a group is reported once (with the
+    shape the scan meets first — the group's first shape when it overlaps too). Other pairs: a = the bigger shape, b = the smaller. `ignore`: unordered class
+    pairs whose overlaps are expected (never applied to exact copies or marked-twice pairs of one class)."""
+    n = len(shapes)
+    label = [str(s.get("label")) for s in shapes]
+    root = list(range(n))
+
+    def find(i):
+        while root[i] != i:
+            root[i] = root[root[i]]
+            i = root[i]
+        return i
+
+    def join(i, j):                                   # the group's first shape stays its root
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            root[max(ri, rj)] = min(ri, rj)
+
+    out = []
+    first: dict = {}
+    for i, s in enumerate(shapes):                    # exact copies
+        geo = canonical_points(s, decimals)
+        if geo is None:
+            continue
+        key = (geo, label[i] if same_class_only else None)
+        if key in first:
+            join(first[key], i)
+            out.append((first[key], i, 1.0, 1.0, "exact"))
+        else:
+            first[key] = i
+    pairs = find_overlaps(shapes, iou_thr, inside_thr, double_thr, nested_other_class=nested_other_class)
+    doubles = sorted((p for p in pairs if p[4] == "double"), key=lambda p: (min(p[0], p[1]), max(p[0], p[1])))
+    for a, b, iou, ins, _k in doubles:                # marked twice: grouped like exact copies
+        i, j = min(a, b), max(a, b)
+        if same_class_only and label[i] != label[j]:
+            continue
+        if find(i) == find(j):
+            continue                                  # already in one group (an exact copy, or a chain)
+        join(i, j)
+        out.append((i, j, iou, ins, "double"))       # i: the earliest shape j copies (the group's first, mostly)
+    reported = set()
+    for a, b, iou, ins, kind in pairs:
+        if kind == "double":
+            continue
+        if same_class_only and label[a] != label[b]:
+            continue
+        if ignore and tuple(sorted((label[a], label[b]))) in ignore:
+            continue
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue                                  # copies of one another: already a duplicate pair
+        g = tuple(sorted((ra, rb)))
+        if g in reported:
+            continue                                  # the same overlap again through a copy
+        reported.add(g)
+        out.append((a, b, iou, ins, kind))
     return out
 
 
@@ -206,27 +331,44 @@ def validate_sample(adapter, sample: Sample, opts: ValidationOptions) -> list[Is
 
     is_yolo = adapter.type in (DatasetType.YOLO, DatasetType.YOLO_SPLIT)
 
-    # -- file-level -----------------------------------------------------------
+    # -- file-level: is it really LabelMe / YOLO? (pairing image <-> label: Image–Label Pairs) -------------
+    from .formats import labelme_report, yolo_report
+    shape_issue = {}                                  # shape index -> True: structure broken, no geometry checks
     if is_yolo:
-        if not ann.exists:
-            issues.append(Issue(WARNING, "No label file (background)", "image has no .txt label"))
         img_path = sample.image_path
+        if ann.exists:
+            text = "\n".join(" ".join(r) for r in (ann.raw or []))
+            cm = getattr(adapter, "class_map", None)
+            fr = yolo_report(text, len(cm.names) if cm is not None else 0, bool(getattr(cm, "kpt_shape", None)),
+                             Path(sample.ann_path).name)
+            if not fr.ok:
+                return [Issue(ERROR, "Not YOLO format", f"looks like {fr.looks_like}")]
+            for sev, text in fr.problems:
+                issues.append(Issue(WARNING if sev == WARNING else ERROR, "Format warning", text))
+            for i, sev, text in fr.items:
+                cat = "Class ID out of range" if "class list has" in text else "Malformed label line"
+                issues.append(Issue(ERROR if sev == "Error" else WARNING, cat, text, i))
+                shape_issue[i] = True
     else:
-        for note in ann.notes:
-            issues.append(Issue(WARNING, "Schema warning", note))
-        if not ann.raw.get("imagePath"):
-            issues.append(Issue(ERROR, "Missing imagePath", "imagePath is empty"))
+        fr = labelme_report(ann.raw)
+        raw_shapes = ann.raw.get("shapes") or []
+        to_ann, k = {}, 0                             # raw shape index -> index among the loaded (object) shapes
+        for j, sh in enumerate(raw_shapes):
+            if isinstance(sh, dict):
+                to_ann[j] = k
+                k += 1
+        for sev, text in fr.problems:
+            issues.append(Issue(ERROR if sev == "Error" else WARNING,
+                                "Schema error" if sev == "Error" else "Schema warning", text))
+        for j, sev, text in fr.items:
+            idx = to_ann.get(j)
+            issues.append(Issue(ERROR if sev == "Error" else WARNING,
+                                "Schema error" if sev == "Error" else "Schema warning",
+                                f"shape {j}: {text}", idx, fix="delete_shape" if idx is not None and sev == "Error"
+                                else None))
+            if idx is not None and sev == "Error":
+                shape_issue[idx] = True
         img_path = ann.image_path
-        if img_path is None and not ann.image_data:
-            issues.append(Issue(ERROR, "Image not found", str(ann.raw.get("imagePath"))))
-        elif img_path is not None and ann.raw.get("imagePath"):
-            declared = str(ann.raw["imagePath"]).replace("\\", "/")
-            folder = sample.ann_path.parent
-            if (folder / declared).resolve() != Path(img_path).resolve():
-                rel = Path(os.path.relpath(img_path, folder)).as_posix()
-                issues.append(Issue(WARNING, "imagePath mismatch",
-                                    f"imagePath '{declared}' but image found at '{rel}'",
-                                    fix="set_image_path", fix_arg=rel))
 
     # (empty annotations -> 📭 Empty tool; label names -> 📝 Label Ambiguities;
     #  duplicate shapes / YOLO lines -> 🔍 Duplicate Shapes; split leakage -> 🖼️ Duplicate Images)
@@ -243,16 +385,9 @@ def validate_sample(adapter, sample: Sample, opts: ValidationOptions) -> list[Is
     # -- shape-level ----------------------------------------------------------
     for i, s in enumerate(ann.shapes):
         label = str(s.get("label", ""))
-        if is_yolo:
-            if s.get("_error"):
-                issues.append(Issue(ERROR, "Malformed label line", f"line {s['_line']}: {s['_error']}", i))
-                continue
-            cid = s["_class_id"]
-            n_cls = len(adapter.class_map.names)   # raw class map (a view mapping may merge names)
-            if n_cls and not 0 <= cid < n_cls:
-                issues.append(Issue(ERROR, "Class ID out of range",
-                                    f"line {s['_line']}: id {cid} (valid 0-{n_cls - 1})", i))
-        elif not label.strip():
+        if shape_issue.get(i) or (is_yolo and s.get("_error")):
+            continue                                  # reported above (format); no geometry for a broken shape
+        if not is_yolo and not label.strip():
             issues.append(Issue(ERROR, "Empty label", "shape has no label", i))
         if opts.geometry:
             for code in geometry_issues(s, w, h, opts.min_area_px, normalized=ann.normalized):
@@ -279,12 +414,7 @@ def validate_dataset(adapter, samples: list[Sample]) -> list[tuple[str, Issue]]:
         src = str(cm.source) if cm.source else str(adapter.root)
         for p in cm.problems:
             out.append((src, Issue(ERROR, "Class map problem", p)))
-    orphans = adapter.orphans(samples)
-    for p in orphans["annotations_without_image"]:
-        out.append((str(p), Issue(ERROR, "Label without image", p.name)))
-    if adapter.type in (DatasetType.LABELME, DatasetType.CLS_LABELME):
-        for p in orphans["images_without_annotation"]:
-            out.append((str(p), Issue(WARNING, "Image without annotation", p.name)))
+    # image <-> label pairing (files without their partner): the Image–Label Pairs check
     return out
 
 

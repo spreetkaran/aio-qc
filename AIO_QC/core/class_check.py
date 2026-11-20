@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from AIO_QC.core.ui_yield import yield_to_ui
+
 
 @dataclass
 class ClassIdScan:
@@ -27,13 +29,17 @@ class ClassIdScan:
     examples: dict = field(default_factory=dict)          # id -> first file using it
     bad: int = 0                           # lines whose first token is not an integer
     unreadable: int = 0
+    cancelled: bool = False
 
     @property
     def max_id(self) -> int:
         return max(self.counts) if self.counts else -1
 
 
-def _scan_file(path: Path):
+def _scan_file(path: Path, stop=None):
+    if stop is not None and stop():
+        return None, 0
+    yield_to_ui(stop=stop)                          # a zoom / pan in progress goes first
     counts, bad = Counter(), 0
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -55,13 +61,18 @@ def _scan_file(path: Path):
     return counts, bad
 
 
-def scan_class_ids(label_files, workers: int | None = None, progress=None) -> ClassIdScan:
-    """Threaded (I/O bound): ~100k small label files in a few seconds on an SSD."""
+def scan_class_ids(label_files, workers: int | None = None, progress=None, stop=None) -> ClassIdScan:
+    """Threaded (I/O bound): ~100k small label files in a few seconds on an SSD. `stop()` True: ends early (another
+    dataset opened, the app closing) — its pool threads never outlive the window."""
     files = [Path(p) for p in label_files if p is not None]
     out = ClassIdScan()
     workers = workers or min(16, (os.cpu_count() or 4) * 2)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for i, (path, (counts, bad)) in enumerate(zip(files, pool.map(_scan_file, files, chunksize=64)), 1):
+        fn = _scan_file if stop is None else (lambda p: _scan_file(p, stop))
+        for i, (path, (counts, bad)) in enumerate(zip(files, pool.map(fn, files, chunksize=64)), 1):
+            if stop is not None and stop():
+                out.cancelled = True
+                break
             if counts is None:
                 out.unreadable += 1
                 continue

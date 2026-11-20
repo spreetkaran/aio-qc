@@ -15,7 +15,7 @@ from .test_aio_image import _open, shell  # noqa: F401
 
 def test_version_and_name():
     import AIO_QC
-    assert AIO_QC.__version__ == "2.4.0" and AIO_QC.__appname__ == "AIO QC App"
+    assert AIO_QC.__version__ == "3.0.0" and AIO_QC.__appname__ == "AIO QC App"
 
 
 def test_status_bar_and_zoom_slider(shell, qtbot, tmp_path):  # noqa: F811
@@ -32,14 +32,17 @@ def test_status_bar_and_zoom_slider(shell, qtbot, tmp_path):  # noqa: F811
     w.canvas.clearSelection()
     assert sb.selection.text.text() == ""
     sb.showMessage("hello there", 2000)
+    sb.set_fields_visible(True)                                  # 3.0: shown when the canvas read-outs are off
     assert sb.message.text() == "hello there" and sb.pointer.isVisible()     # fields stay while a message shows
-    # toolbar order: zoom box, fit, 1:1, zoom out, slider, zoom in
+    # toolbar order (3.0): zoom out, zoom box, zoom in, slider (Settings ▸ Viewer, off by default), fit, 1:1
     tb = w.toolbar
     items = [tb.widgetForAction(a) for a in tb.actions()]
-    i = items.index(w.zoom_spin)
-    act = lambda k: getattr(items[i + k], "defaultAction", lambda: None)()
-    assert act(1) is w.a.fit and act(2) is w.a.actual and act(3) is w.a.zoom_out
-    assert items[i + 4] is w.zoom_slider and act(5) is w.a.zoom_in
+    i = items.index(w.zoom_group)                                # 3.0: [− 37 % ▾ +] then fit, 1:1
+    assert w.zoom_spin.parent() is w.zoom_group
+    assert items[i + 1].defaultAction() is w.a.fit and items[i + 2].text() == "1:1"
+    assert items[-1] is w.zoom_slider
+    assert not w._slider_action.isVisible()
+    w.set_zoom_slider_visible(True)
     # the slider zooms live and follows the canvas
     w.zoom_slider.slider.setValue(w.zoom_slider._to_pos(2.0))
     assert abs(w.canvas.current_zoom - 2.0) < 0.02
@@ -221,9 +224,9 @@ def test_mode_switch_icons(shell, qtbot):  # noqa: F811
     from AIO_QC.widgets.mode_switch import ModeSwitch
     sw = ModeSwitch("image")
     qtbot.addWidget(sw)
-    for b in sw.buttons.values():
-        assert b.text().startswith(" ") and not b.icon().isNull()
-    assert {s.width() for s in sw.buttons["image"].icon().availableSizes()} >= {16, 32}
+    for b in sw.buttons.values():                                # 3.0 mock-up: names in a segmented track, no icons
+        assert b.text() and b.icon().isNull()
+    assert sw.buttons["image"].isChecked() and sw.track.buttons == list(sw.buttons.values())
 
 
 def test_zoom_buttons_hold_to_zoom(shell, qtbot, tmp_path):  # noqa: F811
@@ -235,8 +238,7 @@ def test_zoom_buttons_hold_to_zoom(shell, qtbot, tmp_path):  # noqa: F811
     w = _open(shell, qtbot, FX.labelme(tmp_path / "ds"))
     qtbot.waitUntil(lambda: w.current_key is not None, timeout=10000)
     c = w.canvas
-    btn = next(b for b in (w.toolbar.widgetForAction(a) for a in w.toolbar.actions())
-               if getattr(b, "defaultAction", lambda: None)() is w.a.zoom_in)
+    btn = w._chrome_btns["zoom_in"]                                # the + of the − 37 % ▾ + group
     K = 1.1                                                        # Windows Photos: 100 % -> 110 %
     c.animate_to(1.0, duration=0)
     QTest.mouseClick(btn, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
@@ -267,8 +269,7 @@ def test_zoom_buttons_hold_to_zoom(shell, qtbot, tmp_path):  # noqa: F811
             speeds.append(math.log(cont[j][1] / cont[i][1]) / (cont[j][0] - cont[i][0]))
             i = j
     assert max(speeds) <= HoldToZoom.RATE * 1.2                     # never faster than the steady speed: no jumps
-    btn_out = next(b for b in (w.toolbar.widgetForAction(a) for a in w.toolbar.actions())
-                   if getattr(b, "defaultAction", lambda: None)() is w.a.zoom_out)
+    btn_out = w._chrome_btns["zoom_out"]
     from AIO_QC.widgets.zoom_widget import photos_step
     z1 = c.current_zoom
     QTest.mouseClick(btn_out, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))

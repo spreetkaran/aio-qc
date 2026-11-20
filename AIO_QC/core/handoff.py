@@ -40,6 +40,7 @@ from pathlib import Path
 
 from . import annodiff
 from .flagged_export import FlaggedItem, _fix_labelme, _rel, _targets
+from AIO_QC.core.diag import ignored as _ignored
 
 FORMAT = "aio-qc-batch"
 MANIFEST = "batch.json"
@@ -57,6 +58,7 @@ class BatchItem:
     status: str = ""
     issues: list = field(default_factory=list)        # ["Overlap: car / truck IoU 0.93", …]
     marks: list = field(default_factory=list)         # [(x1, y1, x2, y2, text)] in image pixels — hint image
+    tags: list = field(default_factory=list)          # class folders: the image's class as exported
 
 
 def sha(data: bytes | None) -> str | None:
@@ -76,8 +78,10 @@ def _posix(root: Path, p) -> str:
 
 # ---------------------------------------------------------------------------------------------------------- export
 def export_batch(root, items: list[BatchItem], out, kind: str, names=None, title: str = "", hints: bool = True,
-                 class_files=(), backup_base=True, progress=None, cancel=None) -> dict:
-    """Copy the files (dataset layout kept), write the manifest. The exported annotations are also stored in the
+                 class_files=(), backup_base=True, progress=None, cancel=None, flat_naming: dict | None = None) -> dict:
+    """Copy the files (dataset layout kept — or flat, flat_naming = a core.naming.Scheme as a dict: one folder,
+    names made unique; the manifest maps every batch file to its dataset file, so Import Batch merges back the
+    same either way), write the manifest. The exported annotations are also stored in the
     dataset's backup store (one operation) so a later merge can show what the annotator changed."""
     root, out = Path(root), Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -90,13 +94,16 @@ def export_batch(root, items: list[BatchItem], out, kind: str, names=None, title
         op = store.begin("handoff", f"Hand-off batch “{title or out.name}” · as exported")
     taken: set = set()
     entries, stats = [], {"items": 0, "files": 0, "hints": 0, "missing": [], "errors": [], "cancelled": False}
+    if kind == CLS_FOLDERS:
+        flat_naming = None                              # class folders: the folder IS the label — layout kept
+    flat = _flat_stems(root, items, out, kind, flat_naming) if flat_naming is not None else None
     try:
         for i, it in enumerate(items, 1):
             if cancel is not None and cancel.is_set():
                 stats["cancelled"] = True
                 break
             fi = FlaggedItem(it.display, [it.ann_path, it.image_path])
-            pairs = _targets(fi, root, out, True, taken)
+            pairs = _targets(fi, root, out, True, taken) if flat is None else _flat_targets(it, out, kind, flat)
             if not pairs:
                 stats["missing"].append(it.display)
                 continue
@@ -113,7 +120,8 @@ def export_batch(root, items: list[BatchItem], out, kind: str, names=None, title
                         img_dst = dst
                 if ann_dst is None and it.ann_path is not None and kind == "yolo":
                     # YOLO background image: no label file yet — where the annotator should create it
-                    ann_dst = out / _rel(root, Path(it.ann_path))
+                    ann_dst = out / _rel(root, Path(it.ann_path)) if flat is None else \
+                        out / "labels" / (flat[it.key] + ".txt")
                 if ann_dst is not None and img_dst is not None and ann_dst.suffix.lower() == ".json" \
                         and ann_dst.is_file():
                     _fix_labelme(ann_dst, img_dst)
@@ -131,6 +139,7 @@ def export_batch(root, items: list[BatchItem], out, kind: str, names=None, title
                     "batch_image": img_dst.relative_to(out).as_posix() if img_dst is not None else None,
                     "hint": hint.relative_to(out).as_posix() if hint is not None else None,
                     "base_sha256": sha(base), "note": it.note, "status": it.status, "issues": list(it.issues)[:50],
+                    **({"tags": list(it.tags)} if kind == CLS_FOLDERS else {}),
                 })
                 stats["items"] += 1
             except OSError as exc:
@@ -154,24 +163,44 @@ def export_batch(root, items: list[BatchItem], out, kind: str, names=None, title
         if g.scopes():
             g.export_html(out / "GUIDELINES.html", title=f"Labelling guidelines — {Path(root).name}")
             stats["guidelines"] = len(g.scopes())
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     manifest = {"format": FORMAT, "version": 1, "id": uuid.uuid4().hex, "title": title or out.name,
                 "created": time.time(), "user": _user(), "dataset": os.path.abspath(root), "kind": kind,
                 "classes": list(names or []), "backup_op": op, "items": entries}
     (out / MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    from . import provenance as PV
+    PV.record(out, "handoff", "Hand-off batch", inputs=[root], input_fingerprints=False,
+              counts={"items": len(entries)}, settings={"kind": kind, "title": title or out.name},
+              o=PV.make_origin("rule", "Hand-off batch"))
     with open(out / "notes.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["annotation", "image", "note", "findings", "hint"])
         for e in entries:
             w.writerow([e["batch_ann"] or "", e["batch_image"] or "", e["note"], " | ".join(e["issues"]),
                         e["hint"] or ""])
-    (out / "README.txt").write_text(_README.format(title=manifest["title"], n=len(entries),
+    (out / "README.txt").write_text((_README_CLS if kind == CLS_FOLDERS else _README).format(
+                                    title=manifest["title"], n=len(entries),
                                                    when=time.strftime("%Y-%m-%d %H:%M"), user=manifest["user"]),
                                     encoding="utf-8")
     stats["manifest"] = manifest
     return stats
 
+
+CLS_FOLDERS = "cls_folders"
+_README_CLS = """Hand-off batch: {title}
+{n} images · exported {when} by {user} with AIO QC
+
+What to do
+  1. Every image sits in the folder of its class (train/cat/…, val/dog/…). notes.csv lists the ones to check, with
+     the reviewer's note.
+  2. An image in the wrong class: MOVE it into the right class folder (same split folder). A class that does not
+     exist yet: make a new folder for it. GUIDELINES.html (if present) shows good / bad examples per class.
+  3. Do not rename the images, and keep batch.json — it is how the moves are merged back.
+  4. Return the whole folder (or a zip of it).
+
+The reviewer merges it with Review ▸ Hand-off ▸ Import Batch: every move becomes a class change (one undo step).
+"""
 
 _README = """Hand-off batch: {title}
 {n} files · exported {when} by {user} with AIO QC
@@ -186,6 +215,46 @@ What to do
 The reviewer merges it with Review ▸ Hand-off ▸ Import Batch. Files changed on both sides since the export are
 shown as conflicts and never overwritten silently.
 """
+
+
+def _flat_stems(root, items, out, kind, naming) -> dict:
+    """{key: batch stem} — unique in the batch folder (case ignored, by name without extension), core.naming;
+    renamed.csv in the batch lists every change."""
+    from . import naming as N
+    its = []
+    for it in items:
+        main = it.image_path or it.ann_path
+        if main is not None:
+            its.append(N.Item(it.key, _posix(root, main), path=str(main), extra_exts=(".json", ".txt")))
+    sc = N.Scheme.from_dict(naming or {"preset": "folder"})
+    rl = len(str(Path(out).resolve())) + len("/images")
+    P = N.plan(its, sc, flat=True, root_len=rl)
+    if not P.ok:
+        P = N.resolve(P, root_len=rl)
+    changed = [x for x in P.items if P.new[x.key] != x.stem]
+    if changed:
+        with open(Path(out) / "renamed.csv", "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["original", "new"])
+            w.writerows([x.rel, P.new[x.key] + x.suffix] for x in changed)
+    return {x.key: P.new[x.key] for x in P.items}
+
+
+def _flat_targets(it, out: Path, kind: str, flat: dict) -> list:
+    stem = flat.get(it.key)
+    if stem is None:
+        return []
+    pairs = []
+    for f in dict.fromkeys(p for p in (it.ann_path, it.image_path) if p is not None):
+        f = Path(f)
+        if not f.is_file():
+            continue
+        if kind == "yolo":
+            sub = "labels" if f.suffix.lower() == ".txt" else "images"
+            pairs.append((f, out / sub / (stem + f.suffix)))
+        else:
+            pairs.append((f, out / (stem + f.suffix)))
+    return pairs
 
 
 def _user() -> str:
@@ -252,6 +321,7 @@ class MergeRow:
     mine: str = ""                         # what changed here since the export (base -> now)
     reason: str = ""
     choice: str = ""                       # "theirs" | "mine" — merge decision (ready -> theirs by default)
+    new_class: str = ""                    # class folders: the class folder the annotator moved the image to
 
 
 def _labelme_keep_mine(ret: bytes, cur: bytes | None) -> tuple[bytes | None, str]:
@@ -303,6 +373,8 @@ def _yolo_check(ret: bytes, n_classes: int) -> str:
 def compare(root, manifest: dict, batch_dir, kind: str | None = None, names=None, progress=None) -> list[MergeRow]:
     root, batch_dir = Path(root), Path(batch_dir)
     kind = kind or manifest.get("kind", "labelme")
+    if kind == CLS_FOLDERS:
+        return _compare_cls(root, manifest, batch_dir)
     names = list(names) if names else list(manifest.get("classes") or [])
     op = manifest.get("backup_op")
     store = None
@@ -322,6 +394,56 @@ def compare(root, manifest: dict, batch_dir, kind: str | None = None, names=None
     finally:
         if store is not None:
             store.close()
+    return rows
+
+
+def _compare_cls(root: Path, manifest: dict, batch_dir: Path) -> list[MergeRow]:
+    """Class folders: where is every exported image now? Moved to another class folder = a class change."""
+    from .dataset import IMAGE_EXTENSIONS
+    where: dict = {}
+    for dp, dns, fns in os.walk(batch_dir):
+        dns[:] = [d for d in dns if not d.startswith((".", "_hints"))]
+        for f in fns:
+            if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS:
+                where.setdefault(f, []).append(Path(dp) / f)
+    rows = []
+    for e in manifest.get("items") or []:
+        img = e.get("image")
+        target = root / img if img and not os.path.isabs(img) else None
+        base = (e.get("tags") or [Path(img).parent.name if img else ""])[0]
+        if target is None or not e.get("batch_image"):
+            rows.append(MergeRow(e, "invalid", target, reason="the image was outside the dataset folder"))
+            continue
+        name = Path(e["batch_image"]).name
+        found = where.get(name) or []
+        if not found:
+            rows.append(MergeRow(e, "missing", target, reason="the image is not in the returned batch"))
+            continue
+        if len(found) > 1:
+            rows.append(MergeRow(e, "invalid", target, reason=f"{name} is in the batch twice: "
+                                 + ", ".join(p.relative_to(batch_dir).parent.as_posix() for p in found[:3])))
+            continue
+        p = found[0]
+        if p.parent == batch_dir:
+            rows.append(MergeRow(e, "invalid", target, reason="moved out of every class folder"))
+            continue
+        new = p.parent.name
+        if new == base:
+            rows.append(MergeRow(e, "unchanged", target, theirs="no changes", reason="returned in its class"))
+            continue
+        if not target.is_file():
+            cur = next((d.name for d in target.parent.parent.iterdir() if d.is_dir()
+                        and (d / target.name).is_file()), None) if target.parent.parent.is_dir() else None
+            if cur == new:
+                rows.append(MergeRow(e, "same", target, reason=f"already in {new} here", new_class=new))
+            else:
+                now = target.parent.parent / cur / target.name if cur else target   # where it is here now
+                rows.append(MergeRow(e, "conflict" if cur else "invalid", now, theirs=f"{base} → {new}",
+                                     mine=f"{base} → {cur}" if cur else "",
+                                     reason="moved here too since the export" if cur else
+                                     "the image is no longer in the dataset", new_class=new))
+            continue
+        rows.append(MergeRow(e, "ready", target, theirs=f"{base} → {new}", choice="theirs", new_class=new))
     return rows
 
 
@@ -379,6 +501,32 @@ def _compare_one(root, batch_dir, e, kind, names, store, op) -> MergeRow:
                     choice="")
 
 
+def _stamped(data: bytes, target: Path, title: str, root) -> bytes:
+    """A returned annotation with its provenance: the changes the annotator made, against the dataset's file."""
+    from . import provenance as PV
+    if not PV.enabled():
+        return data
+    o = PV.make_origin("manual", "Hand-off batch", detail=f"returned: {title}" if title else "returned")
+    try:
+        if target.suffix.lower() == ".json":
+            d = json.loads(data.decode("utf-8"))
+            if isinstance(d, dict) and isinstance(d.get("shapes"), list):
+                PV.stamp_labelme(d, target, o=o)
+                return (json.dumps(d, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        elif target.suffix.lower() == ".txt":
+            old = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
+            new = data.decode("utf-8").splitlines()
+            try:
+                rel = target.relative_to(root).as_posix()
+            except ValueError:
+                rel = target.name
+            PV.log_yolo(root, rel, PV.yolo_counts([ln.split() for ln in old if ln.strip()],
+                                                          [ln.split() for ln in new if ln.strip()]), o)
+    except (OSError, ValueError, UnicodeDecodeError):
+        pass
+    return data
+
+
 def apply_rows(root, rows: list[MergeRow], title: str = "") -> tuple[list[MergeRow], list[str], int | None]:
     """Write every row whose choice is "theirs" (backup first, atomic replace). -> (written, errors, backup op)."""
     from .backups import BackupStore
@@ -396,7 +544,7 @@ def apply_rows(root, rows: list[MergeRow], title: str = "") -> tuple[list[MergeR
                     store.save(op, r.target)
                 r.target.parent.mkdir(parents=True, exist_ok=True)
                 tmp = r.target.with_name(f".{r.target.name}.aioqc_merge")
-                tmp.write_bytes(r.data)
+                tmp.write_bytes(_stamped(r.data, r.target, title, root))
                 if r.target.exists():
                     try:
                         shutil.copystat(r.target, tmp)

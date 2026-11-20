@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import os
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
+
 import pytest
 
 from .fx_fixtures import D
@@ -113,8 +116,14 @@ def test_player_plays_the_playlist_and_returns(shell3, qtbot, tmp_path):  # noqa
     qtbot.waitUntil(lambda: fx.video_path.endswith("a.mp4") and fx.is_playing, timeout=30000)
     assert fx.current_frame >= 49                           # started at the in point (2 s)
     qtbot.waitUntil(lambda: bool(fx.canvas._dets), timeout=10000)
-    labels = [b[4] for b in fx.canvas._dets]
-    assert any(lbl.startswith("dummy_a:") for lbl in labels) and any(lbl.startswith("dummy_b:") for lbl in labels)
+    # two models: every label carries its model's numbered badge (in the model's colour); colours are per class
+    badges = {b[7][0] for b in fx.canvas._dets if len(b) > 7 and b[7]}
+    assert badges == {"1", "2"}, fx.canvas._dets[:3]
+    from AIO_QC.tools.frame_extractor.widgets.det_paint import ClassColors
+    cc = ClassColors.shared()
+    for b in fx.canvas._dets:
+        assert " : " in b[4]                                            # "car : 0.64"
+        assert b[5].name() == cc.get(b[4].split(" : ")[0]).name()        # the class's colour, not the model's
     # the out point (3 s) ends the first video; the second one plays next
     qtbot.waitUntil(lambda: fx.video_path.endswith("b.mp4"), timeout=30000)
     qtbot.waitUntil(lambda: fx.is_playing, timeout=30000)
@@ -126,7 +135,8 @@ def test_player_plays_the_playlist_and_returns(shell3, qtbot, tmp_path):  # noqa
     # model toggles and the threshold redraw without re-running anything
     n = len(fx.canvas._dets)
     rv.models_box.itemAt(1).widget().setChecked(False)
-    assert all(not b[4].startswith("dummy_b") for b in fx.canvas._dets) and len(fx.canvas._dets) <= n
+    assert all(not (len(b) > 7 and b[7] and b[7][0] == "2") for b in fx.canvas._dets) and len(fx.canvas._dets) <= n
+    assert all(not (len(b) > 7 and b[7]) for b in fx.canvas._dets)          # one model left: no badges needed
     rv.conf.setValue(99)
     assert len(fx.canvas._dets) <= 1
     # End review: back to the video open before, at its frame
@@ -233,8 +243,47 @@ def test_review_panel_events_classes_and_hard_frames(shell3, qtbot, tmp_path, mo
     # class filter hides a class everywhere
     qtbot.waitUntil(lambda: rv._last[1] == "exact", timeout=10000)
     rv._toggle_class("plate", False)
-    assert all(" plate " not in b[4] for b in fx.canvas._dets) and "of" in rv.class_btn.text()
+    assert all(b[4].split(" : ")[0] != "plate" for b in fx.canvas._dets) and "of" in rv.legend_label.text()
+    ticks = {rv.legend.item(r).data(Qt.ItemDataRole.UserRole): rv.legend.item(r).checkState()
+             for r in range(rv.legend.count())}
+    assert ticks.get("plate") == Qt.CheckState.Unchecked
     rv._show_all_classes()
+    # display: colour by model, class-only labels, no labels, fill; the frame saved at full resolution with its boxes
+    rv.color_by.setCurrentIndex(rv.color_by.findData("model"))
+    cols = {b[5].name() for b in fx.canvas._dets}
+    assert cols and cols <= {QColor(c).name() for c in pl.colors}
+    rv.color_by.setCurrentIndex(rv.color_by.findData("class"))
+    rv.labels_cb.setCurrentIndex(rv.labels_cb.findData("class"))
+    assert fx.canvas._dets and all(" : " not in b[4] for b in fx.canvas._dets)
+    rv.labels_cb.setCurrentIndex(rv.labels_cb.findData("off"))
+    assert fx.canvas._det_opts["labels"] is False
+    rv.fill_cb.setChecked(True)
+    assert fx.canvas._det_opts["fill"] is True
+    img = fx.canvas.frame_with_detections()
+    assert img is not None and (img.width(), img.height()) == (fx.engine.width, fx.engine.height)
+    png = tmp_path / "shot.png"
+    monkeypatch.setattr(RD.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(png), "")))
+    rv.save_frame()
+    assert png.is_file() and png.stat().st_size > 1000
+    rv.labels_cb.setCurrentIndex(rv.labels_cb.findData("full"))
+    rv.fill_cb.setChecked(False)
+    # Clean while playing: no labels and thin outlines while playing, labels back when paused
+    rv.clean_cb.setChecked(True)
+    rv._playing = True
+    rv.redraw()
+    assert fx.canvas._det_opts["labels"] is False and fx.canvas._det_opts["thin"] is True
+    rv._playing = False
+    rv.redraw()
+    assert fx.canvas._det_opts["labels"] is True and fx.canvas._det_opts["thin"] is False
+    rv.clean_cb.setChecked(False)
+    rv.shade_cb.setChecked(True)
+    assert fx.canvas._det_opts["shade"] is True and all(len(b) > 8 and 0 <= b[8] <= 1 for b in fx.canvas._dets)
+    rv.shade_cb.setChecked(False)
+    # Alt+n shows / hides model n
+    on = rv.models_box.itemAt(0).widget().isChecked()
+    rv.toggle_model_n(1)
+    assert rv.models_box.itemAt(0).widget().isChecked() is (not on)
+    rv.toggle_model_n(1)
     # CSV of the current video
     csv_path = tmp_path / "d.csv"
     monkeypatch.setattr(RD.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(csv_path), "")))

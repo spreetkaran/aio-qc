@@ -179,7 +179,7 @@ def test_exports_gallery_dialogs(win, qtbot, outdir, tmp_path):
         d.out_edit.setText(str(tmp_path / f"clip_{mode}.mp4"))
         d.start()
         qtbot.waitUntil(lambda: d.job is None, timeout=60000)
-        assert d.status.text().startswith("Saved"), d.status.text()
+        assert d.status.text().startswith("✓ Saved"), d.status.text()
         d.close()
     specs = P.unique_labels([P.spec_from_cfg(m, {"models": [], "conf": 0.25, "imgsz": 0, "iou": 0.7, "device": "cpu",
                                                   "env_python": "", "half": False, "sahi": False})
@@ -189,7 +189,10 @@ def test_exports_gallery_dialogs(win, qtbot, outdir, tmp_path):
     d.out_edit.setText(str(tmp_path / "annotated.mp4"))
     d.start()
     qtbot.waitUntil(lambda: d.job is None, timeout=120000)
-    assert d.status.text().startswith("Saved"), d.status.text()
+    assert d.status.text().startswith("✓ Saved"), d.status.text()
+    assert d.undo_btn.isVisibleTo(d)                       # a new file: Undo deletes it again
+    d._undo()
+    assert not (tmp_path / "annotated.mp4").exists() and d.status.text().startswith("↶ Deleted")
     d.close()
     # gallery: reject / restore / undo on extracted frames
     w.goto_frame(20)
@@ -211,7 +214,6 @@ def test_exports_gallery_dialogs(win, qtbot, outdir, tmp_path):
     g.close()
     # other windows: help, get started, palette, shortcuts, output, models
     w.open_help()
-    w.show_get_started()
     w.show_shortcuts()
     w.open_output_settings()
     w.open_models()

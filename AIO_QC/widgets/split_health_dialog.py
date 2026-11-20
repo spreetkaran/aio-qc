@@ -22,6 +22,7 @@ from AIO_QC.core import profile as P
 from AIO_QC.core import split_health as SH
 from AIO_QC.core.state import state_dir
 from .base_scan import BaseScanDialog, ResultRow
+from AIO_QC.core.diag import ignored as _ignored
 
 
 class SplitHealthDialog(BaseScanDialog):
@@ -69,7 +70,7 @@ class SplitHealthDialog(BaseScanDialog):
     def make_context(self):
         s = self.session
         if not s.splits:
-            raise ValueError("This dataset has no train / val / test split. Export & Split can build one.")
+            raise ValueError("This dataset has no train / val / test split. Convert & Split (its Split tab) can build one.")
         if not getattr(s, "index_complete", True):
             raise ValueError("The label index is still being built (see the status bar) — try again in a moment.")
         st = self.app.settings
@@ -87,7 +88,8 @@ class SplitHealthDialog(BaseScanDialog):
         if path is None or not path.exists():
             try:
                 path = ctx["adapter"].load(s, light=True).image_path
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 path = None
         if path is None:
             return []
@@ -215,7 +217,8 @@ class SplitHealthDialog(BaseScanDialog):
                 return smp.image_path
             try:
                 return s.base_adapter.load(smp, light=True).image_path
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 return None
         with s.as_tool("Split health"):
             new, errors, log = s.move_to_split([(r.key, r.payload.dst) for r in rows], image_of)

@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-✂️ Remove / re-order classes (GUI version of remove_class.py).
+✂ Remove / re-order classes (GUI version of remove_class.py).
 
-1. tick classes to remove        2. (YOLO) drag remaining classes into the new id order
-3. 🔍 Preview plan  (full pre-scan, nothing written)   4. ✂️ Apply (optional backup) -> post-scan verify
+1. tick classes to remove 2. (YOLO) drag remaining classes into the new id order
+3. Preview plan (full pre-scan, nothing written) 4. ✂ Apply (optional backup) -> post-scan verify
 """
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ class ClassRemovalDialog(QDialog):
         self.yolo = self.session.is_yolo
         self.plan = None
         self.setWindowTitle(self.TITLE)
-        self.resize(int(app.width() * 0.6), int(app.height() * 0.75))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
 
         counts: Counter = self.session.label_totals(raw=True)
         files: Counter = self.session.raw_label_files()
@@ -104,7 +105,7 @@ class ClassRemovalDialog(QDialog):
         self.backup = QCheckBox("Back up affected files to .aio_qc/backups/ first (recommended)")
         self.backup.setChecked(True)
         self.report = QTextEdit(readOnly=True)
-        self.report.setPlaceholderText("3 · Run 🔍 Preview plan — a full dry run; nothing is written.")
+        self.report.setPlaceholderText("3 · Run Preview plan — a full dry run; nothing is written.")
         self.report.setMaximumHeight(170)
         self.preview_btn = newButton("🔍 Preview plan (dry run)", slot=lambda: self.preview())
         self.apply_btn = newButton("✂️ Apply", slot=lambda: self.apply(), tip="Enabled after a successful preview of the current selection")
@@ -199,7 +200,7 @@ class ClassRemovalDialog(QDialog):
             QMessageBox.warning(self, self.TITLE, str(exc))
             return
         dlg.close()
-        lines = [f"<b>Dry run — nothing written.</b>",
+        lines = ["<b>Dry run — nothing written.</b>",
                  f"Shapes / rows removed: <b>{plan.rows_removed:,}</b> in {len(plan.affected):,} file(s)"]
         if self.yolo:
             lines.append(f"Files with renumbered ids only: {len(plan.remapped_files - set(plan.affected)):,}")
@@ -245,7 +246,7 @@ class ClassRemovalDialog(QDialog):
         text = [f"Modified {len(plan.files_to_write) - len(errors):,} file(s)."]
         if backup_dir:
             text.append(f"Backup: {backup_dir}")
-        text.append("Post-scan: ✅ clean" if not problems else f"Post-scan: ❌ {len(problems)} problem(s)")
+        text.append("Post-scan: clean" if not problems else f"Post-scan:  {len(problems)} problem(s)")
         all_errors = errors + problems
         if all_errors:
             self.app.log_errors([f"[class removal] {e}" for e in all_errors])

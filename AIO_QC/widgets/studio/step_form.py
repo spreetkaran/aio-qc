@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 from AIO_QC.core.tabular import expr as X
 from AIO_QC.core.tabular import steps as S
 from AIO_QC.utils import style as apply_style
+from AIO_QC.core.diag import ignored as _ignored
 
 
 class ColumnsList(QWidget):
@@ -83,7 +84,10 @@ class AggsEditor(QWidget):
         cb.addItems(self.columns)
         if col in self.columns:
             cb.setCurrentText(col)
-        rm = QPushButton("✕")
+        rm = QPushButton()
+        from AIO_QC.utils import set_icon as _si
+        _si(rm, "close-x")
+        rm.setToolTip("Remove")
         rm.setFixedWidth(28)
         h.addWidget(fn)
         h.addWidget(QLabel("of"))
@@ -211,6 +215,7 @@ class StepDialog(QDialog):
             self.preview.setText("First rows → " + ", ".join(str(x) for x in vals[:5]))
             apply_style(self.preview, "color:@muted;")
         except Exception as exc:
+            _ignored(exc)
             self.preview.setText(f"⚠ {exc}")
             apply_style(self.preview, "color:@error;")
 

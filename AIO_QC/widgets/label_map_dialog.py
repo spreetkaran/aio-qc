@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔀 Label mapping (view-time).
+ Label mapping (view-time).
 
 One row per ORIGINAL label: tick "Apply", type/pick the mapped label. The mapping changes what
 the viewer, the labels list, stats and every QC check see — files are untouched unless
@@ -22,6 +22,7 @@ from AIO_QC.utils import theme_color, labelValidator, newButton, newIcon
 from AIO_QC import utils
 from AIO_QC.core.checks import classify_labels
 from AIO_QC.core.mapping import load_mapping_file
+from AIO_QC.core.diag import ignored as _ignored
 
 COL_APPLY, COL_LABEL, COL_INST, COL_FILES, COL_TARGET, COL_RESULT = range(6)
 
@@ -31,7 +32,7 @@ class LabelMapDialog(QDialog):
     The ONE place where labels are renamed / merged:
       * view-only mapping (files untouched) — "Apply (view only)"
       * permanent relabel — "Write to files" with a scope (current file / file list / all files)
-    Other tools hand over here: 📝 Label Ambiguities (pre-filled suggestions), label-list context menus, Ctrl+R.
+    Other tools hand over here: Label Ambiguities (pre-filled suggestions), label-list context menus, Ctrl+E.
     """
 
     def __init__(self, app, prefill: dict | None = None, focus: str | None = None, scope: int = 2):
@@ -39,7 +40,8 @@ class LabelMapDialog(QDialog):
         self.app, self.session = app, app.session
         self.setWindowTitle("Label Mapping")
         self.setWindowIcon(newIcon("tool-label-map"))
-        self.resize(int(app.width() * 0.55), int(app.height() * 0.7))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
 
         self.inst: Counter = self.session.label_totals(raw=True)
         self.files: Counter = self.session.raw_label_files()
@@ -64,7 +66,7 @@ class LabelMapDialog(QDialog):
         bar = QHBoxLayout()
         bar.addWidget(self.search, 1)
         for text, slot, tip in (
-            ("✨ Suggest", self.suggest, "Fill unmapped rows with format variants / close matches of the class list"),
+            ("Suggest", self.suggest, "Fill unmapped rows with format variants / close matches of the class list"),
             ("⇉ Set selected…", self.set_selected, "Map every selected row to one name"),
             ("📥 Import…", self.import_file, "JSON {old: new}, a config.py with CLASS_MAP, or 'old -> new' lines"),
             ("📤 Export…", self.export_file, "Save the ticked mapping as JSON"),
@@ -117,7 +119,7 @@ class LabelMapDialog(QDialog):
             if r >= 0:
                 self._set(r, dst)
         if prefill:
-            info.setText(info.text() + f"<br><b>{len(prefill)} suggestion(s) pre-filled from 📝 Label Ambiguities "
+            info.setText(info.text() + f"<br><b>{len(prefill)}suggestion(s) pre-filled from Label Ambiguities "
                                        "— review, then apply or write.</b>")
         self._update_summary()
         if focus is not None:
@@ -267,6 +269,7 @@ class LabelMapDialog(QDialog):
         try:
             m = load_mapping_file(path)
         except Exception as exc:
+            _ignored(exc)
             QMessageBox.warning(self, "Import", str(exc))
             return
         hit = 0

@@ -23,6 +23,7 @@ every mode's menu bar corner, File ▸ Settings… (Ctrl+,) and the command pale
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -33,6 +34,8 @@ from PyQt6.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDialog, QD
                              QPushButton, QScrollArea, QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 from AIO_QC.utils.qt_utils import fit_to_screen, newIcon
+from AIO_QC.utils.qt_utils import later
+from AIO_QC.core.diag import ignored as _ignored
 
 NO_DEFAULT = object()
 KINDS = ("bool", "choice", "int", "float", "text", "file", "folder", "button", "info")
@@ -180,7 +183,7 @@ class _Row(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         from PyQt6.QtWidgets import QGridLayout
         lay = QGridLayout(self)
-        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setContentsMargins(12, 10, 10, 10)
         lay.setHorizontalSpacing(12)
         lay.setVerticalSpacing(2)
         lay.setColumnStretch(0, 1)
@@ -292,7 +295,8 @@ class _Row(QWidget):
         s, w = self.s, self.editor
         try:
             v = s.value()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             v = None
         if w is not None:
             w.blockSignals(True)
@@ -317,7 +321,8 @@ class _Row(QWidget):
             if s.enabled is not None:
                 try:
                     on = bool(s.enabled())
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     on = False
             w.setEnabled(on)
         self.reset.setVisible(bool(s.has_default and not s.is_default()))
@@ -335,10 +340,16 @@ class SettingsDialog(QDialog):
         self.groups: list[QGroupBox] = []
         self._syncing = False
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 12)
         body = QHBoxLayout()
+        body.setSpacing(0)
         outer.addLayout(body, 1)
-        # ---- sidebar
-        side = QVBoxLayout()
+        # ---- sidebar (3.0: a quiet panel — search on top, the sections as rounded rows)
+        side_box = QFrame()
+        side_box.setObjectName("settingsSide")
+        side = QVBoxLayout(side_box)
+        side.setContentsMargins(12, 14, 10, 12)
+        side.setSpacing(10)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search settings")
         self.search.setAccessibleName("Search settings")
@@ -347,52 +358,86 @@ class SettingsDialog(QDialog):
         self.search.installEventFilter(self)
         side.addWidget(self.search)
         self.nav = QListWidget()
+        self.nav.setObjectName("settingsNav")
         self.nav.setAccessibleName("Settings sections")
         self.nav.setIconSize(QSize(18, 18))
-        self.nav.setMinimumWidth(210)
-        self.nav.setMaximumWidth(260)
+        self.nav.setMinimumWidth(200)
+        self.nav.setMaximumWidth(250)
         self.nav.setWordWrap(True)
+        self.nav.setSpacing(1)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.nav.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.nav.itemActivated.connect(self._activate)
         self.nav.itemClicked.connect(self._activate)
         side.addWidget(self.nav, 1)
-        body.addLayout(side)
+        body.addWidget(side_box)
         # ---- page
         self.scroll = QScrollArea()
+        self.scroll.setObjectName("settingsPage")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
+        content.setObjectName("settingsContent")
         self.content = content
         page = QVBoxLayout(content)
+        page.setContentsMargins(22, 16, 22, 16)
+        page.setSpacing(22)
         for sec in self.sections:
-            g = QGroupBox(sec.title.replace("&", "&&"))
+            g = QWidget()                                     # one section: heading, description, then a card
             g.setObjectName(f"section:{sec.title}")
-            gl = QVBoxLayout(g)
-            gl.setSpacing(0)
+            sl = QVBoxLayout(g)
+            sl.setContentsMargins(0, 0, 0, 0)
+            sl.setSpacing(6)
+            head = QHBoxLayout()
+            head.setSpacing(8)
+            if getattr(sec, "icon", None):
+                ic = QLabel()
+                ic.setPixmap(newIcon(sec.icon).pixmap(18, 18))
+                head.addWidget(ic)
+            ht = QLabel(sec.title.replace("&", "&&"))
+            ht.setObjectName("settingsHeading")
+            hf = ht.font()
+            hf.setPixelSize(16)
+            hf.setWeight(hf.Weight.DemiBold)
+            ht.setFont(hf)
+            head.addWidget(ht)
+            head.addStretch(1)
+            sl.addLayout(head)
             if sec.description:
                 d = QLabel(sec.description)
                 d.setWordWrap(True)
-                d.setStyleSheet("color: palette(placeholder-text); padding: 2px 8px 6px 8px;")
-                gl.addWidget(d)
+                d.setObjectName("settingsSectionDesc")
+                sl.addWidget(d)
+            card = QFrame()
+            card.setObjectName("settingsCard")
+            gl = QVBoxLayout(card)
+            gl.setContentsMargins(4, 4, 4, 4)
+            gl.setSpacing(0)
+            sl.addWidget(card)
+            first = True
             for s in sec.settings:
                 if s.key in self.rows:
                     raise ValueError(f"duplicate setting key {s.key}")
                 r = _Row(self, s)
                 self.rows[s.key] = r
+                if not first:
+                    line = QFrame()
+                    line.setObjectName("settingsLine")
+                    line.setFixedHeight(1)
+                    gl.addWidget(line)
+                first = False
                 gl.addWidget(r)
             if any(s.has_default for s in sec.settings):
-                rs = QPushButton("Reset section to defaults")
+                rs = QPushButton("Reset section")
+                rs.setToolTip("Every setting of this section back to its default")
                 rs.setIcon(newIcon("reset-default"))
                 rs.setFlat(True)
                 rs.setObjectName(f"reset:{sec.title}")
                 rs.setProperty("section_settings", [x.key for x in sec.settings])
                 self.section_resets.append((rs, sec))
                 rs.clicked.connect(lambda _c=False, sec=sec: self.reset_section(sec))
-                hl = QHBoxLayout()
-                hl.addStretch(1)
-                hl.addWidget(rs)
-                gl.addLayout(hl)
+                head.addWidget(rs)                           # beside the heading, quiet
             page.addWidget(g)
             self.groups.append(g)
         page.addStretch(1)
@@ -401,6 +446,7 @@ class SettingsDialog(QDialog):
         body.addWidget(self.scroll, 1)
         # ---- footer
         foot = QHBoxLayout()
+        foot.setContentsMargins(14, 10, 14, 0)
         for name, text, slot in (("settings_import", "Import…", self.import_file),
                                  ("settings_export", "Export…", self.export_file),
                                  ("settings_reset_all", "Reset all…", self.reset_all)):
@@ -421,7 +467,31 @@ class SettingsDialog(QDialog):
         self._lit = None
         self._show_sections()
         self.refresh()
-        self.resize(860, 620)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
+        self._style()
+
+    def _style(self):
+        from AIO_QC.widgets.design import tokens
+        t = tokens()
+        css = (f"#settingsSide {{ background: {t['surface2']}; border: 0; border-right: 1px solid {t['border']}; }}"
+               f"#settingsNav {{ background: transparent; border: 0; outline: 0; }}"
+               f"#settingsNav::item {{ padding: 7px 8px; border-radius: 6px; color: {t['text']}; }}"
+               f"#settingsNav::item:hover {{ background: {t['hover']}; }}"
+               f"#settingsNav::item:selected {{ background: {t['accent_soft']}; color: {t['accent_text']}; "
+               f"font-weight: 600; }}"
+               f"#settingsPage, #settingsContent {{ background: {t['window']}; }}"
+               f"#settingsHeading {{ color: {t['text']}; }}"
+               f"#settingsSectionDesc {{ color: {t['muted']}; }}"
+               f"#settingsCard {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 10px; }}"
+               f"#settingsLine {{ background: {t['border_soft']}; border: 0; margin: 0 10px; }}")
+        if css != self.styleSheet():
+            self.setStyleSheet(css)
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == e.Type.PaletteChange:
+            self._style()
 
     # ---- values
     def refresh(self):
@@ -436,6 +506,7 @@ class SettingsDialog(QDialog):
         try:
             s.set(s.valid(v))
         except Exception as e:
+            _ignored(e)
             QMessageBox.warning(self, self.windowTitle(), f"{s.title}: {e}")
         self.refresh()
 
@@ -443,6 +514,7 @@ class SettingsDialog(QDialog):
         try:
             s.set(None)
         except Exception as e:
+            _ignored(e)
             QMessageBox.warning(self, self.windowTitle(), f"{s.title}: {e}")
         self.refresh()
 
@@ -465,8 +537,8 @@ class SettingsDialog(QDialog):
                 if s.exportable and s.kind not in ("button", "info") and s.get is not None:
                     try:
                         out[s.key] = s.value()
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _ignored(_exc)
         return out
 
     def load_values(self, data: dict) -> tuple[int, list]:
@@ -487,6 +559,7 @@ class SettingsDialog(QDialog):
                     r.s.set(vv)
                     n += 1
                 except Exception as e:
+                    _ignored(e)
                     problems.append(f"{key}: {e}")
         self.refresh()
         return n, problems
@@ -661,7 +734,9 @@ def general_section() -> Section:
         motion.set_mode(m)
         from PyQt6.QtGui import QAction
         from PyQt6.QtWidgets import QApplication
-        for w in QApplication.topLevelWidgets():         # the old menu items (palette / shortcuts) follow
+        sh = getattr(QApplication.instance(), "shell", None)
+        pages = list(getattr(getattr(sh, "host", None), "pages", []) or [])
+        for w in QApplication.topLevelWidgets() + pages:  # the old menu items follow (also in the one window's pages)
             for act in w.findChildren(QAction, f"animations_{m}"):
                 act.setChecked(True)
             legacy = getattr(getattr(w, "a", None), "animations", None)
@@ -669,20 +744,57 @@ def general_section() -> Section:
                 legacy.blockSignals(True)
                 legacy.setChecked(m != "off")
                 legacy.blockSignals(False)
+    from AIO_QC.widgets.design import appearance_setting
     return Section("General", "palette", [
+        appearance_setting(),
         Setting("app.animations", "Animations", "choice", get=motion.mode, set=set_anim, default="full",
                 choices=[("full", "Full"), ("reduced", "Reduced"), ("off", "Off")],
                 description="Smooth motion for panels, drawers, dialogs, mode switches and the tours - in every "
                             "mode. Reduced: shorter and gentler; Off: everything changes at once.",
                 aliases=("motion", "transitions", "fade")),
+        __import__("AIO_QC.widgets.window_frame", fromlist=["x"]).system_title_setting(),
+        *([__import__("AIO_QC.widgets.window_frame", fromlist=["x"]).native_frame_setting()]
+          if sys.platform == "win32" else []),
+        Setting("app.fx_unload", "Unload the Frame Extractor when unused for", "int",
+                get=lambda: int(_app_st().value("shell/fx_unload_min", 15)),
+                set=lambda v: (_app_st().setValue("shell/fx_unload_min", int(v)), _rearm_unload()), default=15,
+                minimum=0, maximum=480, step=5, suffix=" min",
+                description="After this long in another mode, the Frame Extractor is closed — its state saved, as "
+                            "when the app quits — to give its memory back. The next switch opens it again on the "
+                            "same video and frame. Never while a batch extraction, a video review or another of its "
+                            "jobs is running. 0 = keep it open.",
+                aliases=("unload", "memory", "idle", "frame extractor", "free memory")),
+        Setting("app.provenance", "Record provenance", "bool",
+                get=lambda: _app_st().value("app/provenance", True, type=bool),
+                set=lambda v: (_app_st().setValue("app/provenance", bool(v)),
+                               __import__("AIO_QC.core.provenance", fromlist=["x"]).set_enabled(bool(v))),
+                default=True,
+                description="What made every annotation, dataset, image and model AIO QC writes — a manual edit, a "
+                            "model (its file name and fingerprint, the score), an import, a conversion, a rule — "
+                            "with the feature, the app version and the time. Never a person. Stored in the LabelMe "
+                            "files, a hidden .aio_qc_provenance.json in the folders it writes, inside the images "
+                            "it makes (XMP) and in trained models.",
+                aliases=("provenance", "lineage", "origin", "history", "metadata", "audit", "xmp")),
     ], "These apply to Image QC, the Frame Extractor and Data Studio alike.")
+
+
+def _rearm_unload():
+    from PyQt6.QtWidgets import QApplication
+    sh = getattr(QApplication.instance(), "shell", None)
+    if sh is not None and hasattr(sh, "_arm_unload"):
+        sh._arm_unload()
+
+
+def _app_st():
+    from AIO_QC.utils import app_settings
+    return app_settings()
 
 
 def open_settings(win, sections, title=None, key: str | None = None):
     """Show `win`'s settings (modal); key = jump to that setting."""
     dlg = SettingsDialog(win, sections, title or "Settings")
     if key and key in dlg.rows:
-        QTimer.singleShot(0, lambda: dlg.show_setting(key))
+        later(0, dlg, lambda: dlg.show_setting(key))
     dlg.exec()
     return dlg
 
@@ -739,11 +851,11 @@ def install_settings(win):
     btn.setAccessibleName("Settings")
     btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     btn.clicked.connect(lambda _c=False: win.open_settings())
-    h.addWidget(btn)
     for w in ([corner] if corner is not None else []) + extras:
         w.setParent(box)
         h.addWidget(w)
         w.show()
+    h.addWidget(btn)                                       # 3.0: the gear last, after the mode switch
     mb.setCornerWidget(box, Qt.Corner.TopRightCorner)
     box.show()
     win._settings_button = btn

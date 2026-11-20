@@ -11,7 +11,6 @@ Done checks (and what they found) are kept per dataset in .aio_qc/guide.json.
 from __future__ import annotations
 
 import json
-from html import escape
 import time
 from collections import Counter
 from pathlib import Path
@@ -22,6 +21,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDialogButto
 
 from AIO_QC import utils
 from AIO_QC.core import check_guide as CG
+from AIO_QC.core.diag import ignored as _ignored
 
 SETTING = "guide/enabled"
 SAMPLE = 300                     # files read in the background for the relationship / text / frame signals
@@ -41,11 +41,15 @@ def sample_signals(adapter, samples) -> dict:
     n = len(samples)
     pick = samples if n <= SAMPLE else [samples[i * n // SAMPLE] for i in range(SAMPLE)]
     st, multi, texts, poly, shapes = RL.RuleStats(), 0, 0, 0, 0
+    unpaired = 0
     for s in pick:
         try:
             ann = adapter.load(s, light=True)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             continue
+        if not ann.exists or (not ann.normalized and ann.image_path is None and not ann.image_data):
+            unpaired += 1                             # no label file (YOLO) / the JSON's image is missing
         labs = {str(x.get("label", "")) for x in ann.shapes}
         multi += len(labs) >= 2
         for x in ann.shapes:
@@ -54,8 +58,8 @@ def sample_signals(adapter, samples) -> dict:
             poly += x.get("shape_type") == "polygon"
         try:
             st.add(ann.shapes, ann.tags, ann.width or None, ann.height or None, normalized=bool(ann.normalized))
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     parts = []
     for (child, parent), n_in in st.inside.items():
         tot = st.inst[child]
@@ -64,7 +68,8 @@ def sample_signals(adapter, samples) -> dict:
     parts.sort(key=lambda p: (-p[2], p[0]))
     read = max(st.images, 1)
     return dict(multi_class=multi / read, texts=texts, polygons=poly / max(shapes, 1), parts=parts,
-                frame_like=CG.frame_share(Path(s.name).name for s in pick))
+                frame_like=CG.frame_share(Path(s.name).name for s in pick),
+                unpaired=round(unpaired * n / max(len(pick), 1)))
 
 
 class _NextButton(QToolButton):
@@ -85,7 +90,9 @@ class _NextButton(QToolButton):
 
     def sizeHint(self):
         h = super().sizeHint()
-        return QSize(min(260, self._extra() + self.fontMetrics().horizontalAdvance(self.full)), h.height())
+        return QSize(self.WIDTH, h.height())      # one fixed slot: a longer check name never moves its neighbours
+
+    WIDTH = 250
 
     def minimumSizeHint(self):           # may shrink away entirely: never makes the window wider
         return QSize(0, super().minimumSizeHint().height())
@@ -135,6 +142,9 @@ class CheckGuide(QObject):
         p = self._path()
         try:
             self.done = dict(json.loads(p.read_text(encoding="utf-8")).get("done", {})) if p and p.is_file() else {}
+            for old, new in (("overlaps", "duplicates"), ("loose_boxes", "model_check")):   # merged into one check
+                if old in self.done:
+                    self.done.setdefault(new, self.done.pop(old))
         except (OSError, ValueError, AttributeError):
             self.done = {}
 
@@ -159,11 +169,13 @@ class CheckGuide(QObject):
         files = len(s.samples)
         try:
             n_rules = sum(1 for r in RL.load_rules(state_dir(s.root) / "rules.json") if r.get("enabled", True))
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             n_rules = 0
         try:
             models = len(dataset_models(s.root))
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             models = 0
         sig = CG.Signals(
             files=files, unreadable=len(s.index_errors), broken_images=len(getattr(app, "broken", {}) or {}),
@@ -220,6 +232,7 @@ class CheckGuide(QObject):
         w = FuncWorker(lambda: sample_signals(adapter, samples), self)
         w.done.connect(lambda r: self._sampled(r, gen))
         w.failed.connect(lambda m: self._sampled({}, gen))
+        w.finished.connect(w.deleteLater)                    # one per opened dataset: freed once it has ended
         self._worker = w
         w.start()
 
@@ -236,6 +249,9 @@ class CheckGuide(QObject):
         """Dataset closed."""
         self._gen, self._sample, self.done, self.recs = None, None, {}, []
         self.btn.setVisible(False)
+        hb = getattr(self.app, "hint_banner", None)
+        if hb is not None:
+            hb.clear("check_guide")
         toast = getattr(self.app, "toast", None)
         t = toast.find("check_guide") if toast is not None else None
         if t is not None:
@@ -244,6 +260,7 @@ class CheckGuide(QObject):
     def setting_changed(self, _v=None):
         self._update_button()
         if not self.on:
+            self.app.hint_banner.clear("check_guide")
             t = self.app.toast.find("check_guide")
             if t is not None:
                 t.dismiss()
@@ -277,28 +294,29 @@ class CheckGuide(QObject):
             self.show_dialog()
 
     def _toast_start(self):
+        """Where to start: the banner above the image (it does not cover the file list)."""
         nxt = self.next()
         if nxt is None:
             return
         todo = [r for r in self.recs if not r.done]
         then = ", ".join(self.title(r.tool) for r in todo[1:3])
-        html = (f"<b>Start here:</b> {self.title(nxt.tool)} — {escape(nxt.why)}"
-                + (f"<br><span style='color:gray'>then {escape(then)} …</span>" if then else ""))
-        self.app.toast.show_message(html, "info", key="check_guide", timeout_ms=15000, icon="next",
-                                    actions=[("Run", lambda: self.run(nxt.tool)),
-                                             ("All recommended", self.show_dialog)])
+        self.app.hint_banner.show_hint(f"Start here: {self.title(nxt.tool)}",
+                                       nxt.why + (f" · then {then}" if then else ""),
+                                       [("Run check", lambda: self.run(nxt.tool)),
+                                        ("All recommended", self.show_dialog)], key="check_guide")
 
     def _toast_next(self, tool, found):
         nxt = self.next()
         what = "" if tool in NO_COUNT or found is None else f" · {found:,} found"
         if nxt is None:
-            html = f"✓ {self.title(tool)} done{what}. <b>All recommended checks are done.</b>"
             acts = [("Review flagged", lambda: self.app.toggle_flagged_filter())] if self.signals().flagged else []
+            self.app.hint_banner.show_hint(f"{self.title(tool)} done{what}", "All recommended checks are done.",
+                                           acts, key="check_guide", icon="status-ok", timeout_ms=20000)
         else:
-            html = (f"✓ {self.title(tool)} done{what}. <b>Next:</b> {self.title(nxt.tool)} — "
-                    f"{escape(nxt.why)}")
-            acts = [("Run", lambda: self.run(nxt.tool)), ("All recommended", self.show_dialog)]
-        self.app.toast.show_message(html, "info", key="check_guide", timeout_ms=12000, icon="next", actions=acts)
+            self.app.hint_banner.show_hint(f"{self.title(tool)} done{what} — next: {self.title(nxt.tool)}", nxt.why,
+                                           [("Run check", lambda: self.run(nxt.tool)),
+                                            ("All recommended", self.show_dialog)], key="check_guide",
+                                           icon="status-ok")
 
     def show_dialog(self):
         if not self.app.validate_inputs():
@@ -312,7 +330,8 @@ class GuideDialog(QDialog):
         super().__init__(parent)
         self.g = guide
         self.setWindowTitle("Recommended Checks")
-        self.resize(820, 460)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "small")
         lay = QVBoxLayout(self)
         intro = QLabel("The checks that matter most for this dataset, most important first — worked out from what "
                        "the dataset holds (unreadable files, label names, empty files, splits, file names, how "

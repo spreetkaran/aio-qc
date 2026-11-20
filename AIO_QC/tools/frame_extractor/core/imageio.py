@@ -17,6 +17,7 @@ from functools import lru_cache
 
 import cv2
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 # ext: (label, lossy, note)
 FORMATS = {
@@ -105,17 +106,26 @@ def imread(path, flags=cv2.IMREAD_COLOR):
         if img is None and os.path.isfile(path):
             img = cv2.imdecode(np.fromfile(path, np.uint8), flags)
         return img
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
-def imwrite(path, img, ext=None, quality=DEFAULT_QUALITY):
-    """cv2.imwrite replacement: any supported format, quality, non-ASCII Windows paths."""
+def imwrite(path, img, ext=None, quality=DEFAULT_QUALITY, provenance: dict | None = None):
+    """cv2.imwrite replacement: any supported format, quality, non-ASCII Windows paths. provenance: a record to
+    embed in the file (JPEG / PNG: XMP + EXIF / text chunk, no re-encoding)."""
     ext = normalize_ext(ext or os.path.splitext(path)[1])
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    encode(img, ext, quality).tofile(path)
+    buf = encode(img, ext, quality)
+    if provenance:
+        from AIO_QC.core import provenance as PV
+        data = PV.embed_bytes(buf.tobytes(), provenance)
+        with open(path, "wb") as f:
+            f.write(data)
+        return
+    buf.tofile(path)
 
 
 def encoded_size(img, ext, quality):

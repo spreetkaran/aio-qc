@@ -3,7 +3,7 @@
 """
 Dataset / Labels / Shapes tab tools (dialogs). The tab a tool appears in is defined in app.QC_TOOLS.
 
-    📊 Dataset Stats · 🛡️ Validation · 📭 Empty · 🔍 Duplicate Shapes · 🖼️ Duplicate Images · 📝 Label Ambiguities
+     Dataset Stats · Validation · Empty · Duplicate Shapes · Duplicate Images · Label Ambiguities
 """
 from __future__ import annotations
 
@@ -18,22 +18,23 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QAbstractItemView, QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
     QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from AIO_QC.core import AnnotationError
 from AIO_QC.core.checks import (
-    ERROR, ValidationOptions, classify_labels, find_duplicate_pairs, validate_dataset,
+    ERROR, ValidationOptions, classify_labels, validate_dataset,
     validate_sample,
 )
 from AIO_QC.core import profile as P
 from AIO_QC.core.geometry import to_polygon
 from AIO_QC.core.fixes import FIX_DESCRIPTIONS, apply_fix, describe
-from AIO_QC.utils import hexc, theme_color, style as apply_style
+from AIO_QC.utils import theme_color, style as apply_style
 from AIO_QC.utils import newButton, newIcon, CSS_GRADIENT, balance_score, gradient_hex, imbalance_score, tone
 from .base_scan import BAR_ROLE, BaseScanDialog, ResultRow, dspin, ispin, readable_table
 from .card_gallery import Card, CardView, Panel, Shape
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     from natsort import natsorted
@@ -50,7 +51,7 @@ OBJ_BINS = [(0, 0, "0"), (1, 1, "1"), (2, 2, "2"), (3, 3, "3"), (4, 4, "4"), (5,
 
 class StatsDialog(BaseScanDialog):
     REVIEW_ACTIONS = False    # rows are labels, not files
-    TITLE, ICON = "Dataset Stats", "📊"
+    TITLE, ICON = "Dataset Stats", ""
     HELP = ("Labels: instances / images per label and split, coloured on a continuous scale by each label's share "
             "compared with an even split across all labels. Image profile: resolution, aspect family, orientation, "
             "format, small images, objects per image, lighting. Double-click any row to list its files.")
@@ -70,8 +71,9 @@ class StatsDialog(BaseScanDialog):
         readable_table(self.table)
         # summary cards + legend above the tables
         self.cards = {}
-        cards = QHBoxLayout()
-        cards.setSpacing(8)
+        from AIO_QC.utils.qt_utils import FlowLayout
+        cards_host = QWidget()                   # the summary cards wrap onto a second row on narrow screens
+        cards = FlowLayout(cards_host, spacing=8)
         for key, title in (("files", "Files"), ("inst", "Instances"), ("labels", "Labels"),
                            ("per", "Objects / file"), ("empty", "Without shapes"), ("bad", "Unreadable"),
                            ("imb", "Imbalance (max : min)"), ("rare", "Rarest label")):
@@ -89,11 +91,11 @@ class StatsDialog(BaseScanDialog):
         note = QLabel("Each label is compared with an equal share for every label. "
                       "Green = has its fair share or more · Yellow = somewhat rare · Red = very rare.")
         apply_style(note, "color: @muted;")
+        note.setWordWrap(True)
         note.setToolTip("'vs. equal share' column: 1.00 = exactly an equal share; 0.25 = a quarter of it.")
-        legend.addWidget(note)
-        legend.addStretch(1)
+        legend.addWidget(note, 1)
         self.table_host.insertLayout(0, legend)
-        self.table_host.insertLayout(0, cards)
+        self.table_host.insertWidget(0, cards_host)
         # wrap the label table + a profile table in tabs
         self.tabs = QTabWidget()
         self.table_host.removeWidget(self.table)
@@ -115,7 +117,7 @@ class StatsDialog(BaseScanDialog):
                 "label_keys": defaultdict(list), "empty_keys": [], "bad": 0, "n": 0,
                 "profile": self.profile_cb.isChecked(), "light": self.light_cb.isChecked(),
                 "prof": defaultdict(lambda: defaultdict(list)), "mapping": self.session.adapter.active,
-                "cache": self.session.cache}
+                "cache": self.session.cache, "cls": self.session.is_classification}
 
     def scan_sample(self, ctx, s):
         try:
@@ -182,6 +184,8 @@ class StatsDialog(BaseScanDialog):
         return []
 
     def columns_for(self, ctx):
+        if ctx.get("cls"):                         # classification: images per class
+            return ["Class", "Images", "Files", "% of labels", "vs. equal share"] + [f"{sp}" for sp in ctx["splits"]]
         return self.COLUMNS + [f"{sp} inst." for sp in ctx["splits"]]
 
     def finalize(self, ctx):
@@ -200,8 +204,8 @@ class StatsDialog(BaseScanDialog):
                 payload=label,
                 dot=gradient_hex(score, 0.55, 0.70),                            # status dot, readable on any theme
                 bars={3: (pct / max_pct if max_pct else 0.0, gradient_hex(score, 0.58, 0.65))}))
-        rows.append(ResultRow("", ("(no shapes)", 0, len(ctx["empty_keys"]), 0.0, "", *["" for _ in sp]),
-                              payload="__empty__", tone="muted"))
+        rows.append(ResultRow("", ("(no class)" if ctx.get("cls") else "(no shapes)", 0, len(ctx["empty_keys"]), 0.0,
+                                   "", *["" for _ in sp]), payload="__empty__", tone="muted"))
         rows.append(ResultRow("", ("TOTAL", total, ctx["n"], 100.0, "",
                                    *[sum(ctx["split_inst"][x].values()) for x in sp]),
                               payload="__total__", emphasis=True))
@@ -320,7 +324,10 @@ class StatsDialog(BaseScanDialog):
         split = ""
         if c["splits"]:
             split = " · " + ", ".join(f"{x}: {c['split_n'][x]:,}" for x in c["splits"])
-        mapped = " · 🔀 label mapping active" if c.get("mapping") else ""
+        mapped = "· label mapping active" if c.get("mapping") else ""
+        if c.get("cls"):
+            return (f"{c['n']:,} images · {len(c['inst'])} classes · {len(c['empty_keys']):,} without a class · "
+                    f"{c['bad']:,} unreadable · {per:.2f} classes/image{split}{mapped}")
         return (f"{c['n']:,} files · {total:,} instances · {len(c['inst'])} labels · "
                 f"{len(c['empty_keys']):,} without shapes · {c['bad']:,} unreadable · {per:.2f} objects/file"
                 f"{split}{mapped}")
@@ -329,7 +336,8 @@ class StatsDialog(BaseScanDialog):
         if row is None or row.payload == "__total__":
             return
         if row.payload == "__empty__":
-            keys, title = self.ctx["empty_keys"], "Files without shapes"
+            keys, title = self.ctx["empty_keys"], ("Images without a class" if self.ctx.get("cls")
+                                                   else "Files without shapes")
         else:
             keys, title = self.ctx["label_keys"].get(row.payload, []), f"Files with '{row.payload}'"
         if keys:
@@ -340,16 +348,20 @@ class StatsDialog(BaseScanDialog):
 # 🛡️ Validation
 # =============================================================================
 SHAPE_FIXABLE = {"Invalid geometry", "Class ID out of range", "Malformed label line", "Empty label",
-                 "Coordinates outside image"}
-FILE_TRASHABLE = {"Unreadable annotation", "Not LabelMe format", "Label without image"}
+                 "Coordinates outside image", "Schema error"}
+FILE_TRASHABLE = {"Unreadable annotation", "Not LabelMe format", "Not YOLO format"}
 
 
 class ValidationDialog(BaseScanDialog):
     SUPPORTED = DETECTION_TYPES | {DatasetType.CLS_LABELME}
-    TITLE, ICON = "Validation", "🛡️"
-    HELP = ("File & geometry INTEGRITY — pairing (image ↔ annotation), schema, imagePath, image size, class map / "
-            "class-id range, point counts, geometry (zero area, self-intersection, repeated vertices, outside the "
-            "image). Label names → 📝 Label Ambiguities · empty files → 📭 Empty · duplicates → 🔍 / 🖼️ Duplicates.")
+    TITLE, ICON = "Validation", ""
+    HELP = ("File & geometry INTEGRITY. Format: is each JSON really a LabelMe file (and if not, what it looks like — "
+            "COCO, Label Studio, VIA …), is each .txt really a YOLO label (not class names, pixel coordinates, CSV, "
+            "KITTI / DOTA …); the structure of every shape / line (label text, [x, y] points, point count for its "
+            "type, class id range, values 0…1); image size; class map; geometry (zero area, self-intersection, "
+            "repeated vertices, outside the image). Images without labels and labels without images → Image–Label "
+            "Pairs · label names → Label Ambiguities · empty files → Empty · duplicates → Duplicate & Overlapping "
+            "Shapes.")
     COLUMNS = ["Severity", "Category", "Detail", "Shape", "Proposed fix"]
     FILTER_COLUMN = 1
 
@@ -390,9 +402,9 @@ class ValidationDialog(BaseScanDialog):
     def summarize(self):
         c = Counter(r.cells[0] for r in self.rows if r)
         if not c:
-            return "✅ No issues found"
+            return "No issues found"
         fixable = sum(1 for r in self.rows if r and r.payload is not None and r.payload.fix)
-        return (f"❌ {c.get('Error', 0):,} error(s) · ⚠ {c.get('Warning', 0):,} warning(s) · "
+        return (f"{c.get('Error', 0):,} error(s) · ⚠ {c.get('Warning', 0):,} warning(s) · "
                 f"🩹 {fixable:,} with a proposed fix (tick rows → Review fixes…)")
 
     def review_fixes(self):
@@ -470,7 +482,8 @@ class FixPreviewDialog(QDialog):
             if row.key not in cache:
                 try:
                     cache[row.key] = session.base_adapter.load(session.by_key[row.key])
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     cache[row.key] = None
             ann = cache[row.key]
             shape = ann.shapes[iss.shape_index] if ann and iss.shape_index is not None and \
@@ -517,16 +530,26 @@ class FixPreviewDialog(QDialog):
 # 📭 Empty annotations
 # =============================================================================
 class EmptyDialog(BaseScanDialog):
-    TITLE, ICON = "Empty Annotations", "📭"
-    HELP = ("LabelMe JSONs without shapes, YOLO images with an empty or missing label file. "
-            "In YOLO these are usually intentional background/negative images — keep them unless unintended.")
+    TITLE, ICON = "Empty Annotations", ""
+    HELP = ("LabelMe JSONs and YOLO label files without shapes. In YOLO these are usually intentional "
+            "background / negative images — keep them unless unintended. (Images with no label file at all: "
+            "Image–Label Pairs.)")
+    HELP_CLS = ("Images without a class: LabelMe files whose flags are all false or missing (class folders: images "
+                "outside every class folder). Give them a class — Class panel, 1 … 9, Class Gallery's No class — or "
+                "move them to the trash.")
     COLUMNS = ["Kind", "Split"]
     FILTER_COLUMN = 0
     AUTO_START = True
     RESCAN_AFTER_EDIT = False
 
+    def __init__(self, app, *a, **k):
+        if getattr(app, "session", None) is not None and app.session.is_classification:
+            self.HELP = self.HELP_CLS                      # a classifier's "empty" = no class
+        super().__init__(app, *a, **k)
+
     def build_params(self, form):
         self.also_images = QCheckBox("also move images")
+        self.also_images.setChecked(self.session.is_classification)    # a classifier's file IS the image
         self.actions_layout.addWidget(self.also_images)
         self.add_action("🗑 Move to trash", self.trash_selected,
                         "Moves annotation files (and optionally images) to <root>/.aio_qc_trash")
@@ -541,7 +564,7 @@ class EmptyDialog(BaseScanDialog):
                 return [ResultRow(s.key, ("no class", s.split))]
             return []
         if not ann.exists:
-            return [ResultRow(s.key, ("no label file", s.split), tone="muted")]
+            return []                                # no file at all: Image–Label Pairs
         if not ann.shapes:
             return [ResultRow(s.key, ("no shapes", s.split))]
         return []
@@ -567,43 +590,85 @@ class EmptyDialog(BaseScanDialog):
 # =============================================================================
 # 🔍 Duplicates
 # =============================================================================
+# =============================================================================
+# Duplicate & overlapping shapes (one check)
+# =============================================================================
+PAIR_A, PAIR_B = "#22C3B5", "#FF6161"           # on the picture: A teal (kept / bigger), B coral (copy / smaller)
+
+
+def pair_panel(key, a, b, la, lb, norm, kind, ia=None, ib=None) -> Panel:
+    """One picture of a pair: the area around both shapes (the rest dimmed), A solid teal, B coral — dashed for
+    copies, which lie on top of A — and where they overlap hatched; each with an A / B tag carrying its label."""
+    xs = [q[0] for q in a + b]
+    ys = [q[1] for q in a + b]
+    copy = kind in ("exact", "double")
+    ta = f"{la}" + (f" #{ia}" if ia is not None and ia != "" else "")
+    tb = f"{lb}" + (f" #{ib}" if ib is not None and ib != "" else "")
+    return Panel(key, (min(xs), min(ys), max(xs), max(ys)),
+                 [Shape(a, PAIR_A, width=2.0, text=ta, badge="A", fill=0.10),
+                  Shape(b, PAIR_B, dashed=copy, width=2.0, text=tb, badge="B", fill=0.0 if copy else 0.10)],
+                 norm, spotlight=True, overlap=None if copy else (0, 1))
+
+
 class DuplicateDialog(BaseScanDialog):
+    """Duplicate & Overlapping Shapes: one scan for every pair of shapes worth a look — exact copies, one object
+    marked twice, boxes overlapping, a shape inside a bigger one of its class. Copies are grouped (each paired with
+    the group's first shape), so nothing is listed twice."""
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
-    TITLE, ICON = "Duplicate Shapes", "🔍"
-    HELP = ("Exact: identical geometry after rounding — independent of start vertex, drawing direction and "
-            "rectangle-vs-4-point-polygon. Overlap: IoU ≥ threshold (exact for box pairs, rasterised for polygons). "
-            "YOLO: identical label lines are exact duplicates. "
-            "Every duplicate is paired with the first shape of its cluster. Untick 'same class only' to catch one "
-            "object annotated with two labels — then choose which side to delete.")
-    COLUMNS = ["Label (kept)", "Label (dup)", "Kept #", "Dup #", "IoU"]
+    TITLE, ICON = "Duplicate & Overlapping Shapes", ""
+    HELP = ("Every pair of shapes in an image worth a look, any classes, each listed once:\n"
+            "• Exact copy — identical points (after rounding; start vertex, direction and rectangle vs 4-point "
+            "polygon do not matter). Two labels on one shape count too.\n"
+            "• Marked twice — IoU at or above the 'marked twice' threshold.\n"
+            "• Overlap — IoU at or above the overlap threshold.\n"
+            "• Inside — a shape almost entirely inside a bigger one of its class.\n"
+            "Copies are grouped: every copy is paired with the first shape of its group (A = kept, B = the copy), and "
+            "an overlap with a group is listed once. A smaller shape of another class inside a bigger one (a plate on "
+            "a car) is a part, not a mistake — tick the option to list those too. Pairs that are normal for your data "
+            "(a person carrying a bag): select one and “Expected for these classes” — those class pairs are skipped "
+            "from then on. Double-click a pair (or F8 on the image) to fix it there: B is selected, ready to move, "
+            "resize (click an edge, then the arrows) or delete.")
+    COLUMNS = ["Kind", "A", "B", "A #", "B #", "IoU", "B inside A"]
+    FILTER_COLUMN = 0
+    KIND_TEXT = {"exact": "Exact copy", "double": "Marked twice", "overlap": "Overlap", "inside": "Inside"}
 
     def build_params(self, form):
-        self.mode = QComboBox()
-        self.mode.addItems(["Exact points", "Overlap (IoU)"])
-        self.iou = dspin(0.3, 1.0, 0.90, 2, 0.01)
-        self.same = QCheckBox("Same class only")
-        self.same.setChecked(True)
+        self.double = dspin(0.5, 1.0, 0.85, 2, 0.01)
+        self.iou = dspin(0.05, 0.99, 0.30, 2, 0.05)
+        self.inside = ispin(50, 100, 85)
+        self.inside.setSuffix(" %")
         self.decimals = ispin(0, 8, 6 if self.session.is_yolo else 2)
-        self.mode.currentIndexChanged.connect(self._sync)
-        form.addRow("Mode:", self.mode)
-        form.addRow("IoU threshold:", self.iou)
-        form.addRow("Round points to decimals:", self.decimals)
+        self.same = QCheckBox("Only shapes of the same class")
+        self.nested = QCheckBox("Also a smaller shape of another class inside a bigger one (parts)")
+        for w, tip in ((self.double, "Two shapes overlapping this much are one object marked twice"),
+                       (self.iou, "Shapes overlapping at least this much are listed as an overlap"),
+                       (self.inside, "A shape covered this much by a bigger one of its class is listed as inside"),
+                       (self.decimals, "Points are rounded to this many decimals before comparing exact copies")):
+            w.setToolTip(tip)
+        form.addRow("Marked twice: IoU at least", self.double)
+        form.addRow("Overlap: IoU at least", self.iou)
+        form.addRow("Inside: covered at least", self.inside)
+        form.addRow("Exact copies: round to decimals", self.decimals)
         form.addRow(self.same)
-        self._sync()
-        self.add_action("🗑 Delete duplicate (B)", lambda: self.delete_shape_rows(self.target_rows(), "duplicate(s)"),
-                        "Keep the first shape of each pair")
-        self.add_action("🗑 Delete kept (A)", self._delete_kept,
-                        "For cross-class pairs where the first label is the wrong one")
+        form.addRow(self.nested)
+        self.add_action("🗑 Delete B", lambda: self.delete_shape_rows(self.target_rows(), "shape(s)"),
+                        "Delete B of each ticked (or selected) pair — the copy, or the smaller shape")
+        self.add_action("🗑 Delete A", self._delete_bigger,
+                        "Delete A of each ticked (or selected) pair — for a copy whose first label is the wrong one, "
+                        "or the bigger shape")
+        self.add_action("✓ Expected for these classes", self._expect,
+                        "These class pairs overlap by nature in your data: skip them from now on (Manage… undoes it)")
+        self.add_action("Manage expected…", self._manage_expected, "Class pairs that are skipped")
 
     def post_init(self):
-        """Pairs tab (visual, default) + Table tab; ticks shared."""
         self.init_marks()
-        self.cards = CardView(self, n_panels=2)
+        self.cards = CardView(self, n_panels=1)
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel("Left: the shape that is kept (A) · right: its duplicate (B, red) with A dashed for comparison · "
-                      "tick a pair, then “Delete duplicate (B)” or “Delete kept (A)”")
+        hint = QLabel("A teal (kept / bigger) · B coral (the copy — dashed — or the smaller shape) · the shared area "
+                      "hatched · double-click a pair to fix it on the image, then F8 for the next one")
+        hint.setWordWrap(True)
         apply_style(hint, "color:@muted;")
         lay.addWidget(hint)
         lay.addWidget(self.cards, 1)
@@ -612,62 +677,126 @@ class DuplicateDialog(BaseScanDialog):
         self.tabs.addTab(w, "Pairs")
         self.tabs.addTab(self.table, "Table")
         self.table_host.addWidget(self.tabs)
+        self.filter_box.currentIndexChanged.connect(lambda _i: self._refresh_cards())
+
+    def _ignores(self):
+        from AIO_QC.core.state import load_overlap_ignores
+        return load_overlap_ignores(self.session.root)
+
+    def make_context(self):
+        return {"adapter": self.session.adapter, "iou": self.iou.value(), "double": self.double.value(),
+                "inside": self.inside.value() / 100.0, "dec": self.decimals.value(), "same": self.same.isChecked(),
+                "nested": self.nested.isChecked(), "ignore": self._ignores()}
+
+    def scan_sample(self, ctx, s):
+        from AIO_QC.core.checks import find_shape_pairs
+        ann = ctx["adapter"].load(s, light=True)
+        shapes = ann.shapes
+        pairs = find_shape_pairs(shapes, ctx["iou"], ctx["double"], ctx["inside"], ctx["dec"], ctx["same"],
+                                 ctx["nested"], ctx["ignore"])
+
+        def outline(k):
+            poly = to_polygon(shapes[k])
+            return poly.tolist() if poly is not None else [list(p) for p in shapes[k].get("points", [])]
+        return [ResultRow(s.key, (self.KIND_TEXT[kind], shapes[a].get("label"), shapes[b].get("label"), a, b,
+                                  round(float(iou), 3), round(inside * 100)),
+                          shape_index=b, tone="warning" if kind in ("exact", "double") else None,
+                          payload={"a": outline(a), "b": outline(b), "norm": ann.normalized, "kind": kind})
+                for a, b, iou, inside, kind in pairs]
+
+    def summarize(self):
+        self._refresh_cards()
+        return super().summarize()
 
     def _refresh_cards(self):
         if not hasattr(self, "cards"):
             return
         self.prune_marks()
-        ok, dup, cmp_ = hexc("ok"), hexc("error"), hexc("ok")
         cards = []
         for row in self.visible_rows():
             p = row.payload or {}
             a, b = p.get("a") or [], p.get("b") or []
             if not a or not b:
                 continue
-            xs = [q[0] for q in a + b]
-            ys = [q[1] for q in a + b]
-            focus = (min(xs), min(ys), max(xs), max(ys))
-            same = row.cells[0] == row.cells[1]
+            kind = p.get("kind")
             s = self.session.by_key.get(row.key)
-            cards.append(Card(row, [
-                Panel(row.key, focus, [Shape(a, ok)], p.get("norm", False), caption=f"A · kept #{row.cells[2]}"),
-                Panel(row.key, focus, [Shape(a, cmp_, dashed=True, width=1.5), Shape(b, dup)], p.get("norm", False),
-                      caption=f"B · duplicate #{row.cells[3]}")],
-                chips=[(f"IoU {row.cells[4]:.2f}", "info"), ("same class" if same else "cross-class",
-                                                              "muted" if same else "warn")],
-                lines=[f"{row.cells[0]}" if same else f"{row.cells[0]}  vs  {row.cells[1]}",
-                       s.display if s else row.key]))
+            la, lb = row.cells[1], row.cells[2]
+            chips = [(row.cells[0], "warn" if kind in ("exact", "double") else "info")]
+            if kind in ("exact", "double") and la != lb:
+                chips.append(("two labels", "error"))
+            if kind != "exact":
+                chips.append((f"IoU {row.cells[5]:.2f}", "muted"))
+            if kind in ("overlap", "inside"):
+                chips.append((f"B {row.cells[6]} % inside A", "muted"))
+            cards.append(Card(row, [pair_panel(row.key, a, b, la, lb, p.get("norm", False), kind,
+                                               row.cells[3], row.cells[4])],
+                              chips=chips,
+                              lines=[la if la == lb else f"{la}  ·  {lb}", s.display if s else row.key],
+                              shape_index=row.shape_index))
         self.cards.set_cards(cards)
         self.tabs.setTabText(0, f"Pairs ({len(cards):,})")
 
-    def summarize(self):
+    def _delete_bigger(self):
+        rows = [ResultRow(r.key, r.cells, r.cells[3]) for r in self.target_rows()]
+        self.delete_shape_rows(rows, "shape(s)")
+
+    def _expect(self):
+        from AIO_QC.core.state import save_overlap_ignores
+        rows = self.target_rows()
+        if not rows:
+            QMessageBox.information(self, self.TITLE, "Tick or select a pair first.")
+            return
+        pairs = {tuple(sorted((str(r.cells[1]), str(r.cells[2])))) for r in rows}
+        text = ", ".join(f"{a} ↔ {b}" for a, b in sorted(pairs))
+        if not self.confirm(f"Skip overlaps between {text} from now on?\n\nNothing in your files changes; "
+                            "“Manage expected…” brings them back."):
+            return
+        save_overlap_ignores(self.session.root, self._ignores() | pairs)
+        self._hide_pairs(pairs)
+
+    def _hide_pairs(self, pairs):
+        for r in range(self.table.rowCount()):
+            row = self._row_at(r)
+            if row is not None and tuple(sorted((str(row.cells[1]), str(row.cells[2])))) in pairs:
+                self.table.setRowHidden(r, True)
+        for i, row in enumerate(self.rows):            # rows are addressed by position: blank them, never remove
+            if row is not None and tuple(sorted((str(row.cells[1]), str(row.cells[2])))) in pairs:
+                self.rows[i] = None
         self._refresh_cards()
-        return super().summarize()
+        self.status.setText(f"{len(self.visible_rows()):,} found")
 
-    def _delete_kept(self):
-        rows = [ResultRow(r.key, r.cells, r.cells[2]) for r in self.target_rows()]
-        self.delete_shape_rows(rows, "kept shape(s)")
+    def _manage_expected(self):
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QListWidget, QListWidgetItem
+        from AIO_QC.core.state import save_overlap_ignores
+        pairs = sorted(self._ignores())
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Expected overlaps")
+        v = QVBoxLayout(dlg)
+        v.addWidget(QLabel("Overlaps between these classes are skipped. Untick a pair to check it again."))
+        lst = QListWidget()
+        for a, b in pairs:
+            it = QListWidgetItem(f"{a}  ↔  {b}")
+            it.setData(Qt.ItemDataRole.UserRole, (a, b))
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked)
+            lst.addItem(it)
+        if not pairs:
+            lst.addItem("(none yet)")
+        v.addWidget(lst, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        v.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted or not pairs:
+            return
+        keep = {tuple(lst.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(lst.count())
+                if lst.item(i).checkState() == Qt.CheckState.Checked}
+        if keep != set(pairs):
+            save_overlap_ignores(self.session.root, keep)
+            self.status.setText("Expected pairs changed — Run again to see the pairs that came back")
 
-    def _sync(self):
-        iou_mode = self.mode.currentIndex() == 1
-        self.iou.setEnabled(iou_mode)
-        self.decimals.setEnabled(not iou_mode)
 
-    def make_context(self):
-        return {"adapter": self.session.adapter, "mode": "iou" if self.mode.currentIndex() else "exact",
-                "iou": self.iou.value(), "same": self.same.isChecked(), "dec": self.decimals.value()}
-
-    def scan_sample(self, ctx, s):
-        ann = ctx["adapter"].load(s, light=True)
-        shapes = ann.shapes
-        pairs = find_duplicate_pairs(shapes, ctx["mode"], ctx["iou"], ctx["same"], ctx["dec"])
-        def outline(k):                   # polygon for the pair cards (rectangles as 4 corners)
-            poly = to_polygon(shapes[k])
-            return poly.tolist() if poly is not None else [list(p) for p in shapes[k].get("points", [])]
-        return [ResultRow(s.key, (shapes[i].get("label"), shapes[j].get("label"), i, j, round(iou, 3)),
-                          shape_index=j, tone=None if shapes[i].get("label") == shapes[j].get("label") else "warning",
-                          payload={"a": outline(i), "b": outline(j), "norm": ann.normalized})
-                for i, j, iou in pairs]
+OverlapDialog = DuplicateDialog         # one check since 3.0.0 (Duplicate & Overlapping Shapes)
 
 
 # =============================================================================
@@ -686,7 +815,7 @@ def _suffix_depth(stem: str) -> int:
 
 
 class ImageDuplicatesDialog(BaseScanDialog):
-    TITLE, ICON = "Duplicate Images", "🖼️"
+    TITLE, ICON = "Duplicate Images", ""
     HELP = ("Exact: identical file bytes (SHA-256). Near: perceptual hash (256-bit DCT) within the Hamming "
             "threshold — re-encodes, resizes, small brightness changes. Same name: one file name in several splits. "
             "Groups spanning splits are leakage (the same scene in train and val). "
@@ -908,7 +1037,7 @@ class ImageDuplicatesDialog(BaseScanDialog):
 class AmbiguityDialog(BaseScanDialog):
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
     REVIEW_ACTIONS = False    # rows are labels, not files
-    TITLE, ICON = "Label Ambiguities", "📝"
+    TITLE, ICON = "Label Ambiguities", ""
     HELP = ("Finds labels that are not in the class list: format variants (case / whitespace / '-' vs '_'), "
             "near-misspellings, and unknown labels. LabelMe without a class list: rarer labels are compared "
             "against more frequent ones. YOLO: the class list is dataset.yaml, else classes.txt; class ids "
@@ -969,7 +1098,7 @@ class AmbiguityDialog(BaseScanDialog):
         return rows
 
     def summarize(self):
-        return f"{len([r for r in self.rows if r])} suspicious label(s)" if self.rows else "✅ All labels look consistent"
+        return f"{len([r for r in self.rows if r])} suspicious label(s)" if self.rows else "All labels look consistent"
 
     def on_row_activated(self, row):
         if row is not None:

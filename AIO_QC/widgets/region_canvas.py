@@ -26,7 +26,7 @@ class RegionCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(240, 180)
+        self.setMinimumSize(220, 140)             # grows with the window
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.W = self.H = 0

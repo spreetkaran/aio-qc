@@ -18,6 +18,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 TEMP_ROOT = Path(tempfile.gettempdir()) / "aio_qc_envs"
 TORCH_INDEX = {
@@ -49,7 +50,8 @@ def _run(cmd, timeout=20) -> str:
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, creationflags=flags).stdout
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return ""
 
 

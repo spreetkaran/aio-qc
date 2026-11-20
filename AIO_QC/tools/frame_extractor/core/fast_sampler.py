@@ -26,6 +26,7 @@ import numpy as np
 from AIO_QC.tools.frame_extractor.core.metrics import sharpness
 from AIO_QC.tools.frame_extractor.core.sources import HAVE_PYAV, _ROTATE
 from AIO_QC.core import procs
+from AIO_QC.core.diag import ignored as _ignored
 
 
 
@@ -64,7 +65,8 @@ def estimate_gop(path, ffprobe=None, packets=600, timeout=10):
         out = procs.run([ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", f"%+#{packets}",
                               "-show_entries", "packet=flags", "-of", "csv=p=0", path],
                              text=True, timeout=timeout).stdout
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None, False
     keys = [i for i, l in enumerate(out.splitlines()) if l.strip().upper().startswith("K")]
     if len(keys) < 2:
@@ -161,7 +163,8 @@ def probe_start_time(path, ffprobe=None):
         out = procs.run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=start_time",
                               "-of", "csv=p=0", path], text=True, timeout=10).stdout.strip()
         return float(out) if out and out != "N/A" else 0.0
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return 0.0
 
 
@@ -222,8 +225,8 @@ class PyAVSampler:
     def close(self):
         try:
             self.c.close()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
 
 def default_workers(width=1920, height=1080, samples=300):
@@ -330,7 +333,8 @@ class Analyzer:
                         kind = self.kind
                         try:
                             smp = self._make()
-                        except Exception:
+                        except Exception as _exc:
+                            _ignored(_exc)
                             if not self._fallback():
                                 return
                             continue
@@ -339,7 +343,8 @@ class Analyzer:
                         return
                     try:
                         r = smp.sample(slot)
-                    except Exception:
+                    except Exception as _exc:
+                        _ignored(_exc)
                         r = None
                     if r is not None:
                         self._fails = 0

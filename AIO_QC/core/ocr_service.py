@@ -6,6 +6,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from AIO_QC.core.diag import ignored as _ignored
+
 from .inference import InferenceClient
 
 OCR_SERVER = Path(__file__).resolve().with_name("ocr_server.py")
@@ -54,6 +56,6 @@ class OcrService:
             if self.client is not None:
                 try:
                     self.client.close()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
             self.client, self.loaded = None, None

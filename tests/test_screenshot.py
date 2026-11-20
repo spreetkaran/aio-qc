@@ -124,7 +124,8 @@ def test_right_click_menu_only_on_the_image(shell, qtbot, tmp_path, monkeypatch)
     QTest.mouseClick(c.viewport(), Qt.MouseButton.RightButton, pos=area.center())
     from PyQt6.QtGui import QContextMenuEvent
     QApplication.sendEvent(c.viewport(), QContextMenuEvent(QContextMenuEvent.Reason.Mouse, area.center()))
-    assert shown and shown[-1][0] == "Save Screenshot" and "Copy Screenshot" in shown[-1]
+    assert shown and "Save Screenshot" in shown[-1] and "Copy Screenshot" in shown[-1]
+    assert shown[-1][:2] == ["Create new bbox", "Create new polygon"]                # an editable image: draw first
     n = len(shown)
     outside = QPoint(area.right() + 20, area.center().y())
     assert outside.x() < c.viewport().width()

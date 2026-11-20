@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import os
+from AIO_QC.core.diag import ignored as _ignored
 
 FORMATS = {
     "csv": "CSV / text", "parquet": "Parquet", "feather": "Feather", "excel": "Excel", "json": "JSON (records)",
@@ -93,7 +94,8 @@ def sheets(path) -> list[str]:
             return list(wb.sheetnames)
         finally:
             wb.close()
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return []
 
 
@@ -106,7 +108,8 @@ def sqlite_tables(path) -> list[str]:
                                               "order by name")]
         finally:
             con.close()
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return []
 
 

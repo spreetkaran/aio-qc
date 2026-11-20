@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🤖 Model check: run one or several YOLO models (in the environment chosen in 🤖 Models & Environment), draw their
-predictions on the whole dataset (🔭 Explorer) and rank likely label errors (Findings, Analysis).
+ Model check: run one or several YOLO models (in the environment chosen in Models & Environment), draw their
+predictions on the whole dataset ( Explorer) and rank likely label errors (Findings, Analysis).
 
 Optimisations
 - models live in a persistent server process (loaded + warmed up once)
@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from AIO_QC.core.model_check import (
-    GEO_TASKS, MISMATCH, MISSED, MISSING, POOR_FIT, coverage, gt_boxes, match, merge_predictions, model_signature,
+    GEO_TASKS, MISMATCH, MISSED, MISSING, POOR_FIT, coverage, fit_kind, fit_text, gt_boxes, match, merge_predictions, model_signature,
 )
 from AIO_QC.core.evaluation import (
     BACKGROUND, ERROR_TYPES, IOU_GRID, Record, View, box_quality, build, confusion, error_breakdown, make_seen_fn,
@@ -43,10 +43,11 @@ from AIO_QC.core.sampling import ERROR_KINDS, Audit, create_audit, estimate_audi
 from AIO_QC.core.state import list_audits, save_audit
 from AIO_QC.core.state import REVIEW_FLAG, load_models_config
 from AIO_QC.utils import theme_color, hexc, style as apply_style
-from AIO_QC.utils import emphasis_bg, get_color_icon, gradient_hex, heat, newButton, tone
+from AIO_QC.utils import emphasis_bg, get_color_icon, gradient_hex, heat, newButton, newIcon, tone
 from .base_scan import BAR_ROLE, BaseScanDialog, ResultRow, dspin, ispin, readable_table
 from .card_gallery import Card, CardView, Panel, Shape, box_points
 from .model_setup_dialog import model_color, server_specs
+from AIO_QC.core.diag import ignored as _ignored
 
 BULK_KINDS = (MISSING, MISMATCH, POOR_FIT)        # "missed by model" deletes labels: one at a time only
 
@@ -68,7 +69,8 @@ def findings_rows(ctx, key, gt_rec, pred_rec, W, H, thr) -> list:
     gt_box = {g[0]: tuple(float(v) for v in g[2]) for g in gt_rec}
     rows = []
     for f in match(gt, preds, thr["iou"], thr["conf"], thr["missing"], thr["mismatch"], agnostic=ctx["agnostic"],
-                   covered=set(cov), mismatch_ok=lambda gl, p: p[3] in cov.get(gl, set())):
+                   covered=set(cov), mismatch_ok=lambda gl, p: p[3] in cov.get(gl, set()),
+                   fit_tol=thr.get("fit", 0.1)):
         gl = display.get(f.gt_index, f.gt_label)
         f.gt_box = gt_box.get(f.gt_index)
         rk = finding_key(root, key, f, W, H) if root is not None else None
@@ -83,6 +85,7 @@ def findings_rows(ctx, key, gt_rec, pred_rec, W, H, thr) -> list:
 
 
 class ModelCheckDialog(BaseScanDialog):
+    PRESET_EXTRA = ("conf", "iou", "missing_conf", "mismatch_conf", "fit_tol")    # QC presets keep these too
     """
     ONE run, two views that share the live threshold panel:
       Findings — per-instance, actionable list (relabel / add box / delete / flag)
@@ -91,7 +94,7 @@ class ModelCheckDialog(BaseScanDialog):
     """
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
     TITLE, ICON = "Model Check", "🤖"
-    HELP = ("Compares one or more YOLO models with your labels. 🔭 Explorer: every image with your labels and every "
+    HELP = ("Compares one or more YOLO models with your labels. Explorer: every image with your labels and every "
             "model's predictions drawn on it — filter, sort, compare, accept. Findings: class mismatch, missing annotation, poor "
             "box fit, missed by model — ranked by likelihood of a real error. Analysis: per-class precision / recall / "
             "AP, confusion matrix and insights. Every threshold above re-computes instantly from the cached "
@@ -104,7 +107,7 @@ class ModelCheckDialog(BaseScanDialog):
         self.setup_info = QLabel()
         self.setup_info.setWordWrap(True)
         self.setup_info.setTextFormat(Qt.TextFormat.RichText)
-        cfg = newButton("⚙ Models & environment…", slot=lambda: self.app.open_model_setup())
+        cfg = newButton("⚙ Models && environment…", slot=lambda: self.app.open_model_setup())
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
@@ -161,9 +164,9 @@ class ModelCheckDialog(BaseScanDialog):
                 sc = QShortcut(QKeySequence(k), self.table)
                 sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
                 sc.activated.connect(slot)
-        live = QWidget()
-        lv = QHBoxLayout(live)
-        lv.setContentsMargins(0, 0, 0, 0)
+        from AIO_QC.utils.qt_utils import FlowLayout
+        live = QWidget()                         # one row that wraps on narrow screens
+        lv = FlowLayout(live, spacing=6)
         self.conf = dspin(0.05, 0.95, 0.25, 2, 0.05)
         self.iou = QComboBox()
         for v in IOU_GRID:
@@ -171,98 +174,246 @@ class ModelCheckDialog(BaseScanDialog):
         self.iou.setCurrentIndex(int(np.argmin(np.abs(IOU_GRID - 0.5))))
         self.missing_conf = dspin(0.1, 0.99, 0.5, 2, 0.05)
         self.mismatch_conf = dspin(0.1, 0.99, 0.4, 2, 0.05)
+        self.fit_tol = ispin(3, 50, 10)
+        self.fit_tol.setSuffix(" %")
         title = QLabel("⚡ Live thresholds")
         title.setStyleSheet("font-weight:700;")
         lv.addWidget(title)
         for text, w, tip in (("conf ≥", self.conf, "Predictions below this confidence are ignored"),
                              ("match IoU ≥", self.iou, "Same-class overlap needed to count as a match"),
                              ("missing ≥", self.missing_conf, "Findings: confidence to call an unlabeled detection"),
-                             ("mismatch ≥", self.mismatch_conf, "Findings: confidence to call a class mismatch")):
+                             ("mismatch ≥", self.mismatch_conf, "Findings: confidence to call a class mismatch"),
+                             ("fit ±", self.fit_tol, "Poor box fit: a side of your box sticks out past the model's "
+                                                     "box (loose) or cuts into it (tight) by more than this share of "
+                                                     "the object's size")):
             lab = QLabel(text)
             lab.setToolTip(tip)
             w.setToolTip(tip)
-            lv.addWidget(lab)
-            lv.addWidget(w)
+            pair = QWidget()                     # a label and its box stay on one line
+            ph = QHBoxLayout(pair)
+            ph.setContentsMargins(0, 0, 0, 0)
+            ph.setSpacing(4)
+            ph.addWidget(lab)
+            ph.addWidget(w)
+            lv.addWidget(pair)
         self.live_note = QLabel("")
         apply_style(self.live_note, "color:@muted;")
-        lv.addWidget(self.live_note, 1)
+        lv.addWidget(self.live_note)
         self.table_host.insertWidget(0, live)
         self._live = live
         self.conf.valueChanged.connect(self._thresholds_changed)
         self.iou.currentIndexChanged.connect(self._thresholds_changed)
         self.missing_conf.valueChanged.connect(self._thresholds_changed)
         self.mismatch_conf.valueChanged.connect(self._thresholds_changed)
+        self.fit_tol.valueChanged.connect(self._thresholds_changed)
         self._refind = QTimer(self, singleShot=True, interval=350, timeout=self._recompute_findings)
         self._refind_worker = None
 
         self.init_marks()
         self.cards = CardView(self, n_panels=1)
-        cards = QWidget()
-        cl = QVBoxLayout(cards)
-        cl.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel("Solid = your label · dashed = the model · click an image to open it · tick to select for the "
-                      "actions above · order and filter follow the table")
-        apply_style(hint, "color:@muted;")
-        cl.addWidget(hint)
-        cl.addWidget(self.cards, 1)
-        self.tabs = QTabWidget()
-        self.table_host.removeWidget(self.table)
-        from .explorer import ExplorerPanel
-        self.explorer = ExplorerPanel(self)
-        self.tabs.addTab(self.explorer, "🔭 Explorer")
-        self._cards_page = cards
-        self.tabs.addTab(cards, "Cards")
-        self.tabs.addTab(self.table, "Findings table")
-        self.tabs.addTab(self._build_analysis(), "Analysis")
-        self.table_host.addWidget(self.tabs)
+        self._build_pages()
         self.filter_box.currentIndexChanged.connect(lambda _i: self._refresh_cards())
         self.table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._refresh_cards())
-        # the Explorer has its own controls: the findings toolbar / live thresholds / help only with the findings
-        from PyQt6.QtWidgets import QToolButton
-        root = self.layout()
-        self._findings_bar = next((root.itemAt(i).layout() for i in range(root.count()) if root.itemAt(i).layout()
-                                   is not None and root.itemAt(i).layout().indexOf(self.select_all) >= 0), None)
-        self._help_lbl = root.itemAt(0).widget() if isinstance(root.itemAt(0).widget(), QLabel) else None
-        self.params_toggle = QToolButton()
-        self.params_toggle.setText("⚙ Parameters")
-        self.params_toggle.setCheckable(True)
-        self.params_toggle.setChecked(True)
-        self.params_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.params_toggle.setArrowType(Qt.ArrowType.DownArrow)
-        self.params_toggle.setAutoRaise(True)
-        self.params_toggle.setToolTip("Show / hide the models, scope and options of the check")
-        self.params_toggle.toggled.connect(self._show_params)
-        root.insertWidget(root.indexOf(self.params_box), self.params_toggle)
         self.tabs.currentChanged.connect(lambda _i: self._layout_for_tab())
         # a full window (not a dialog stuck on top of the app), large by default
         self.setWindowFlag(Qt.WindowType.Window, True)
-        self.resize(max(self.width(), int(self.app.width() * 0.94)), max(self.height(), int(self.app.height() * 0.92)))
+        self._size_kind = "large"                       # BaseScanDialog sizes it by the screen after post_init()
+        self._layout_for_tab()
         self._load_last_run()
 
+    # ---------------------------------------------------------------- layout
+    def _build_pages(self):
+        """One steady layout: the run row (with the Parameters toggle at its end) and the tab bar never move. Each
+        tab carries its own controls — Explorer its sidebar and toolbar; Findings the issue filter, the actions and
+        the live thresholds above a Cards | Table switch; Analysis the same thresholds."""
+        from PyQt6.QtWidgets import QButtonGroup, QMenu, QPushButton, QStackedWidget, QToolButton
+        root = self.layout()
+        st = self.app.settings
+        # -- Parameters: a toggle at the end of the run row; open / closed is remembered
+        run = next((root.itemAt(i).layout() for i in range(root.count()) if root.itemAt(i).layout() is not None
+                    and root.itemAt(i).layout().indexOf(self.start_btn) >= 0), None)
+        self.params_toggle = QToolButton()
+        self.params_toggle.setText("Parameters")
+        self.params_toggle.setIcon(newIcon("settings"))
+        self.params_toggle.setCheckable(True)
+        self.params_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.params_toggle.setToolTip("Show / hide the models, scope and options of the check")
+        if run is not None:
+            run.addSpacing(8)
+            run.addWidget(self.params_toggle)
+        else:
+            root.insertWidget(root.indexOf(self.params_scroll), self.params_toggle)
+        from AIO_QC.core import explorer as E
+        from AIO_QC.utils.qt_utils import available_geometry
+        has_run = os.path.isfile(E.data_path(self.session.root))
+        g = available_geometry(self)
+        short = g is not None and g.height() < 900
+        opened = st.value("model_check/params_open", None)
+        opened = (not has_run and not short) if opened is None else str(opened).lower() in ("1", "true")
+        self.params_toggle.setChecked(opened)
+        self._show_params(opened)
+        self.params_toggle.toggled.connect(self._show_params)
+        self.params_toggle.toggled.connect(lambda on: st.setValue("model_check/params_open", bool(on)))
+
+        # -- the findings toolbar: out of the window's top, into the Findings page
+        bar = next((root.itemAt(i).layout() for i in range(root.count()) if root.itemAt(i).layout() is not None
+                    and root.itemAt(i).layout().indexOf(self.select_all) >= 0), None)
+        issue_lbl = None
+        if bar is not None:
+            for i in range(bar.count()):
+                wd = bar.itemAt(i).widget()
+                if isinstance(wd, QLabel):
+                    issue_lbl = wd
+            root.removeItem(bar)
+        # the main actions stay buttons; the rest go to a "More" menu
+        import re as _re
+
+        def plain(t):                                   # button texts lose their emoji to icons: match the words
+            return _re.sub(r"^[^\w]+", "", t).strip()
+        btn = {plain(b.text()): b for b in self.actions_host.findChildren(QPushButton)}
+        more = QToolButton()
+        more.setText("More")
+        more.setToolTip("Flag, show in the file list, export, delete labelled shapes, rejected findings")
+        more.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(more)
+        menu.setToolTipsVisible(True)
+        hidden = []
+        for key, text in (("Flag files", "Flag the files of the ticked rows"),
+                          ("Show in file list", "Show these files in the file list"),
+                          ("CSV", "Export the list (CSV)…"),
+                          (None, None),
+                          ("Delete label shapes", "Delete the labelled shapes of the ticked rows"),
+                          ("Forget", "Un-reject the ticked grey rows")):
+            if key is None:
+                menu.addSeparator()
+                continue
+            b = btn.get(key)
+            if b is None:
+                continue
+            a = menu.addAction(b.icon(), text, b.click)
+            a.setToolTip(b.toolTip())
+            a.setData(b)
+            hidden.append(b)
+        menu.addSeparator()
+        self._rej_action = menu.addAction("Show rejected findings")
+        self._rej_action.setCheckable(True)
+        self._rej_action.setChecked(self.show_rejected.isChecked())
+        self._rej_action.toggled.connect(self.show_rejected.setChecked)
+        self.show_rejected.toggled.connect(self._rej_action.setChecked)
+        menu.aboutToShow.connect(lambda: [a.setEnabled(a.data().isEnabled()) for a in menu.actions()
+                                          if isinstance(a.data(), QPushButton)])
+        more.setMenu(menu)
+        self._more_menu = menu
+        for b in hidden + [self.show_rejected]:
+            b.setVisible(False)
+        self.actions_layout.addWidget(more)
+
+        # -- Cards | Table switch
+        seg = QWidget()
+        sl = QHBoxLayout(seg)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(0)
+        seg.setObjectName("segView")
+        apply_style(seg, "QWidget#segView QToolButton{border:1px solid @line; padding:3px 14px; background:@base;}"
+                         "QWidget#segView QToolButton:checked{background:@accent_soft; color:@accent; "
+                         "border-color:@accent;}"
+                         "QToolButton#segL{border-top-left-radius:6px; border-bottom-left-radius:6px;}"
+                         "QToolButton#segR{border-top-right-radius:6px; border-bottom-right-radius:6px; "
+                         "border-left:none;}")
+        self.view_group = QButtonGroup(self)
+        self._view_btns = []
+        for i, (text, tip) in enumerate((("Cards", "Each finding as a picture: your box solid, the model's dashed"),
+                                         ("Table", "Each finding as a row — sortable"))):
+            b = QToolButton()
+            b.setText(text)
+            b.setCheckable(True)
+            b.setToolTip(tip)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            b.setObjectName("segL" if i == 0 else "segR")
+            self.view_group.addButton(b, i)
+            self._view_btns.append(b)
+            sl.addWidget(b)
+        self._view_btns[0].setChecked(True)
+        self.view_group.idClicked.connect(self._set_findings_view)
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(self.select_all)
+        if issue_lbl is not None:
+            top.addWidget(issue_lbl)
+        top.addWidget(self.filter_box)
+        top.addSpacing(6)
+        top.addWidget(seg)
+        top.addWidget(self.actions_host, 1)
+
+        self.findings_views = QStackedWidget()
+        cards_page = QWidget()
+        cl = QVBoxLayout(cards_page)
+        cl.setContentsMargins(0, 0, 0, 0)
+        hint = QLabel("Solid = your label · dashed = the model · click a card to open it · tick cards for the "
+                      "actions above")
+        apply_style(hint, "color:@muted;")
+        hint.setWordWrap(True)
+        cl.addWidget(hint)
+        cl.addWidget(self.cards, 1)
+        self.table_host.removeWidget(self.table)
+        self.findings_views.addWidget(cards_page)
+        self.findings_views.addWidget(self.table)
+        self._cards_page = cards_page
+
+        self._findings = QWidget()
+        fl = QVBoxLayout(self._findings)
+        fl.setContentsMargins(0, 8, 0, 0)
+        fl.setSpacing(8)
+        fl.addLayout(top)
+        self._findings_live = QVBoxLayout()             # the live thresholds sit here on the Findings tab
+        self._findings_live.setContentsMargins(0, 0, 0, 0)
+        fl.addLayout(self._findings_live)
+        fl.addWidget(self.findings_views, 1)
+
+        # -- the thresholds row: a quiet band inside the tab it applies to
+        self.table_host.removeWidget(self._live)
+        self._live.setObjectName("liveBand")
+        apply_style(self._live, "QWidget#liveBand{background:@surface; border:1px solid @line; border-radius:6px;}")
+        self._live.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._live.layout().setContentsMargins(10, 6, 10, 6)
+
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        from .explorer import ExplorerPanel
+        self.explorer = ExplorerPanel(self)
+        self.tabs.addTab(self.explorer, "Explorer")
+        self.tabs.addTab(self._findings, "Findings")
+        self._analysis = self._build_analysis()
+        self.tabs.addTab(self._analysis, "Analysis")
+        self.table_host.addWidget(self.tabs)
+
+    def _set_findings_view(self, i: int):
+        self.findings_views.setCurrentIndex(int(i))
+        self._view_btns[int(i)].setChecked(True)
+        self._layout_for_tab()
+
     def _show_params(self, on):
-        self.params_toggle.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
         self.params_box.setVisible(bool(on))
+        self.params_scroll.setVisible(bool(on))
 
     def _layout_for_tab(self):
-        on_explorer = self.tabs.currentWidget() is self.explorer
-        has = self.explorer.data is not None
-        self._live.setVisible(not on_explorer)
-        if self._help_lbl is not None:
-            self._help_lbl.setVisible(not (on_explorer and has))
-        if self._findings_bar is not None:
-            def walk(lay):
-                for i in range(lay.count()):
-                    it = lay.itemAt(i)
-                    if it.widget() is not None:
-                        it.widget().setVisible(not on_explorer and (it.widget() is not self.filter_box
-                                                                   or self.FILTER_COLUMN is not None))
-                    elif it.layout() is not None:
-                        walk(it.layout())
-            walk(self._findings_bar)
-            if not on_explorer:
-                self.select_all.setVisible(self.CHECKABLE)
-        if on_explorer and has and self.params_toggle.isChecked():
-            self.params_toggle.setChecked(False)          # room for the images; one click brings it back
+        """Only the inside of the tabs changes: the thresholds band follows the tab it applies to."""
+        page = self.tabs.currentWidget()
+        if getattr(self, "_row_hint", None) is None:
+            self._row_hint = next((lab for lab in self.findChildren(QLabel)
+                                   if lab.text() == "Double-click a row to open it"), False)
+        if self._row_hint:
+            self._row_hint.setVisible(page is self._findings and self.findings_views.currentIndex() == 1)
+        if page is self._findings:
+            self._findings_live.insertWidget(0, self._live)
+            self._live.setVisible(True)
+        elif page is self._analysis:
+            self._analysis.layout().insertWidget(0, self._live)
+            self._live.setVisible(True)
+        else:
+            self._live.setVisible(False)
 
     def _load_last_run(self):
         """The previous run's explorer data (saved with the dataset) — shown at once, no inference."""
@@ -289,7 +440,8 @@ class ModelCheckDialog(BaseScanDialog):
                     if ap is None or os.path.getmtime(ap) <= saved:
                         continue
                     ann = adapter.load(smp, light=True)
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     continue
                 shapes = [dict(sh, label="object") for sh in ann.shapes] if agnostic else ann.shapes
                 updates[k] = (shapes, ann.normalized, None, None)
@@ -299,6 +451,7 @@ class ModelCheckDialog(BaseScanDialog):
 
         def done(res):
             if res is None or self.explorer.data is not None:
+                self.explorer.show_message()
                 return                                   # unreadable / a new scan already finished
             d, gone = res
             note = f"last run {d.meta.get('when', '')}"
@@ -306,17 +459,21 @@ class ModelCheckDialog(BaseScanDialog):
             try:
                 specs = server_specs(self._models(), self.app.inference.opts, self.app.inference.info)
                 now = {sp["id"]: model_signature(sp) for sp in specs}
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 now = sigs
             if sigs and now and sigs != now:
                 note += " · ⚠ models changed since — ▶ Scan to update"
             if gone:
                 note += f" · {gone:,} file(s) no longer in the dataset"
             self.explorer.set_data(d, note)
+            if self.worker is None:
+                self.status.setText(f"Last run restored ({d.meta.get('when', '')}) — ▶ Scan to update")
             self._layout_for_tab()
 
-        self._layout_for_tab()
-        self.app.inference.run_async(load, done, lambda _e: None)
+        self.explorer.show_message("Opening the last run…\n\nYour labels and the models' predictions appear here in a "
+                                   "moment — nothing runs again.")
+        self.app.inference.run_async(load, done, lambda _e: self.explorer.show_message())
 
     def _build_analysis(self) -> QWidget:
         w = QWidget()
@@ -341,11 +498,12 @@ class ModelCheckDialog(BaseScanDialog):
             wd.currentIndexChanged.connect(lambda _i: self._refresh_analysis())
         self.v_norm.toggled.connect(lambda _v: self._refresh_confusion())
         self.inner = QTabWidget()
-        self.inner.addTab(self._build_overview(), "Report & confusion")
+        self.inner.addTab(self._build_overview(), "Report && confusion")
         self.inner.addTab(self._build_errors(), "Error types")
         self.inner.addTab(self._build_boxes(), "Box quality")
         self.inner.addTab(self._build_slices(), "Slices")
-        self.inner.addTab(self._build_audit(), "Label-error estimate")
+        from AIO_QC.utils.qt_utils import scrolled
+        self.inner.addTab(scrolled(self._build_audit()), "Label-error estimate")   # scrolls only on short screens
         self.inner.currentChanged.connect(lambda _i: self._refresh_current_inner())
         lay.addLayout(top)
         lay.addWidget(self.inner, 1)
@@ -467,21 +625,17 @@ class ModelCheckDialog(BaseScanDialog):
                        "is wrong, <b>U</b> = undo). The finder's precision per stratum × its number of findings gives "
                        "the estimate with a confidence interval. 20–30 per stratum is a good start.")
         intro.setWordWrap(True)
-        ctl = QHBoxLayout()
+        from AIO_QC.utils.qt_utils import flow_row
         self.audit_kinds = {}
         for kind in ERROR_KINDS:
             cb = QCheckBox(kind)
             cb.setChecked(True)
             self.audit_kinds[kind] = cb
-            ctl.addWidget(cb)
         self.audit_n = ispin(5, 500, 20)
         self.audit_seed = ispin(0, 2_000_000_000, random.randint(1, 999_999))
         mk = newButton("🎲 Create audit sample", slot=lambda: self._create_audit())
-        for text, wd in (("per stratum", self.audit_n), ("seed", self.audit_seed)):
-            ctl.addWidget(QLabel(text))
-            ctl.addWidget(wd)
-        ctl.addWidget(mk)
-        ctl.addStretch(1)
+        ctl = flow_row(list(self.audit_kinds.values()) + [("per stratum", self.audit_n), ("seed", self.audit_seed), mk],
+                       spacing=8)                # wraps on narrow screens
         pick = QHBoxLayout()
         self.audit_box = QComboBox()
         self.audit_box.currentIndexChanged.connect(lambda _i: self._load_audit())
@@ -522,7 +676,7 @@ class ModelCheckDialog(BaseScanDialog):
         el.addWidget(self.est_tbl, 1)
         split.addWidget(est)
         lay.addWidget(intro)
-        lay.addLayout(ctl)
+        lay.addWidget(ctl)
         lay.addLayout(pick)
         lay.addWidget(split, 1)
         self.audit = None
@@ -531,7 +685,16 @@ class ModelCheckDialog(BaseScanDialog):
 
     # ------------------------------------------------------------------ setup info
     def _models(self) -> list[dict]:
-        return [m for m in load_models_config(self.session.root).get("models", []) if m.get("enabled", True)]
+        models = load_models_config(self.session.root).get("models", [])
+        only = getattr(self, "only_ids", None)
+        if only:                                       # Improve Model: just the model being improved
+            return [m for m in models if m.get("id") in only]
+        return [m for m in models if m.get("enabled", True)]
+
+    def focus_models(self, ids=None):
+        """Check only these models (by id) — None: every enabled one again. The models list itself is unchanged."""
+        self.only_ids = set(ids) if ids else None
+        self._refresh_setup_info()
 
     def _refresh_setup_info(self):
         svc = self.app.inference
@@ -557,7 +720,8 @@ class ModelCheckDialog(BaseScanDialog):
 
     def _thr(self) -> dict:
         return {"conf": self.conf.value(), "iou": float(self.iou.currentData()),
-                "missing": self.missing_conf.value(), "mismatch": self.mismatch_conf.value()}
+                "missing": self.missing_conf.value(), "mismatch": self.mismatch_conf.value(),
+                "fit": self.fit_tol.value() / 100.0}
 
     def make_context(self):
         svc = self.app.inference
@@ -636,6 +800,7 @@ class ModelCheckDialog(BaseScanDialog):
         try:
             ctx["builder"].add(s.key, s.split or "", s.folder or "", W, H, shapes, ann.normalized, preds, seen)
         except Exception as exc:                            # the findings must never fail for the explorer
+            _ignored(exc)
             ctx.setdefault("explorer_errors", []).append(f"{s.name}: {exc}")
 
     def _shared_predictions(self, models, specs):
@@ -668,6 +833,7 @@ class ModelCheckDialog(BaseScanDialog):
             try:
                 ann = ctx["adapter"].load(s, light=True)
             except Exception as exc:
+                _ignored(exc)
                 ctx["buffer"][s.key] = ("error", str(exc))
                 continue
             img = ann.image_path or s.image_path
@@ -798,9 +964,44 @@ class ModelCheckDialog(BaseScanDialog):
             ctx["explorer"] = ctx["builder"].finish()
             E.save(ctx["explorer"], E.data_path(ctx["root"]))
         except Exception as exc:
+            _ignored(exc)
             ctx.setdefault("explorer_errors", []).append(f"explorer: {type(exc).__name__}: {exc}")
         ctx["builder"] = None
         return []
+
+    def show_kind(self, kind: str, run: bool = False):
+        """Open on one kind of finding (e.g. poor box fit — loose / cut-off boxes): the cards, filtered, and how many
+        images have one. With no results yet: run now when `run` and the models are set up (the predictions come from
+        the cache when the models ran before), else say what is needed. Kept until the next run completes."""
+        self._want_kind = kind
+        if not any(r is not None for r in self.rows):
+            running = self.worker is not None and self.worker.isRunning()
+            if run and not running and self._models() and self.app.inference.python:
+                self.status.setText(f"Comparing your labels with the models — the “{kind}” findings open here")
+                self.start_scan()
+            elif not running:
+                self.status.setText(f"Run the check — the “{kind}” findings open here when it is done"
+                                    if self._models() else
+                                    "Add a detection model in ⚙ Models & environment: loose boxes are found by "
+                                    "comparing your boxes with the model's")
+            return
+        i = self.filter_box.findData(kind)
+        if i < 0:
+            self.status.setText(f"No “{kind}” findings in the last run" +
+                                (" — every box fits the model's within the fit ± tolerance" if kind == POOR_FIT else ""))
+            return
+        self.filter_box.setCurrentIndex(i)
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self._findings))
+        self._set_findings_view(0)
+        self._layout_for_tab()
+        rows = [r for r in self.rows if r is not None and r.cells[0] == kind]
+        if kind == POOR_FIT and rows:
+            fit = self.fit_tol.value() / 100.0
+            kinds = Counter(fit_kind(r.payload[0].sides, fit) or "loose" for r in rows)
+            what = " · ".join(f"{kinds[k]:,} {n}" for k, n in (("loose", "loose"), ("tight", "cut off"),
+                                                                  ("off", "off on both sides")) if kinds.get(k))
+            self.status.setText(f"{what} in {len({r.key for r in rows}):,} image(s) — Accept takes the model's box; "
+                                f"👁 Show in file list keeps only those images")
 
     def on_scan_complete(self, ctx):
         self.table.sortItems(2 + self.columns.index("Score"), Qt.SortOrder.DescendingOrder)
@@ -828,6 +1029,8 @@ class ModelCheckDialog(BaseScanDialog):
             if self.v_group.currentIndex() and not model.item(self.v_group.currentIndex()).isEnabled():
                 self.v_group.setCurrentIndex(0)
         self._refresh_analysis()
+        if getattr(self, "_want_kind", None):
+            self.show_kind(self._want_kind)
 
     # --------------------------------------------------------------- live changes
     def _thresholds_changed(self, *_):
@@ -862,7 +1065,7 @@ class ModelCheckDialog(BaseScanDialog):
             self.summary.setText(self.summarize())
             self.live_note.setText(f"{len(rows):,} findings at the current thresholds")
 
-        self.app.inference.run_async(run, done, lambda e: self.live_note.setText(f"❌ {e}"))
+        self.app.inference.run_async(run, done, lambda e: self.live_note.setText(f"{e}"))
 
     # ------------------------------------------------------------------ analysis
     def _view(self) -> View:
@@ -1003,7 +1206,7 @@ class ModelCheckDialog(BaseScanDialog):
                 f"<b>{ERROR_TYPES[i][1]}</b> {tot[i] / allsum * 100:.0f}% (<i>{ERROR_TYPES[i][3]}</i>)"
                 for i in order if tot[i]))
         else:
-            self.err_note.setText("No errors at these thresholds. 🎉")
+            self.err_note.setText("No errors at these thresholds.")
 
     def _err_activated(self, r, c, crops):
         eb = getattr(self, "_err", None)
@@ -1063,7 +1266,7 @@ class ModelCheckDialog(BaseScanDialog):
                     if self.box_tbl.item(r, c):
                         self.box_tbl.item(r, c).setBackground(emphasis_bg(self.box_tbl))
         self.box_tbl.resizeColumnsToContents()
-        self.box_note.setText(("📐 Systematic edge offsets (annotation habit): " + ", ".join(habits[:8]))
+        self.box_note.setText(("Systematic edge offsets (annotation habit): " + ", ".join(habits[:8]))
                               if habits else "No systematic edge offsets ≥ 3% on classes with ≥ 20 matches.")
 
     def _box_activated(self, r, _c):
@@ -1108,7 +1311,7 @@ class ModelCheckDialog(BaseScanDialog):
             self.slice_tbl.setItem(r, 6, pr)
         self.slice_tbl.resizeColumnsToContents()
         if weak:
-            self.slice_note.setText("🔎 Weakest slices (recall ≥ 10 pts below overall, ≥ 20 labels): " + ", ".join(
+            self.slice_note.setText("Weakest slices (recall ≥ 10 pts below overall, ≥ 20 labels):" + ", ".join(
                 f"<b>{w['dimension']}: {w['value']}</b> {w['recall']:.2f} ({dl:+.2f})"
                 for dl, w in sorted(weak, key=lambda x: x[0])[:5]) +
                 "<br><i>In-sample models: likely inconsistent labels in that slice. Held-out: also a data gap.</i>")
@@ -1270,10 +1473,10 @@ class ModelCheckDialog(BaseScanDialog):
         seen_share = float((d.gt_seen == 1).mean()) if len(d.gt_seen) else 0.0
         out = []
         if v.oof:
-            out.append("🧪 <b>Out-of-fold view</b> — every image is judged only by models that never trained on it: "
+            out.append("<b>Out-of-fold view</b> — every image is judged only by models that never trained on it: "
                        "the most reliable label-error signal.")
         elif seen_share > 0.8 and v.seen != "unseen":
-            out.append("🧠 <b>The models trained on these images.</b> A model normally reproduces its own training "
+            out.append("<b>The models trained on these images.</b> A model normally reproduces its own training "
                        "labels, so low agreement here points to <b>inconsistent or wrong labels</b> (or genuinely "
                        "ambiguous objects), not to a weak model.")
         elif v.seen == "unseen" or seen_share < 0.2:
@@ -1282,10 +1485,10 @@ class ModelCheckDialog(BaseScanDialog):
         low = [r for r in sorted((r for r in cls_rows if r["recall"] == r["recall"]), key=lambda r: r["recall"])
                if r["recall"] < 0.95][:3]
         if low:
-            out.append("📉 Lowest recall (labels the models could not confirm): " + ", ".join(
+            out.append("Lowest recall (labels the models could not confirm): " + ", ".join(
                 f"<b>{r['label']}</b> {r['recall']:.2f} ({r['fn']:,} missed)" for r in low))
         else:
-            out.append("📈 Every class has recall ≥ 0.95 at these thresholds.")
+            out.append("Every class has recall ≥ 0.95 at these thresholds.")
         # confusions
         mat, _ = confusion(d, thr["conf"], thr["iou"], v)
         n = len(d.labels)
@@ -1378,6 +1581,7 @@ class ModelCheckDialog(BaseScanDialog):
         self.prune_marks()
         colors = self.ctx.get("colors", {}) if self.ctx else {}
         names = self.ctx.get("names", {}) if self.ctx else {}
+        fit = self.fit_tol.value() / 100.0
         cards = []
         for row in self.visible_rows():
             f = row.payload[0]
@@ -1397,7 +1601,8 @@ class ModelCheckDialog(BaseScanDialog):
             line1 = {MISMATCH: f"your '{label}'  ·  model '{f.pred_label}'",
                      MISSING: f"unlabeled '{f.pred_label}' found by the model",
                      MISSED: f"your '{label}' — no matching detection",
-                     POOR_FIT: f"your '{label}' — loose box"}.get(f.kind, f.kind)
+                     POOR_FIT: f"your '{label}' — {fit_kind(f.sides, fit) or 'loose'} box"
+                               + (f"  ·  {fit_text(f.sides, fit)}" if f.sides else "")}.get(f.kind, f.kind)
             chips = [(f.kind, "error" if KIND_TONE.get(f.kind) == "error" else "warn")]
             if f.conf:
                 chips.append((f"conf {f.conf:.2f}", "muted"))
@@ -1406,14 +1611,14 @@ class ModelCheckDialog(BaseScanDialog):
             cards.append(Card(row, [Panel(row.key, focus, shapes)], chips,
                               [line1, f"{s.display if s else row.key}  ·  {names.get(f.model, '')}".rstrip(" ·")]))
         self.cards.set_cards(cards)
-        self.tabs.setTabText(self.tabs.indexOf(self._cards_page), f"Cards ({len(cards):,})")
+        self.tabs.setTabText(self.tabs.indexOf(self._findings), f"Findings ({len(cards):,})")
 
     def summarize(self):
         self._refresh_cards()
         live = [r for r in self.rows if r]
         c = Counter(r.cells[0] for r in live)
         parts = [f"{c[k]:,} {k}" for k in (MISMATCH, MISSING, POOR_FIT, MISSED) if c.get(k)]
-        return " · ".join(parts) or "✅ The models agree with every checked label"
+        return " · ".join(parts) or "The models agree with every checked label"
 
     def on_row_activated(self, row):
         if row is None:
@@ -1530,7 +1735,11 @@ class ModelCheckDialog(BaseScanDialog):
                                 "originals are backed up (Undo)."):
                 return
         nxt = self._next_after(used)
-        st = self.session.apply_fixes(self, dict(fixes), what="modelcheck")
+        from AIO_QC.core import provenance
+        names = sorted(set((getattr(self, "ctx", None) or {}).get("names", {}).values())) \
+            if isinstance(getattr(self, "ctx", None), dict) else []
+        with provenance.origin("model", "Model Check", model=", ".join(names)):
+            st = self.session.apply_fixes(self, dict(fixes), what="modelcheck")
         if st["files"]:
             self._last_backup = st["backup"]
             self.undo_btn.setEnabled(True)

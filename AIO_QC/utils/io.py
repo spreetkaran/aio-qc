@@ -5,6 +5,7 @@ import hashlib
 from collections import OrderedDict
 
 from PyQt6.QtGui import QColor
+from AIO_QC.core.diag import ignored as _ignored
 
 
 def generate_label_color(label: str) -> QColor:
@@ -36,8 +37,8 @@ def cost_of(value) -> int:
             return 0 if value.isNull() else value.width() * value.height() * max(1, value.depth()) // 8
         if isinstance(value, QImage):
             return 0 if value.isNull() else int(value.sizeInBytes())
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     nb = getattr(value, "nbytes", None)
     if isinstance(nb, int):
         return nb

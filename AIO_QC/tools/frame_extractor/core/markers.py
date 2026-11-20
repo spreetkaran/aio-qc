@@ -94,19 +94,41 @@ def save_marked_frame(img, idx, name, out_dir, ext=".jpg", detectors=None, prean
     path, _ = namer.path(out_dir, idx, ext, img, kind, "", roi)
     if path is None:
         return None
-    _imwrite(path, img, ext, quality)
+    _imwrite(path, img, ext, quality, video_key, idx,
+             namer.time_of(idx) if getattr(namer, "time_of", None) else None)
     if video_key and os.path.isfile(video_key):
         from AIO_QC.tools.frame_extractor.core import frame_sources
         t = namer.time_of(idx) if getattr(namer, "time_of", None) else None
         frame_sources.record(path, video_key, idx, t)
     fname = os.path.relpath(path, out_dir).replace(os.sep, "/")
-    if detectors and preannot != "none":
+    if detectors and preannot != "none" and getattr(detectors[0], "task", "") == "classify":
+        from AIO_QC.tools.frame_extractor.core.detector import class_answer, class_dir, write_class_labelme
+        answer = class_answer(detectors[0].detect(img), det_conf)
+        h, w = img.shape[:2]
+        if preannot == "labelme":
+            write_class_labelme(os.path.splitext(path)[0] + ".json", os.path.basename(path), w, h, answer, ("manual",))
+        elif preannot == "yolo" and answer:               # classification layout: the frame goes to its class folder
+            dst = os.path.join(out_dir, class_dir(answer), os.path.basename(path))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            from AIO_QC.core.fx_to_qc import CLASS_FOLDERS_MARK
+            if not os.path.exists(os.path.join(out_dir, CLASS_FOLDERS_MARK)):
+                open(os.path.join(out_dir, CLASS_FOLDERS_MARK), "w").close()
+            if not os.path.exists(dst):
+                os.replace(path, dst)
+                path = dst
+                fname = os.path.relpath(path, out_dir).replace(os.sep, "/")
+                if video_key and os.path.isfile(video_key):
+                    from AIO_QC.tools.frame_extractor.core import frame_sources
+                    frame_sources.record(path, video_key, idx, namer.time_of(idx) if getattr(namer, "time_of", None)
+                                         else None)
+    elif detectors and preannot != "none":
         dets = [d for d in detectors[0].detect(img) if d.conf >= det_conf]
         h, w = img.shape[:2]
         stem = os.path.splitext(path)[0]
         if preannot == "labelme":
             from AIO_QC.tools.frame_extractor.core.detector import write_labelme
-            write_labelme(stem + ".json", os.path.basename(path), w, h, dets, flags={"manual": True})
+            write_labelme(stem + ".json", os.path.basename(path), w, h, dets, flags={"manual": True},
+                          source={"video": os.path.basename(str(video_key or name)), "frame": int(idx)})
         elif preannot == "yolo":
             from AIO_QC.tools.frame_extractor.core.detector import write_yolo
             write_yolo(stem + ".txt", w, h, dets)

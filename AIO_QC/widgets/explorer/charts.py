@@ -182,7 +182,7 @@ class ScatterMap(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(300, 240)
+        self.setMinimumSize(260, 160)             # grows with the window; small enough for a 720p laptop
         self.setMouseTracking(True)
         self.xy = np.zeros((0, 2), np.float32)
         self.colors = []

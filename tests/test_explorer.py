@@ -411,3 +411,38 @@ def test_explorer_yolo_normalized(shell, qtbot, tmp_path, monkeypatch):  # noqa:
     p.sidebar.splits.set_all(True, only=["val"])
     qtbot.waitUntil(lambda: p.state.n_images == 8, timeout=3000)
     d.close()
+
+
+def test_model_check_layout_is_steady(mc, qtbot):
+    """Switching tabs never moves the tab bar (the findings toolbar and thresholds live inside their tabs); the
+    secondary actions sit in More; the Parameters choice is remembered; a reopen restores the last run."""
+    from PyQt6.QtWidgets import QPushButton
+    w, d = mc
+    d.show()
+    qtbot.wait(100)
+
+    def bar_y():
+        return d.tabs.mapTo(d, d.tabs.rect().topLeft()).y()
+    y0 = bar_y()
+    for i in (1, 2, 0, 1):
+        d.tabs.setCurrentIndex(i)
+        qtbot.wait(20)
+        assert bar_y() == y0
+    d._set_findings_view(1)
+    assert d.findings_views.currentWidget() is d.table and bar_y() == y0
+    assert d.tabs.tabText(1).startswith("Findings")
+    shown = {b.text() for b in d.actions_host.findChildren(QPushButton) if b.isVisibleTo(d)}
+    assert "Delete label shapes" not in shown and "CSV" not in shown            # in More
+    texts = [a.text() for a in d._more_menu.actions()]
+    assert any("CSV" in t for t in texts) and "Show rejected findings" in texts
+    d.params_toggle.setChecked(True)
+    assert d.params_scroll.isVisible() and bar_y() > y0                          # opening it is the user's move
+    d.params_toggle.setChecked(False)
+    assert w.settings.value("model_check/params_open") in (False, "false")
+    d.close()
+    qtbot.wait(50)
+    w.open_tool("model_check")
+    d2 = w.open_dialogs["model_check"]
+    assert not d2.params_toggle.isChecked()                                     # remembered
+    qtbot.waitUntil(lambda: d2.explorer.data is not None, timeout=20000)
+    assert "Last run restored" in d2.status.text()

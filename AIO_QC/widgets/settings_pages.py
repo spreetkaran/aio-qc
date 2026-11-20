@@ -39,9 +39,6 @@ def image_sections(win) -> list:
             from_action("image.guide_cards", a.guide_cards, "Guideline cards", default=True,
                         description="Show a class's guideline next to the selected shape.",
                         aliases=("guidelines", "examples")),
-            from_store("image.get_started", st, "get_started/at_start", "bool", False, "Show Get Started at start",
-                       description="Open the guided overview every time the app starts (it always opens the first "
-                                   "time).", aliases=("tour", "welcome")),
             from_store("image.check_guide", st, "guide/enabled", "bool", True, "Recommend checks when a dataset "
                        "opens", apply=lambda v: win.check_guide.setting_changed(v),
                        description="Works out which QC checks matter most for the dataset (unreadable files, label "
@@ -51,6 +48,34 @@ def image_sections(win) -> list:
                        aliases=("guide", "recommend", "suggest", "next check", "start here", "checklist")),
         ]),
         Section("Viewer", "zoom", [
+            from_store("image.hud", st, "viewer/hud", "bool", True, "Read-outs over the image",
+                       apply=lambda v: (win.hud.set_enabled(v), win.statusBar().set_fields_visible(not v),
+                                        v and win.current_key and win.show_sample(win.current_key)),
+                       description="The file (name · size · type · file size) top-left, the flag note top-right, the "
+                                   "pointer and the selected box / ROI bottom-right. Off: they are in the status bar.",
+                       aliases=("overlay", "hud", "chip", "coordinates", "file name", "info")),
+            from_store("image.gpu", st, "viewer/gpu", "bool", False, "GPU image canvas (smoothest zoom)",
+                       description="Draw the image canvas with the graphics card (OpenGL): zooming and panning big "
+                                   "images stay fluid at any screen scaling. Turn it off again if the canvas stays "
+                                   "blank or flickers with your graphics driver.",
+                       note="after a restart", aliases=("opengl", "gpu", "hardware", "smooth zoom", "performance")),
+            from_store("image.zoom_slider", st, "viewer/zoom_slider", "bool", False, "Zoom slider in the toolbar",
+                       apply=lambda v: win.set_zoom_slider_visible(v),
+                       description="A Paint-style slider next to − 37 % ▾ + (off: the zoom box, its presets, the "
+                                   "+ / − buttons, the wheel and Ctrl+F / Ctrl+1 do the zooming).",
+                       aliases=("zoom", "slider", "toolbar")),
+            from_store("image.canvas_bg", st, "viewer/canvas_bg", "choice", "auto", "Canvas background",
+                       apply=lambda v: win.apply_canvas_background(v),
+                       choices=[("auto", "Follow the appearance (recommended)"), ("dark", "Dark grey"),
+                                ("light", "Light grey"), ("window", "The window colour")],
+                       description="Around the image. Follow the appearance: a soft light grey with the light look, "
+                                   "near black with the dark look. Dark grey keeps the image the brightest thing on "
+                                   "screen in both.",
+                       aliases=("background", "canvas", "dark", "grey", "gray", "color", "colour")),
+            from_store("image.confirm_delete", st, "edit/confirm_delete", "bool", True,
+                       "Ask before deleting a shape",
+                       description="Del on a selected shape asks first (Ctrl+Z brings a deleted shape back either way).",
+                       aliases=("delete", "confirm", "ask", "shape", "accidental", "del")),
             from_action("image.pixel_view", a.pixel_view, "Show pixels when zoomed in", default=False,
                         description="From 300 %, show hard pixel squares (nearest neighbour) for pixel-level work. "
                                     "Off: the image is enlarged smoothly in high quality, like Windows Photos.",
@@ -104,10 +129,31 @@ def image_sections(win) -> list:
                     description="Delete the open dataset's cache (.aio_qc/cache.sqlite: labels, image hashes, "
                                 "model predictions). It is rebuilt when needed.", aliases=("sqlite", "reset")),
         ], "Applies to the dataset open in Image QC."),
+        Section("Classification", "tool-class", [
+            from_store("image.issues_place", st, "cls/issues_place", "choice", "dataset", "Issues folder",
+                       choices=[("dataset", "Inside the dataset — <dataset>/issues/<class>"),
+                                ("beside", "Next to the dataset — <dataset>_issues/<class>"),
+                                ("custom", "A folder of your choice — <folder>/<dataset>/<class>")],
+                       description="Class-folder datasets: I (Review ▸ Issues Folder ▸ Send to Issues, the Class "
+                                   "Gallery, the Class panel) moves the selected images here, kept by class (and "
+                                   "split) — out of the dataset until you put them back; Ctrl+Z undoes. Inside the "
+                                   "dataset the folder is never read as a class.",
+                       aliases=("issues", "set aside", "quarantine", "review", "crops", "bad images", "move")),
+            from_store("image.issues_dir", st, "cls/issues_dir", "folder", "", "Issues folder of your choice",
+                       description="Used with “A folder of your choice” (another drive is fine); each dataset gets "
+                                   "its own sub-folder.", aliases=("issues", "folder", "location")),
+        ], "Applies to class-folder datasets."),
         Section("Review", "review-ok", [
             from_action("image.auto_advance", a.auto_advance, "Go to the next file after marking", default=True,
                         description="After ✓ Mark OK or ⚑ Flag, the next file opens.",
                         aliases=("auto-advance", "next", "mark")),
+            from_store("image.flagged_format", st, "flagged/list_format", "choice", "csv",
+                       "Flagged files list format",
+                       choices=[("csv", "CSV — file, image, status, note, flagged at"),
+                                ("txt", "TXT — one file per line")],
+                       description="Review ▸ Save Flagged Files… ▸ list of the files: the format it starts with "
+                                   "(named <dataset>_flagged).",
+                       aliases=("flagged", "csv", "txt", "list", "export", "save flagged")),
         ]),
         Section("Storage & backups", "save", [
             from_store("image.storage_auto", st, "storage/auto", "bool", S.DEFAULTS["auto"],
@@ -142,9 +188,10 @@ def image_sections(win) -> list:
         ]),
         review_section(),
         Section("Keyboard", "keyboard", [
-            command("image.shortcuts", "Keyboard shortcuts", "Show…", a.shortcuts.trigger,
-                    description="Every key of every mode."),
-            command("image.keymap", "Key map", "Show…", a.keymap.trigger),
+            command("image.keymap", "Keyboard shortcuts", "Show…", a.keymap.trigger,
+                    description="Every key and mouse gesture of this window (? or Ctrl+F1)."),
+            command("image.tour", "Quick tour", "Start…", a.tour.trigger,
+                    description="A short guided tour of the window.", aliases=("tour", "welcome", "get started")),
         ]),
     ]
 
@@ -221,7 +268,10 @@ def fx_sections(win) -> list:
         Section("Keyboard", "keyboard", [
             command("fx.customize_keys", "Keyboard shortcuts", "Customize…", a.help.trigger,
                     description="Change any key of the Frame Extractor.", aliases=("keys", "hotkeys")),
-            command("fx.key_reference", "Shortcut reference", "Show…", a.shortcut_ref.trigger),
+            command("fx.key_reference", "Shortcut reference", "Show…", a.keymap.trigger,
+                    description="Every key and mouse gesture of this window (? or Ctrl+/)."),
+            command("fx.tour", "Quick tour", "Start…", a.tour.trigger,
+                    description="A short guided tour of the window.", aliases=("tour", "welcome", "get started")),
         ]),
     ]
 
@@ -323,4 +373,6 @@ def studio_sections(win) -> list:
 
 
 def windows_with_settings():
-    return [w for w in QApplication.topLevelWidgets() if hasattr(w, "settings_sections")]
+    sh = getattr(QApplication.instance(), "shell", None)
+    pages = list(getattr(getattr(sh, "host", None), "pages", []) or [])     # the modes are pages of one window
+    return [w for w in QApplication.topLevelWidgets() + pages if hasattr(w, "settings_sections")]

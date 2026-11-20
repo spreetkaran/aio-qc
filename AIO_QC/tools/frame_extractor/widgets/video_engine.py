@@ -33,6 +33,8 @@ import numpy as np
 import bisect
 from loguru import logger
 from PyQt6.QtCore import QThread, pyqtSignal
+
+from AIO_QC.widgets.lifecycle import RetainedThread
 from PyQt6.QtGui import QImage
 
 from AIO_QC.tools.frame_extractor.core.sources import open_source
@@ -101,7 +103,7 @@ def bgr_to_display(bgr, box, interp=cv2.INTER_AREA):
     return QImage(bgr.data, tw, th, bgr.strides[0], QImage.Format.Format_BGR888).copy()
 
 
-class VideoEngine(QThread):
+class VideoEngine(RetainedThread, QThread):
     # Emitted (from the decoder thread) with a Frame produced by a seek/step
     # request that could not be served from cache.
     still_ready = pyqtSignal(object)

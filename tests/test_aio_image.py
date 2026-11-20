@@ -37,7 +37,7 @@ def _open(sh, qtbot, root):
     return w
 
 
-DATASETS = {"labelme": FX.labelme, "yolo": FX.yolo, "cls": FX.classification}
+DATASETS = {"labelme": FX.labelme, "yolo": FX.yolo, "cls": FX.classification, "coco": FX.coco}
 
 
 @pytest.mark.parametrize("kind", list(DATASETS))
@@ -48,7 +48,8 @@ def test_every_qc_tool_scans(shell, qtbot, tmp_path, kind):
     for t in QC_TOOLS:
         if t.dialog is None or t.key == "fix_editor":
             continue
-        if t.dialog.SUPPORTED is not None and w.session.type not in t.dialog.SUPPORTED:
+        from AIO_QC.app_common import tool_supported
+        if not tool_supported(t, w.session):          # classification: the classifier versions run too
             continue
         w.open_tool(t.key)
         d = w.open_dialogs.get(t.key)
@@ -209,18 +210,17 @@ def test_export_and_report_and_handoff(shell, qtbot, tmp_path, kind, monkeypatch
     from PyQt6.QtGui import QDesktopServices
     monkeypatch.setattr(QDesktopServices, "openUrl", staticmethod(lambda *a: True))
     w = _open(shell, qtbot, DATASETS[kind](tmp_path / kind))
-    w.open_tool("export")
+    w.open_tool("split")
     d = w.open_dialogs["export"]
+    d.new.setChecked(True)                                    # every format with a new split
     for i in range(d.fmt.count()):
         d.fmt.setCurrentIndex(i)
         out = tmp_path / f"exp_{kind}_{d.fmt.currentData()}"
         d.out.setText(str(out))
-        d.plan = None
-        d.do_export()
-        qtbot.waitUntil(lambda: d.worker is not None and not d.worker.isRunning() or "Exported" in d.status.text()
-                        or "⚠" in d.status.text(), timeout=60000)
-        qtbot.waitUntil(lambda: "Exported" in d.status.text() or "⚠" in d.status.text(), timeout=60000)
-        assert "Exported" in d.status.text(), d.status.text()
+        d.start()
+        qtbot.waitUntil(lambda: d.worker is None and ("Converted" in d.status.text() or "⚠" in d.status.text()),
+                        timeout=60000)
+        assert "Converted" in d.status.text(), (d.fmt.currentData(), d.status.text())
     d.close()
     w.open_tool("report")
     r = w.open_dialogs["report"]
@@ -231,6 +231,29 @@ def test_export_and_report_and_handoff(shell, qtbot, tmp_path, kind, monkeypatch
         qtbot.waitUntil(lambda: r.worker is None, timeout=60000)
         assert (tmp_path / f"report.{fmt}").exists(), r.status.text()
     r.close()
+
+
+def test_preparation_in_the_dataset_tab(shell, qtbot):
+    """Preparation (formerly Data Prep) is a drawer feature: first in the Dataset tab, usable with no dataset open."""
+    from AIO_QC.app import QC_TOOLS
+    w = shell.window("image")
+    tools = [t for t in QC_TOOLS if t.group == "dataset"]
+    assert tools[0].key == "data_prep" and tools[0].title == "Preparation" and tools[0].icon == "tool-prep"
+    act = w.qc_actions["data_prep"]
+    assert act is w.a.data_prep and act.text().startswith("Preparation") and act.isEnabled()
+    first = w._ribbon_pages["dataset"].groups[0][0]
+    assert first.defaultAction() is act                   # the Dataset tab's first button
+    keys = [s.toString() for t in QC_TOOLS for s in w.qc_actions[t.key].shortcuts()]
+    assert keys.count("Ctrl+Alt+P") == 1
+    from AIO_QC.widgets.command_palette import collect_actions, score
+    paths = [p for p, a in collect_actions(w.menuBar()) if a is act]
+    assert paths == ["QC ▸ Dataset ▸ Preparation"]         # one place: not in Tools any more
+    assert not w.menus.tools.actions().count(act)
+    assert score("data prep", paths[0]) is not None
+    w.open_tool("data_prep")                              # no dataset open: it opens all the same
+    dp = w.open_dialogs["data_prep"]
+    assert dp.isVisible() and dp.windowTitle().startswith("Preparation")
+    dp.close()
 
 
 def test_data_prep_pages(shell, qtbot, tmp_path):
@@ -259,6 +282,11 @@ def test_data_prep_pages(shell, qtbot, tmp_path):
                                                           p.dst.setText(str(tmp_path / "small")),
                                                           p.limit.setValue(100)))
     out["exif"] = run(pages["Fix EXIF rotation"], lambda p: p.root.setText(str(tmp_path / "raw")))
+    from .fixtures import yolo
+    y1, y2 = yolo(tmp_path / "y1", n=2), yolo(tmp_path / "y2", n=2)
+    out["combine_yolo"] = run(pages["Combine YOLO datasets"], lambda p: (p.sources.setPlainText(f"{y1}\n{y2}"),
+                                                                        p.dst.setText(str(tmp_path / "ycomb"))))
+    assert (tmp_path / "ycomb" / "dataset.yaml").is_file(), out["combine_yolo"]
     out["pick"] = run(pages["Pick images to label"], lambda p: (p.src.setText(str(tmp_path / "raw")),
                                                                p.out.setText(str(tmp_path / "picked")),
                                                                p.n.setValue(3), p.skip.setChecked(False),
@@ -266,3 +294,25 @@ def test_data_prep_pages(shell, qtbot, tmp_path):
     print(out)
     assert not any(v.startswith("⚠") for v in out.values()), out
     dp.close()
+
+
+def test_every_command_has_one_place_in_the_menus(shell, qtbot):
+    """One place per feature / command: no action sits in two menus (of any mode)."""
+    from AIO_QC.shell import MODES
+    for mode in MODES:
+        w = shell.window(mode)
+        where = {}
+
+        def walk(menu, path, where=where):
+            for act in getattr(menu, "_aio_all_actions", None) or menu.actions():
+                if act.isSeparator():
+                    continue
+                if act.menu() is not None:
+                    walk(act.menu(), path + [act.text()])
+                    continue
+                where.setdefault(id(act), []).append(" ▸ ".join(path + [act.text()]))
+        for act in w.menuBar().actions():
+            if act.menu() is not None:
+                walk(act.menu(), [act.text()])
+        dups = [p for p in where.values() if len(p) > 1]
+        assert not dups, (mode, dups)

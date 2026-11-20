@@ -3,12 +3,12 @@
 """
 Review ▸ Hand-off — send files to an annotator and merge their corrections back (core.handoff).
 
-Export Batch…   which files (flagged · flagged + fixed · files in the list · riskiest in the Issues Inbox), a name, a
+Export Batch… which files (flagged · flagged + fixed · files in the list · riskiest in the Issues Inbox), a name, a
                 folder → images + annotations in the dataset's layout, notes, findings and hint images.
-Import Batch…   pick the returned folder / zip → every file compared three ways (as exported · as returned · the
+Import Batch… pick the returned folder / zip → every file compared three ways (as exported · as returned · the
                 dataset now) → ready / conflict / unchanged / … with what each side changed. Double-click shows the
                 returned shapes over the image (dashed). Merge writes the ticked files (backup first), records them
-                in each file's History and marks them 🔧 Fixed so they get a final look.
+                in each file's History and marks them Fixed so they get a final look.
 """
 from __future__ import annotations
 
@@ -18,18 +18,23 @@ import time
 from pathlib import Path
 
 from loguru import logger
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
-    QProgressBar, QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
 )
 
 from AIO_QC.core import annodiff, handoff
-from AIO_QC.core.dataset import DETECTION_TYPES, DatasetType
+from AIO_QC.core.dataset import CLASSIFICATION_TYPES, FILE_TYPES, DatasetType  # noqa: F401
 from AIO_QC.core.state import REVIEW_FIXED, REVIEW_FLAG
 from AIO_QC.utils import hexc, newButton, newIcon, style as apply_style
 from .inference_service import FuncWorker
+from PyQt6.QtCore import QObject, pyqtSignal
+
+
+class _Bus(QObject):
+    step = pyqtSignal(int, int)
+from AIO_QC.core.diag import ignored as _ignored
 
 ROLE = Qt.ItemDataRole.UserRole
 
@@ -43,9 +48,16 @@ def _inside(child: Path, parent: Path) -> bool:
 
 
 # ====================================================================================================== export
+def _kind(s) -> str:
+    """The hand-off kind of a dataset: YOLO files, LabelMe files, or class folders (the images themselves)."""
+    if s.type == DatasetType.CLS_FOLDERS:
+        return handoff.CLS_FOLDERS
+    return "yolo" if s.is_yolo else "labelme"
+
+
 class ExportBatchDialog(QDialog):
     TITLE = "Export Hand-off Batch"
-    SUPPORTED = DETECTION_TYPES | {DatasetType.CLS_LABELME}      # files with annotations
+    SUPPORTED = FILE_TYPES | CLASSIFICATION_TYPES     # files with annotations; class folders: the images
 
     def __init__(self, app):
         super().__init__(app)
@@ -68,11 +80,28 @@ class ExportBatchDialog(QDialog):
         self.browse = newButton("Browse…", icon="open", slot=self._browse)
         self.hints = QCheckBox("Hint images: the image with the flagged regions drawn (_hints/)")
         self.hints.setChecked(st.value("handoff/hints", True, type=bool))
+        self.flat = QCheckBox("One flat folder (for editors that do not open sub-folders) — names made unique")
+        self.flat.setChecked(st.value("handoff/flat", False, type=bool))
+        self.flat.setToolTip("Every file straight in the batch folder (YOLO: images/ and labels/). Files with the "
+                             "same name get new names with the naming scheme; batch.json keeps where each came from, "
+                             "so Import Batch merges them back to the right files")
+        from .naming_panel import NamingPanel
+        self.naming = NamingPanel(self, context="handoff", preview=False)
+        self.flat.toggled.connect(self.naming.setVisible)
+        if app.session is not None and app.session.type == DatasetType.CLS_FOLDERS:
+            self.flat.setChecked(False)                # the class folders ARE the labels: their layout is kept
+            self.flat.setEnabled(False)
+            self.flat.setToolTip("Class folders: the batch keeps the class folders — the annotator moves images "
+                                 "between them")
+        self.naming.setVisible(self.flat.isChecked())
         self.status = QLabel("")
         self.status.setWordWrap(True)
         apply_style(self.status, "color:@muted;")
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
+        from .jobs import JobBar
+        self.job = JobBar(self, "Hand-off batch")          # progress · time left · Stop · Undo · Open folder
+        self.progress = self.job.progress
+        self._bus = _Bus()
+        self._bus.step.connect(lambda i, n: self.job.step(i, n, f"file {i:,} / {n:,}"))
         self.go = newButton("Export", icon="export", slot=self._export)
         self.go.setDefault(True)
         self.close_btn = newButton("Close", slot=self.close)
@@ -88,13 +117,15 @@ class ExportBatchDialog(QDialog):
         g.addWidget(self.folder, 2, 1)
         g.addWidget(self.browse, 2, 2)
         g.addWidget(self.hints, 3, 1, 1, 2)
+        g.addWidget(self.flat, 4, 1, 1, 2)
+        g.addWidget(self.naming, 5, 1, 1, 2)
         expl = QLabel("The annotator gets the files in the dataset's own layout with your notes and the findings "
                       "(notes.csv, README.txt). Keep batch.json in the folder — Import Batch uses it to merge the "
                       "corrections back and to spot files that changed on both sides.")
         expl.setWordWrap(True)
         apply_style(expl, "color:@muted;")
         foot = QHBoxLayout()
-        foot.addWidget(self.progress, 1)
+        foot.addWidget(self.job, 1)
         foot.addWidget(self.go)
         foot.addWidget(self.close_btn)
         lay = QVBoxLayout(self)
@@ -170,7 +201,8 @@ class ExportBatchDialog(QDialog):
                 try:
                     ann = s.base_adapter.load(smp, light=True)
                     img = img or ann.image_path
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     ann = None
             marks = []
             if ann is not None:
@@ -184,7 +216,8 @@ class ExportBatchDialog(QDialog):
             out.append(handoff.BatchItem(
                 k, smp.display, str(smp.ann_path) if smp.ann_path is not None else None,
                 str(img) if img is not None else None, e.get("note", ""), e.get("status", ""),
-                [f"{s.issues.titles.get(i.tool, i.tool)}: {i.text}" for i in issues], marks))
+                [f"{s.issues.titles.get(i.tool, i.tool)}: {i.text}" for i in issues], marks,
+                tags=list(s.tags_of(k)) if s.is_classification else []))
         return out
 
     def _export(self):
@@ -195,23 +228,23 @@ class ExportBatchDialog(QDialog):
         st.setValue("handoff/parent", self.folder.text().strip())
         st.setValue("handoff/hints", self.hints.isChecked())
         st.setValue("handoff/top_n", self.top_n.value())
+        st.setValue("handoff/flat", self.flat.isChecked())
         out, title, hints = self._out(), self.name.text().strip(), self.hints.isChecked()
-        kind = "yolo" if s.is_yolo else "labelme"
+        flat_naming = self.naming.scheme().to_dict() if self.flat.isChecked() else None
+        kind = _kind(s)
         names = list(s.base_adapter.class_names) if s.is_yolo else []
         cm = getattr(s.base_adapter, "class_map", None)
         class_files = [cm.source] if cm is not None and getattr(cm, "source", None) else []
         self.cancel.clear()
-        self.progress.setVisible(True)
-        self.progress.setRange(0, 0)
         self.go.setEnabled(False)
-        self.close_btn.setText("Stop")
-        self.close_btn.clicked.disconnect()
-        self.close_btn.clicked.connect(self.cancel.set)
+        self.job.start("Exporting", len(keys), stop=self.cancel.set)
+        bus = self._bus
 
         def job():
             items = self._items(keys)
             return handoff.export_batch(s.root, items, out, kind, names, title, hints, class_files,
-                                        cancel=self.cancel)
+                                        progress=lambda i, n: bus.step.emit(i, n), cancel=self.cancel,
+                                        flat_naming=flat_naming)
         self.worker = FuncWorker(job, self)
         self.worker.done.connect(lambda r: self._done(r, out))
         self.worker.failed.connect(lambda m: self._done({"error": m}, out))
@@ -219,30 +252,43 @@ class ExportBatchDialog(QDialog):
 
     def _done(self, st, out):
         self.worker = None
-        self.progress.setVisible(False)
-        self.close_btn.setText("Close")
-        self.close_btn.clicked.disconnect()
-        self.close_btn.clicked.connect(self.close)
         if "error" in st:
-            self.status.setText(f"⚠ Export failed: {st['error']}")
+            self.job.fail(st["error"])
             logger.error(f"[hand-off] export failed: {st['error']}")
             self._update()
             return
-        msg = f"✓ Exported {st['items']:,} file(s) ({st['files']:,} copied"
+        msg = f"Exported {st['items']:,} file(s) ({st['files']:,} copied"
         msg += f", {st['hints']:,} hint images)" if st.get("hints") else ")"
         if st["missing"]:
             msg += f" · {len(st['missing'])} skipped (no files)"
         if st["errors"]:
             msg += f" · {len(st['errors'])} error(s): {st['errors'][0]}"
-        if st.get("cancelled"):
-            msg += " · stopped early (the batch is still valid for what was exported)"
-        self.status.setText(msg)
         logger.info(f"[hand-off] {msg} → {out}")
-        open_btn = newButton("Open Folder", icon="open", slot=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(out))))
-        self.layout().itemAt(self.layout().count() - 1).layout().insertWidget(1, open_btn)
+        undo = (lambda o=out: self._remove_batch(o))
+        if st.get("cancelled"):
+            self.job.stopped(msg + " — stopped early (the batch is still valid for what was exported)", undo=undo,
+                             open_path=out)
+        else:
+            self.job.finish(msg, undo=undo, open_path=out)
         self.go.setEnabled(False)
 
+    def _remove_batch(self, out) -> str:
+        """Undo: the batch folder was made by this export (it had to be new) — delete it again."""
+        import shutil
+        if QMessageBox.question(self, self.TITLE, f"Delete the exported batch folder?\n\n{out}") \
+                != QMessageBox.StandardButton.Yes:
+            self.job.undo_btn.setVisible(True)
+            self.job.undo_btn.setEnabled(True)
+            self.job._undo = lambda o=out: self._remove_batch(o)
+            return "Kept"
+        shutil.rmtree(out, ignore_errors=True)
+        self.go.setEnabled(True)
+        self._update()
+        return f"Batch folder deleted: {out}"
+
     def closeEvent(self, e):
+        if hasattr(self, "job"):
+            self.job.close_job()
         if self.worker is not None:
             getattr(self, "cancel", threading.Event()).set()
             self.worker.wait(3000)
@@ -258,14 +304,15 @@ STATE_ICON = {"ready": "✓", "conflict": "⚠", "unchanged": "·", "same": "=",
 
 class ImportBatchDialog(QDialog):
     TITLE = "Import Hand-off Batch"
-    SUPPORTED = DETECTION_TYPES | {DatasetType.CLS_LABELME}      # files with annotations
+    SUPPORTED = FILE_TYPES | CLASSIFICATION_TYPES     # files with annotations; class folders: the images
 
     def __init__(self, app, path=None):
         super().__init__(app)
         self.app, self.session = app, app.session
         self.setWindowTitle(self.TITLE)
         self.setWindowIcon(newIcon("import"))
-        self.resize(980, 600)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
         self.batch_dir = None
         self.manifest = None
         self.rows: list[handoff.MergeRow] = []
@@ -293,13 +340,16 @@ class ImportBatchDialog(QDialog):
         self.only.currentIndexChanged.connect(lambda _i: self._filter())
         self.take_all = newButton("Take theirs for all conflicts", slot=lambda: self._tick_conflicts(True))
         self.keep_all = newButton("Keep mine for all conflicts", slot=lambda: self._tick_conflicts(False))
-        self.mark_fixed = QCheckBox("Mark merged files 🔧 Fixed (needs a final look)")
+        self.mark_fixed = QCheckBox("Mark merged files Fixed (needs a final look)")
         self.mark_fixed.setChecked(app.settings.value("handoff/mark_fixed", True, type=bool))
         self.status = QLabel("")
         self.status.setWordWrap(True)
         apply_style(self.status, "color:@muted;")
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
+        from .jobs import JobBar
+        self.job = JobBar(self, "Import hand-off batch")
+        self.progress = self.job.progress
+        self._bus = _Bus()
+        self._bus.step.connect(lambda i, n: self.job.step(i, n, f"comparing {i:,} / {n:,}"))
         self.merge_btn = newButton("Merge Ticked Files", icon="save", slot=self._merge)
         self.merge_btn.setEnabled(False)
         close = newButton("Close", slot=self.close)
@@ -316,7 +366,7 @@ class ImportBatchDialog(QDialog):
         tools.addWidget(self.keep_all)
         foot = QHBoxLayout()
         foot.addWidget(self.mark_fixed)
-        foot.addWidget(self.progress, 1)
+        foot.addWidget(self.job, 1)
         foot.addWidget(self.merge_btn)
         foot.addWidget(close)
         lay = QVBoxLayout(self)
@@ -361,13 +411,14 @@ class ImportBatchDialog(QDialog):
                 raise ValueError("no batch.json found there")
             m = handoff.load_manifest(bd)
         except Exception as exc:
+            _ignored(exc)
             self.status.setText(f"⚠ {exc}")
             return
         ds = os.path.abspath(m.get("dataset", ""))
         warn = ""
         if ds and os.path.normcase(ds) != os.path.normcase(os.path.abspath(s.root)):
             warn = f"\n⚠ Exported from {ds} — merging into {s.root}: files are matched by their path in the dataset."
-        kind = "yolo" if s.is_yolo else "labelme"
+        kind = _kind(s)
         if m.get("kind") and m["kind"] != kind:
             self.status.setText(f"⚠ This batch is {m['kind']}; the open dataset is {kind}.")
             return
@@ -376,16 +427,18 @@ class ImportBatchDialog(QDialog):
                           f"{m.get('user', '?')}{warn.replace(chr(10), '<br>')}")
         self.batch_dir, self.manifest = bd, m
         names = list(s.base_adapter.class_names) if s.is_yolo else None
-        self.progress.setVisible(True)
-        self.progress.setRange(0, 0)
-        self.worker = FuncWorker(lambda: handoff.compare(s.root, m, bd, kind, names), self)
+        self.job.start("Comparing", len(m.get("items", [])))
+        bus = self._bus
+        self.worker = FuncWorker(lambda: handoff.compare(s.root, m, bd, kind, names,
+                                                         progress=lambda i, n: bus.step.emit(i, n)), self)
         self.worker.done.connect(self._compared)
-        self.worker.failed.connect(lambda e: (self._idle(), self.status.setText(f"⚠ Compare failed: {e}")))
+        self.worker.failed.connect(lambda e: (self._idle(), self.job.fail(e)))
         self.worker.start()
 
     def _idle(self):
         self.worker = None
-        self.progress.setVisible(False)
+        self.job._end()
+        self.job.text.setText("")
 
     def _compared(self, rows):
         self._idle()
@@ -470,6 +523,8 @@ class ImportBatchDialog(QDialog):
 
     def _key(self, r) -> str | None:
         s = self.session
+        if r.new_class and r.target is not None and str(r.target) in s.by_key:   # class folders: where it is now
+            return str(r.target)
         rel = r.entry.get("key")
         if not rel:
             return None
@@ -500,6 +555,9 @@ class ImportBatchDialog(QDialog):
             return
         self.app.settings.setValue("handoff/mark_fixed", self.mark_fixed.isChecked())
         title = (self.manifest or {}).get("title", "batch")
+        if _kind(s) == handoff.CLS_FOLDERS:                    # every move = a class change (files move, one undo)
+            self._merge_classes(todo, title)
+            return
         s.ownPaths.emit([str(r.target) for r in todo])          # our writes, not "changed outside AIO QC"
         written, errors, op = handoff.apply_rows(s.root, todo, title)
         keys = [k for k in (self._key(r) for r in written) if k]
@@ -522,7 +580,27 @@ class ImportBatchDialog(QDialog):
         self.app.statusBar().showMessage(f"Merged {len(written):,} file(s) from “{title}”", 8000)
         self._load()                                    # re-compare: merged rows now read "Already merged"
 
+    def _merge_classes(self, todo, title):
+        s = self.session
+        by: dict = {}
+        for r in todo:
+            k = self._key(r)
+            if k is not None and r.new_class:
+                by.setdefault(r.new_class, []).append(k)
+        moved = []
+        for cls, keys in by.items():
+            before = set(s.by_key)
+            self.app._apply_classes(keys, tags=[cls], what=f"class → {cls} (batch “{title}”)")
+            moved += [k for k in s.by_key if k not in before]
+        if moved and self.mark_fixed.isChecked():
+            s.set_review(moved, REVIEW_FIXED, f"Merged from batch “{title}” · {time.strftime('%Y-%m-%d %H:%M')}")
+        self.app.statusBar().showMessage(f"Merged {len(moved):,} class change(s) from “{title}” — Ctrl+Z undoes "
+                                         "them", 8000)
+        self._load()
+
     def closeEvent(self, e):
+        if hasattr(self, "job"):
+            self.job.close_job()
         if self.worker is not None:
             getattr(self, "cancel", threading.Event()).set()
             self.worker.wait(3000)

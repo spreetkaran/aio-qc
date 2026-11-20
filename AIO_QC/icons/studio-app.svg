@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- SPDX-FileCopyrightText: 2026 Preetkaran Singh -->
+  <!-- SPDX-License-Identifier: GPL-3.0-only -->
+  <!-- Data Studio app icon: a table with a highlighted header and a bar chart rising over it, on the AIO QC tile
+       (same family as the Image QC and Frame Extractor icons). Vectors: sharp from 16 px to 8K. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c3f7a"/>
+      <stop offset="1" stop-color="#1c2b57"/>
+    </linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a5594"/>
+      <stop offset="1" stop-color="#26396e"/>
+    </linearGradient>
+    <linearGradient id="bar1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb347"/>
+      <stop offset="1" stop-color="#f08a24"/>
+    </linearGradient>
+    <linearGradient id="bar2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fd38d"/>
+      <stop offset="1" stop-color="#2ea865"/>
+    </linearGradient>
+    <linearGradient id="bar3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fd6e0"/>
+      <stop offset="1" stop-color="#22a9b8"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#tile)"/>
+  <path d="M8 196 L70 150 L120 182 L178 132 L248 176 L248 196 Q248 248 196 248 L60 248 Q8 248 8 196 Z" fill="url(#hill)" opacity="0.7"/>
+  <!-- the table -->
+  <rect x="40" y="58" width="150" height="132" rx="14" fill="#ffffff"/>
+  <path d="M40 72 Q40 58 54 58 L176 58 Q190 58 190 72 L190 90 L40 90 Z" fill="#0b7a84"/>
+  <g stroke="#c9d3e0" stroke-width="5">
+    <line x1="40" y1="123" x2="190" y2="123"/>
+    <line x1="40" y1="156" x2="190" y2="156"/>
+    <line x1="90" y1="90" x2="90" y2="190"/>
+    <line x1="140" y1="90" x2="140" y2="190"/>
+  </g>
+  <g fill="#e4eaf2">
+    <rect x="52" y="102" width="28" height="9" rx="4.5"/>
+    <rect x="102" y="102" width="28" height="9" rx="4.5"/>
+    <rect x="52" y="135" width="22" height="9" rx="4.5"/>
+    <rect x="102" y="135" width="30" height="9" rx="4.5"/>
+    <rect x="52" y="168" width="26" height="9" rx="4.5"/>
+  </g>
+  <!-- the chart card, overlapping the table -->
+  <rect x="128" y="108" width="96" height="104" rx="16" fill="#ffffff" stroke="#1c2b57" stroke-width="6"/>
+  <rect x="144" y="166" width="16" height="30" rx="4" fill="url(#bar1)"/>
+  <rect x="168" y="142" width="16" height="54" rx="4" fill="url(#bar2)"/>
+  <rect x="192" y="124" width="16" height="72" rx="4" fill="url(#bar3)"/>
+  <circle cx="198" cy="54" r="15" fill="#f6c453"/>
+</svg>

@@ -29,12 +29,60 @@ def _frames(folder):
                 yield os.path.join(r, f)
 
 
+CLASS_FOLDERS_MARK = ".aio_class_folders"      # the Frame Extractor sorted frames into class folders (a classifier)
+
+
 def inspect(folder) -> dict:
+    """kind: labelme | yolo | images | empty — or, for a classifier's pre-labels, cls_folders (frames sorted into
+    class folders) / cls_labelme (LabelMe files whose flags are the classes, no shapes)."""
     imgs = list(_frames(folder))
-    js = sum(1 for p in imgs if os.path.isfile(os.path.splitext(p)[0] + ".json"))
+    mark = _class_folders_root(folder)
+    if imgs and mark is not None:                   # the class-folder dataset is the folder holding the marker
+        loose = sum(1 for p in imgs if os.path.normcase(os.path.dirname(os.path.abspath(p))) ==
+                    os.path.normcase(os.path.abspath(mark)))
+        n = sum(1 for p in imgs if os.path.abspath(p).startswith(os.path.abspath(mark) + os.sep))
+        return {"kind": "cls_folders", "images": n, "labels": n - loose, "missing": loose, "root": mark}
+    jsons = [os.path.splitext(p)[0] + ".json" for p in imgs]
+    have = [j for j in jsons if os.path.isfile(j)]
+    js = len(have)
     tx = sum(1 for p in imgs if os.path.isfile(os.path.splitext(p)[0] + ".txt"))
     kind = "empty" if not imgs else "labelme" if js and js >= tx else "yolo" if tx else "images"
+    if kind == "labelme" and _flag_classes(have[:60]):
+        kind = "cls_labelme"
     return {"kind": kind, "images": len(imgs), "labels": max(js, tx), "missing": len(imgs) - js}
+
+
+def _class_folders_root(folder, depth=2):
+    """The folder (this one, or one or two levels down) where the Frame Extractor sorted frames into class folders."""
+    if os.path.isfile(os.path.join(folder, CLASS_FOLDERS_MARK)):
+        return str(folder)
+    if depth <= 0:
+        return None
+    try:
+        subs = sorted(e.path for e in os.scandir(folder) if e.is_dir() and not e.name.startswith(".")
+                      and e.name not in SKIP)
+    except OSError:
+        return None
+    for d in subs:
+        r = _class_folders_root(d, depth - 1)
+        if r is not None:
+            return r
+    return None
+
+
+def _flag_classes(jsons) -> bool:
+    """LabelMe files with no shapes whose flags name a class (a classifier's pre-labels)."""
+    flagged = 0
+    for j in jsons:
+        try:
+            with open(j, encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if d.get("shapes"):
+            return False
+        flagged += any(v is True for v in (d.get("flags") or {}).values())
+    return flagged > 0
 
 
 def _classes(folder, img_dir):
@@ -71,6 +119,9 @@ def prepare_labelme(folder, progress=None, cancel=None) -> int:
                                "group_id": None, "description": "", "shape_type": "rectangle", "flags": {}})
         data = {"version": "5.4.1", "flags": {}, "shapes": shapes, "imagePath": os.path.basename(p),
                 "imageData": None, "imageHeight": int(h or 0), "imageWidth": int(w or 0)}
+        from . import provenance as PV
+        PV.stamp_labelme(data, o=PV.make_origin("conversion", "Frames to Image QC",
+                                                detail="YOLO pre-labels as LabelMe" if shapes else ""))
         tmp = js + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

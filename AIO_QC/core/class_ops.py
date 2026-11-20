@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .dataset import AnnotationError, DatasetType
 from .io import atomic_write_text
+from AIO_QC.core.diag import ignored as _ignored
 
 YAML_SPECIAL = set(":#[]{}&,*!|>'\"%@`")
 
@@ -56,7 +57,7 @@ def build_id_map(old_names, remove_ids, new_names) -> dict[int, int | None]:
 def plan_removal(adapter, samples, remove, new_names=None, progress=None) -> RemovalPlan:
     """Pre-scan everything; no file is touched."""
     plan = RemovalPlan(adapter.type, set(remove))
-    if adapter.type == DatasetType.LABELME:
+    if adapter.type in (DatasetType.LABELME, DatasetType.COCO):
         for n, s in enumerate(samples):
             try:
                 c = Counter(str(sh.get("label", "")) for sh in adapter.load(s).shapes)
@@ -176,30 +177,38 @@ def write_class_file(path: Path, names: list[str]) -> None:
 def apply_plan(adapter, samples, plan: RemovalPlan, backup: bool, progress=None) -> tuple[str | None, list[str]]:
     by_key = {s.key: s for s in samples}
     keys = sorted(plan.files_to_write)
-    files = [by_key[k].ann_path for k in keys if k in by_key]
-    if plan.dataset_type != DatasetType.LABELME and plan.class_file:
+    files = list(dict.fromkeys(by_key[k].ann_path for k in keys if k in by_key))     # (COCO: one file, many images)
+    if plan.dataset_type not in (DatasetType.LABELME, DatasetType.COCO) and plan.class_file:
         files.append(plan.class_file)
     backup_dir = backup_files(adapter.root, files) if backup else None
     errors = []
+    import contextlib
+    batch = adapter.batch() if hasattr(adapter, "batch") else contextlib.nullcontext()
+    with batch:
+        _apply_rows(adapter, keys, by_key, plan, errors, progress)
+    if plan.dataset_type not in (DatasetType.LABELME, DatasetType.COCO):
+        if plan.class_file is None:
+            errors.append("No class map file to update")
+        else:
+            write_class_file(plan.class_file, plan.new_names)
+    return backup_dir, errors
+
+
+def _apply_rows(adapter, keys, by_key, plan, errors, progress):
     for n, k in enumerate(keys):
         s = by_key.get(k)
         try:
-            if plan.dataset_type == DatasetType.LABELME:
+            if plan.dataset_type in (DatasetType.LABELME, DatasetType.COCO):
                 ann = adapter.load(s)
                 ann.shapes = [sh for sh in ann.shapes if str(sh.get("label", "")) not in plan.remove]
                 adapter.save(s, ann)
             else:
                 _rewrite_yolo_file(s.ann_path, plan.id_map)
         except Exception as exc:
+            _ignored(exc)
             errors.append(f"{s.name if s else k}: {exc}")
         if progress:
             progress(n + 1, len(keys))
-    if plan.dataset_type != DatasetType.LABELME:
-        if plan.class_file is None:
-            errors.append("No class map file to update")
-        else:
-            write_class_file(plan.class_file, plan.new_names)
-    return backup_dir, errors
 
 
 def verify_after(adapter, samples, plan: RemovalPlan) -> list[str]:
@@ -212,7 +221,7 @@ def verify_after(adapter, samples, plan: RemovalPlan) -> list[str]:
             problems.append(f"{s.name}: {exc}")
             continue
         for sh in ann.shapes:
-            if plan.dataset_type == DatasetType.LABELME:
+            if plan.dataset_type in (DatasetType.LABELME, DatasetType.COCO):
                 if str(sh.get("label", "")) in plan.remove:
                     problems.append(f"{s.name}: {sh.get('label')!r} still present")
             else:

@@ -35,7 +35,7 @@ class _LoggerIO(io.StringIO):
 
 from AIO_QC.core.appdirs import log_dir as _log_dir
 
-LOG_FILE = str(_log_dir() / "aio_qc_tool.log")      # source: current folder · exe: <data>/logs (core.appdirs)
+LOG_FILE = str(_log_dir() / "aio-qc.log")      # source: current folder · exe: <data>/logs (core.appdirs)
 
 
 def _setup_loguru(logger_level: str) -> None:
@@ -57,8 +57,8 @@ def _setup_loguru(logger_level: str) -> None:
         compression="gz",
         enqueue=True,
         backtrace=True,
-        diagnose=True,
-    )
+        diagnose=False,      # no local variable values in tracebacks: a key or token in a variable must never
+    )                        # reach the log file (the stack itself is still there)
 
 def _install_excepthook() -> None:
     """PyQt6 aborts the process on an unhandled exception inside a slot/virtual.
@@ -126,14 +126,18 @@ def _process_setup_after_qt(app):
     motion.install(app)
 
 
-CLI_COMMANDS = ("extract", "probe", "testset", "eval", "clip")
+CLI_COMMANDS = ("extract", "probe", "testset", "eval", "clip", "autoannotate")
 VIDEO_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm", ".wmv", ".flv", ".mpg", ".mpeg", ".ts", ".mts",
               ".m2ts", ".3gp")
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("add-data", "add-classes"):
+        # add data to an existing dataset, matched by image content (Qt-free): aio-qc add-data | add-classes -h
+        from AIO_QC.core.prep.add_data_cli import main as add_main
+        sys.exit(add_main(sys.argv[1:]))
     if len(sys.argv) > 1 and sys.argv[1] in CLI_COMMANDS:
-        # the Frame Extractor's command line (Qt-free): aio-qc extract|probe|testset|eval|clip ...
+        # the Frame Extractor's command line (Qt-free): aio-qc extract|probe|testset|eval|clip|autoannotate ...
         import multiprocessing
         multiprocessing.freeze_support()
         if sys.platform == "win32":
@@ -154,8 +158,9 @@ def main():
                         help="start in the Frame Extractor (video), Image QC or Data Studio (default: Image QC)")
     parser.add_argument("files", nargs="*", help="a video to open in the Frame Extractor, or data files to open in "
                                                  "Data Studio (CSV, Excel, Parquet, JSON …)")
-    parser.epilog = ("Frame Extractor command line: aio-qc extract | probe | testset | eval | clip ...  "
-                     "(aio-qc extract -h for its options)")
+    parser.epilog = ("Frame Extractor command line: aio-qc extract | probe | testset | eval | clip | autoannotate ...  "
+                     "(aio-qc extract -h for its options). Add data to a dataset, matched by image content: aio-qc "
+                     "add-data | add-classes (-h for the options).")
     args = parser.parse_args()
 
     if args.version:
@@ -181,6 +186,9 @@ def main():
         logger.exception("AIO QC could not start")
         code = 1
     lifecycle.set_exit_code(code)
+    from AIO_QC.core import diag
+    diag.report()
+    lifecycle.final_exit(code)                  # only returns when no thread is left running
     sys.exit(code)
 
 

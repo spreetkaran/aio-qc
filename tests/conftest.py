@@ -5,6 +5,7 @@ fails the test that caused it; modal dialogs are answered automatically (and rec
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import sys
 import traceback
 
@@ -58,6 +59,8 @@ def _isolated_home(tmp_path_factory):
     os.environ["XDG_CONFIG_HOME"] = str(home / ".config")
     os.environ["XDG_DATA_HOME"] = str(home / ".local" / "share")
     os.environ["AIOQC_NO_LIBMPV_DOWNLOAD"] = "1"     # tests never download libmpv (test_libmpv drives it)
+    # the training runner's copy goes where coverage maps it back to AIO_QC/core/train_runner.py
+    os.environ["AIOQC_RUNNER_DIR"] = str(Path(__file__).resolve().parent.parent / ".cov_runner")
     yield home
 
 
@@ -94,6 +97,11 @@ def _errors(qapp, monkeypatch):
     monkeypatch.setattr(QInputDialog, "getItem", staticmethod(lambda *a, **k: (a[3][0] if len(a) > 3 and a[3]
                                                                                  else "", False)))
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("", False)))
+    monkeypatch.setattr(QInputDialog, "getDouble", staticmethod(lambda *a, **k: (0.0, False)))
+    monkeypatch.setattr(QInputDialog, "getInt", staticmethod(lambda *a, **k: (0, False)))
+    from AIO_QC.widgets import label_picker
+    monkeypatch.setattr(label_picker.LabelPicker, "exec_at", lambda self, at: (MESSAGES.append(
+        ("picker", self.names[:3])), None)[1])                    # the label popup: cancelled, like getItem above
     monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
     monkeypatch.setattr(QFileDialog, "getOpenFileNames", staticmethod(lambda *a, **k: ([], "")))
     monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: ("", "")))
@@ -107,3 +115,29 @@ def _errors(qapp, monkeypatch):
     assert not errs, "exceptions inside Qt:\n" + "\n".join(errs)
     assert not crit, f"critical message boxes: {crit}"
     assert not nb, "non-bool passed to a bool setter:\n" + "\n".join(nb[:10])
+
+
+# ---------------------------------------------------------------------------------------------- the very end
+# Like the app itself (widgets.lifecycle.final_exit): once every result is written, leave without Python's own
+# shutdown. Destroying the Qt application and its widgets during interpreter teardown — in whatever order the
+# modules happen to be cleared, with worker threads still parked — can segfault AFTER all tests passed, which would
+# turn a green run red (exit code 139). pytest's own exit status is kept.
+_EXIT = {"status": None}
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _EXIT["status"] = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    from AIO_QC.core import diag                   # AIOQC_DIAG_DUMP=<file>: what the handled-error sites caught
+    diag.report()
+    if _EXIT["status"] is None or os.environ.get("AIOQC_TEST_NORMAL_EXIT"):
+        return                                   # (set AIOQC_TEST_NORMAL_EXIT=1 to see a teardown problem)
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(_EXIT["status"])

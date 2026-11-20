@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import common as C
+from AIO_QC.core.diag import ignored as _ignored
 
 WORKERS = max(4, min(32, (os.cpu_count() or 4) * 2))
 
@@ -66,11 +67,13 @@ def _pmap(fn, items, progress, label, cancel, workers=WORKERS):
 # =============================================================================================================== unzip
 MAX_RATIO = 200          # uncompressed / compressed — beyond this an archive is treated as a zip bomb
 MAX_TOTAL = 200 * 1024 ** 3
+MOVED_ZIPS = "_extracted_zips"
 
 
 def unzip_plan(root, nested=True, progress=None, cancel=None) -> Plan:
     P = Plan("unzip", opts={"root": str(root), "nested": nested})
     _i, _j, zips, _o, sizes = C.scan([root], images=False, jsons=False, zips=True, cancel=cancel)
+    zips = [z for z in zips if MOVED_ZIPS not in Path(z).parts]      # archives an earlier run already put away
     skipped = 0
     for z in zips:
         d = Path(z).with_suffix("")
@@ -126,7 +129,7 @@ def unzip_run(P: Plan, move_archives=False, progress=None, cancel=None) -> dict:
                     n, b, _ = _extract(z, d, log)
                     log.row("extract", z, d, f"{n} files, {C.human(b)}")
                     if move_archives:
-                        t = C.unique_path(Path(z).parent / "_extracted_zips" / Path(z).name)
+                        t = C.unique_path(Path(z).parent / MOVED_ZIPS / Path(z).name)
                         t.parent.mkdir(exist_ok=True)
                         shutil.move(z, t)
                         log.moved(z, t, "archive set aside")
@@ -136,6 +139,7 @@ def unzip_run(P: Plan, move_archives=False, progress=None, cancel=None) -> dict:
                 except C.Cancelled:
                     raise
                 except Exception as exc:
+                    _ignored(exc)
                     return a, 0, 0, str(exc)
             res = _pmap(one, queue, progress, "Extracting", cancel, workers=min(8, WORKERS))
             nxt = []
@@ -179,7 +183,8 @@ def orphans_plan(root, out=None, use_image_path=True, progress=None, cancel=None
     def via_ip(js):
         try:
             ip = C.read_json(js).get("imagePath")
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return None
         if not isinstance(ip, str) or not ip.strip():
             return None
@@ -278,6 +283,7 @@ def integrity_plan(root, quarantine=None, check_images=True, check_jsons=True, w
         try:
             d = C.read_json(p)
         except Exception as exc:
+            _ignored(exc)
             return f"invalid JSON ({type(exc).__name__})"
         if not isinstance(d, dict):
             return "not a LabelMe JSON (top level is not an object)"
@@ -381,7 +387,8 @@ def dupes_plan(root, dup_dir=None, progress=None, cancel=None) -> Plan:
     def lab(j):
         try:
             return C.label_digest(C.read_json(j))
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return None
     kinds = Counter()
     taken = set()
@@ -521,6 +528,9 @@ def resize_run(P: Plan, progress=None, cancel=None) -> dict:
                     raise FileExistsError(f"{jt} already exists")
                 d = C.read_json(j)
                 if isinstance(d, dict):
+                    from .. import provenance as PV
+                    before = {"shapes": [dict(x) for x in d.get("shapes") or [] if isinstance(x, dict)],
+                              PV.KEY: d.get(PV.KEY)}
                     nw, nh = _scaled_size(ex["wh"], s)
                     sx, sy = nw / ex["wh"][0], nh / ex["wh"][1]
                     for sh in d.get("shapes") or []:
@@ -530,6 +540,7 @@ def resize_run(P: Plan, progress=None, cancel=None) -> dict:
                     d["imageWidth"], d["imageHeight"] = nw, nh
                     d["imagePath"] = os.path.basename(t)
                     d["imageData"] = None
+                    PV.stamp_labelme(d, o=PV.make_origin("rule", "Resize"), old=before)
                 C.write_atomic(jt, C.dump_json(d))
                 log.created(jt, "points scaled", j, "json")
             return None
@@ -588,4 +599,7 @@ def _encode(src, dst, s, o: ResizeOptions):
         ok, buf = cv2.imencode(x, img)
     if not ok:
         raise ValueError(f"cannot encode {x}")
-    C.write_atomic(dst, buf.tobytes())
+    from .. import provenance as PV
+    C.write_atomic(dst, PV.embed_bytes(buf.tobytes(), PV.image_record(
+        PV.make_origin("rule", "Resize"), source=os.path.basename(str(src)), scale=round(float(s), 4),
+        size=[int(img.shape[1]), int(img.shape[0])])))

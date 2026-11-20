@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔖 Saved Views — named file queries with live counts and a plain-language explanation (see core.views).
+ Saved Views — named file queries with live counts and a plain-language explanation (see core.views).
 
 Build a view from conditions (labels and counts, review state / note, split, folder, file name, Issues-Inbox
 findings, unreadable files — or a fixed list of files), read back what it means in one sentence, and keep it: the
@@ -48,7 +48,7 @@ class CondRow(QWidget):
         self.params = QWidget()
         self.pl = QHBoxLayout(self.params)
         self.pl.setContentsMargins(0, 0, 0, 0)
-        rm = newButton("✕", slot=lambda: self.dlg.remove_cond(self), tip="Remove this condition")
+        rm = newButton("", icon="close-x", slot=lambda: self.dlg.remove_cond(self), tip="Remove this condition")
         rm.setMaximumWidth(32)
         for w in (self.neg, self.type, self.params):
             self.lay.addWidget(w)
@@ -157,14 +157,15 @@ class CondRow(QWidget):
 
 
 class ViewsDialog(QDialog):
-    TITLE, ICON = "Saved Views", "🔖"
+    TITLE, ICON = "Saved Views", ""
     SUPPORTED = None
 
     def __init__(self, app):
         super().__init__(app)
         self.app, self.session = app, app.session
         self.setWindowTitle(self.TITLE)
-        self.resize(int(app.width() * 0.7), int(app.height() * 0.7))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
         self.store = ViewStore(self.session.root)
         self.counts: dict[str, int] = {}
         self.cur: dict | None = None
@@ -186,7 +187,7 @@ class ViewsDialog(QDialog):
             lb.addWidget(newButton(text, slot=slot, tip=tip))
         ll.addLayout(lb)
         lb2 = QHBoxLayout()
-        lb2.addWidget(newButton("📌 Current list", slot=self._snapshot,
+        lb2.addWidget(newButton("Current list", slot=self._snapshot,
                                 tip="Save the files in the main file list right now as a fixed-list view"))
         lb2.addWidget(newButton("Export…", slot=self._export, tip="Save the selected view(s) to a .json file"))
         lb2.addWidget(newButton("Import…", slot=self._import, tip="Load views from a .json file (e.g. another dataset)"))
@@ -493,7 +494,7 @@ class ViewsDialog(QDialog):
         if not keys:
             QMessageBox.information(self, self.TITLE, "No file matches this view right now.")
             return
-        self.app.apply_file_filter(keys, f"🔖 {self.cur['name']}")
+        self.app.apply_file_filter(keys, f"{self.cur['name']}")
 
     def _grid(self):
         if self.cur is None:
@@ -502,7 +503,7 @@ class ViewsDialog(QDialog):
         if not keys:
             QMessageBox.information(self, self.TITLE, "No file matches this view right now.")
             return
-        self.app.open_review_grid(keys, f"🔖 {self.cur['name']}")
+        self.app.open_review_grid(keys, f"{self.cur['name']}")
 
     def _flag(self):
         if self.cur is None:

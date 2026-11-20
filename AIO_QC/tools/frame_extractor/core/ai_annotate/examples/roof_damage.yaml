@@ -1,0 +1,90 @@
+# AIO QC · AI annotate project — made in the app (Auto-Annotate ▸ Annotate ▸ AI annotate).
+# Every setting is in the app; edit there, or here if you prefer (the app checks this file as you type).
+# The API key is NOT in this file: only the name of the environment variable that holds it.
+version: 1
+project: roof-damage
+description: Crops of trailer and container roofs seen from yard cameras.
+connection:
+  provider: litellm
+  base_url: http://localhost:4000
+  api_key_env: LITELLM_API_KEY
+  api_version: ''
+  region: ''
+  timeout_s: 120
+  workers: 12
+  retries: 5
+classes:
+- name: tear_hole
+  description: 'a tear or hole in the roof skin: a small break showing the dark interior, with torn, bent or curled
+    edges. Not dirt, stains, shadows, seams or rivets. One tight box per damage.'
+  min_confidence: 0.4
+  max_per_image: 0
+  min_size_px: 0
+  inside: ''
+  text: false
+  text_pattern: ''
+  text_check: none
+  parts: []
+flags:
+- name: damage_visible
+  description: true when at least one real tear or hole is visible on the roof
+references:
+  max_side: 1024
+  draw_boxes: true
+  views:
+    default:
+      match: ''
+      images: []
+      note: ''
+mode: vlm_detect
+roi:
+  class: ''
+  padding: 0.1
+  max_crops_per_image: 4
+vlm:
+  model: gemini-2.5-flash
+  params:
+    temperature: 0
+    max_tokens: 3000
+    reasoning_effort: low
+  json_mode: true
+  image_max_side: 1536
+  box_format: auto
+  instructions: Judge only the roof surface. Small damage counts. If unsure whether a mark is damage, leave it out.
+detector:
+  type: grounding_dino
+  model: ''
+  prompts: {}
+  box_threshold: 0.3
+  text_threshold: 0.25
+  iou: 0.5
+  device: auto
+segment:
+  type: none
+  model: ''
+checks:
+  fields:
+    artifacts: list of real image problems (garbled geometry, smeared patches); empty list if none
+  accept:
+  - len(artifacts) <= 1
+  require_boxes: false
+  keep_rejected: true
+  on_text_fail: review
+limits:
+  targets: {}
+  max_images: 0
+  max_attempts_factor: 2.0
+  budget_usd: 0
+  seed: 42
+pricing:
+  input: 0.3
+  output: 2.5
+output:
+  format: yolo
+  labelme_version: 6.3.1
+  image_data: false
+  write_confidence: true
+  needs_review_below: 0.6
+  merge_with_existing: add
+  audit: true
+  data_yaml: true

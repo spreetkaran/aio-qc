@@ -10,6 +10,7 @@ coverage, attributes …).
 from __future__ import annotations
 
 import math
+from AIO_QC.core.diag import ignored as _ignored
 
 COLUMNS = ["file", "split", "folder", "label", "shape_type", "x1", "y1", "x2", "y2", "width", "height", "area",
            "cx", "cy", "rel_width", "rel_height", "rel_area", "aspect", "image_width", "image_height", "points",
@@ -54,7 +55,8 @@ def build(samples, adapter, review=None, progress=None, cancel=None):
         else:
             try:
                 wh = adapter.image_size(s, ann)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 wh = None
             if wh:
                 W, H = float(wh[0]), float(wh[1])
@@ -62,8 +64,11 @@ def build(samples, adapter, review=None, progress=None, cancel=None):
         tags = list(getattr(ann, "tags", []) or [])
         if not shapes and not tags:
             rows.append({**base, "label": None, "shape_type": "(no shapes)", "image_width": W, "image_height": H})
-        for t in tags:                                             # classification datasets: image-level classes
-            rows.append({**base, "label": str(t), "shape_type": "image class", "image_width": W, "image_height": H})
+        for t in tags:                     # classification datasets: image-level classes (the "box" is the image)
+            img = {"width": W, "height": H, "area": W * H, "aspect": round(W / H, 4) if H else None, "rel_width": 1.0,
+                   "rel_height": 1.0, "rel_area": 1.0} if W and H else {}
+            rows.append({**base, "label": str(t), "shape_type": "image class", "image_width": W, "image_height": H,
+                         **img})
         for j, sh in enumerate(shapes):
             r = {**base, "label": str(sh.get("label", "")), "shape_type": sh.get("shape_type") or "polygon",
                  "image_width": W, "image_height": H, "group_id": sh.get("group_id"),

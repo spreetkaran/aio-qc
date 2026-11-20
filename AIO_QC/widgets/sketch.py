@@ -31,7 +31,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QColorDialog, QComboBox, QFrame, QGraphicsItem, QHBoxLayout,
-    QInputDialog, QLabel, QMessageBox, QScrollArea, QSlider, QToolButton, QWidget,
+    QLabel, QMessageBox, QScrollArea, QSlider, QToolButton, QWidget,
 )
 
 from AIO_QC.core.io import atomic_write_text
@@ -82,6 +82,8 @@ def _smooth_path(pts) -> QPainterPath:
 
 
 def draw_el(p: QPainter, el: dict):
+    if el.get("gone"):                       # replaced by a later edit (kept so Undo can bring it back)
+        return
     t = el["t"]
     col = QColor(el.get("c", "#ff3b30"))
     w = float(el.get("w", 6))
@@ -127,22 +129,129 @@ def draw_el(p: QPainter, el: dict):
             p.setBrush(Qt.BrushStyle.NoBrush)
         (p.drawRect if t == "rect" else p.drawEllipse)(r)      # a circle is stored with a square box
     elif t == "text" and pts and el.get("text"):
-        f = QFont()
-        f.setPixelSize(int(max(10, w * 5)))
-        f.setBold(True)
-        path = QPainterPath()
-        for i, line in enumerate(str(el["text"]).splitlines() or [""]):
-            path.addText(pts[0] + QPointF(0, i * f.pixelSize() * 1.2), f, line)
-        halo = QColor("#000000") if col.lightnessF() > 0.5 else QColor("#ffffff")
-        halo.setAlphaF(0.8)
-        p.setPen(QPen(halo, max(2.0, f.pixelSize() / 7), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+        draw_text(p, el, col)
+    p.restore()
+
+
+def text_path(el) -> QPainterPath:
+    """The text's outline at its place (multi-line: 1.2 × the size between lines)."""
+    f = QFont()
+    fs = text_px(el)
+    f.setPixelSize(fs)
+    f.setBold(el.get("ts", "outline") != "plain")
+    path = QPainterPath()
+    p0 = _pts(el)[0]
+    for i, line in enumerate(str(el.get("text", "")).splitlines() or [""]):
+        path.addText(p0 + QPointF(0, i * fs * 1.2), f, line)
+    return path
+
+
+def text_rect(el) -> QRectF:
+    """What a text covers on the image, its chip included."""
+    r = text_path(el).boundingRect()
+    if r.isEmpty():
+        fs = text_px(el)
+        p0 = _pts(el)[0]
+        r = QRectF(p0.x(), p0.y() - fs, fs * 0.6 * max(1, len(str(el.get("text", "")))), fs * 1.2)
+    pad = text_px(el) * (0.32 if el.get("ts") == "chip" else 0.12)
+    return r.adjusted(-pad, -pad, pad, pad)
+
+
+def draw_text(p: QPainter, el: dict, col: QColor):
+    """Styles (el["ts"]): outline (default, also for drawings made before styles) · chip (on a rounded box of
+    el["bg"]) · shadow · plain."""
+    from AIO_QC.core.sketch_text import halo_for
+    style = el.get("ts", "outline")
+    fs = text_px(el)
+    path = text_path(el)
+    if style == "chip":
+        bg = QColor(el.get("bg") or "#1c1c1e")
+        bg.setAlphaF(0.92)
+        r = text_rect(el)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(r, fs * 0.28, fs * 0.28)
+    elif style == "shadow":
+        sh = QColor(0, 0, 0, 150) if col.lightnessF() > 0.35 else QColor(255, 255, 255, 170)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(sh)
+        p.drawPath(path.translated(fs * 0.07, fs * 0.07))
+    elif style == "outline":
+        halo = QColor(halo_for(col.name()))
+        halo.setAlphaF(0.85)
+        p.setPen(QPen(halo, max(2.0, fs / 7), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
                       Qt.PenJoinStyle.RoundJoin))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(path)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(col)
-        p.drawPath(path)
-    p.restore()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(col)
+    p.drawPath(path)
+
+
+def background_of(img: QImage, rect: QRectF, scale: float = 1.0):
+    """Mean colour (rgb 0..1) and busy-ness (0..1) of `rect` (image px) on `img` (shown at `scale` × the image)."""
+    if img is None or img.isNull():
+        return (0.5, 0.5, 0.5), 0.0
+    r = QRectF(rect.x() * scale, rect.y() * scale, rect.width() * scale, rect.height() * scale).toAlignedRect()
+    r = r.intersected(img.rect())
+    if r.isEmpty():
+        return (0.5, 0.5, 0.5), 0.0
+    small = img.copy(r).scaled(12, 12, Qt.AspectRatioMode.IgnoreAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation).convertToFormat(QImage.Format.Format_RGB32)
+    vals, lums = [], []
+    for y in range(small.height()):
+        for x in range(small.width()):
+            c = small.pixelColor(x, y)
+            vals.append((c.redF(), c.greenF(), c.blueF()))
+            lums.append(0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF())
+    n = len(vals)
+    mean = tuple(sum(v[i] for v in vals) / n for i in range(3))
+    m = sum(lums) / n
+    spread = (sum((v - m) ** 2 for v in lums) / n) ** 0.5 * 2
+    return mean, min(1.0, spread)
+
+
+def styled_text_el(text: str, pt, fs: float, look_key: str, sketch_color: str, img: QImage | None,
+                   scale: float = 1.0) -> dict:
+    """A text element with its look worked out for where it lands on `img` (colours stored with it)."""
+    from AIO_QC.core.sketch_text import resolve_look
+    el = {"t": "text", "pts": [[float(pt[0]), float(pt[1])]], "text": str(text), "fs": round(float(fs), 1),
+          "w": max(2, round(float(fs) / 5)), "c": sketch_color, "look": look_key}
+    probe = dict(el, ts="chip")
+    mean, spread = background_of(img, text_rect(probe), scale)
+    el.update({k: v for k, v in resolve_look(look_key, mean, spread, sketch_color).items() if v is not None})
+    return el
+
+
+def fit_inside(el: dict, W: float, H: float) -> dict:
+    """Move a text so all of it (chip included) is on the image, when it fits at all — never cut off at an edge."""
+    if not W or not H:
+        return el
+    r = text_rect(el)
+    dx = (-r.left() if r.left() < 0 else W - r.right() if r.right() > W else 0.0) if r.width() <= W else -r.left()
+    dy = (-r.top() if r.top() < 0 else H - r.bottom() if r.bottom() > H else 0.0) if r.height() <= H else -r.top()
+    if dx or dy:
+        x, y = el["pts"][0]
+        el = dict(el, pts=[[x + dx, y + dy]])
+    return el
+
+
+def restyle_texts(els: list, look_key: str, sketch_color: str, img: QImage | None, scale: float = 1.0) -> list:
+    """Auto-sketch: give its text elements a look, worked out on the image (other elements unchanged)."""
+    out = []
+    for el in els:
+        if el.get("t") == "text":
+            p0 = el["pts"][0]
+            out.append(styled_text_el(el["text"], p0, text_px(el), look_key, sketch_color, img, scale))
+        else:
+            out.append(el)
+    return out
+
+
+def text_px(el) -> int:
+    """A text element's pixel size: its own size ("fs", image px) or, for drawings made before that, 5 × the pen."""
+    fs = el.get("fs")
+    return int(max(6, float(fs))) if fs else int(max(10, float(el.get("w", 6)) * 5))
 
 
 def el_bounds(el) -> QRectF:
@@ -154,8 +263,7 @@ def el_bounds(el) -> QRectF:
     pad = w + (max(10.0, w * 4) if el["t"] == "arrow" else 0) + 4
     r = QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad)
     if el["t"] == "text":
-        r = r.united(QRectF(pts[0].x() - 4, pts[0].y() - w * 6, w * 5 * max(1, len(el.get("text", ""))) * 0.7,
-                            w * 7 * max(1, len(str(el.get("text", "")).splitlines()))))
+        r = r.united(text_rect(el).adjusted(-4, -4, 4, 4))
     return r
 
 
@@ -313,11 +421,14 @@ def fmt_roi(r) -> str:
 class _Bar(QFrame):
     def __init__(self, canvas, title):
         super().__init__(canvas)
+        self._canvas = canvas
+        self.docked = False
         self.setObjectName("modeBar")
-        apply_style(self, "QFrame#modeBar{background:@surface; border:1px solid @line; border-radius:10px;}"
-                          "QToolButton{border:none; border-radius:6px; padding:3px;} "
-                          "QToolButton:checked{background:@accent; color:white;} "
-                          "QToolButton:hover:!checked{background:@line;}")
+        self._float_css = ("QFrame#modeBar{background:@surface; border:1px solid @line; border-radius:10px;}"
+                           "QToolButton{border:none; border-radius:6px; padding:3px;} "
+                           "QToolButton:checked{background:@accent; color:white;} "
+                           "QToolButton:hover:!checked{background:@line;}")
+        apply_style(self, self._float_css)
         self.lay = QHBoxLayout(self)
         self.lay.setContentsMargins(8, 4, 8, 4)
         self.lay.setSpacing(3)
@@ -350,14 +461,44 @@ class _Bar(QFrame):
         apply_style(s, "color:@line;")
         self.lay.addWidget(s)
 
+    # ---- where the bar lives: in the QC tab row (covers nothing, moves nothing) — or, without it, over the image
+    def dock(self, app) -> bool:
+        rb = getattr(app, "tabs", None)
+        if rb is None or not hasattr(rb, "set_mode_bar") or not rb.can_host_mode_bar():
+            return False
+        self.docked = True
+        self.lay.setContentsMargins(8, 0, 8, 0)
+        apply_style(self, "QFrame#modeBar{background:transparent; border:none;}"
+                          "QToolButton{border:none; border-radius:6px; padding:3px;} "
+                          "QToolButton:checked{background:@accent; color:white;} "
+                          "QToolButton:hover:!checked{background:@line;}")
+        rb.set_mode_bar(self)
+        return True
+
+    def undock(self, app):
+        rb = getattr(app, "tabs", None)
+        if getattr(self, "docked", False) and rb is not None and rb.mode_bar is self:
+            rb.set_mode_bar(None)
+        if getattr(self, "docked", False):
+            self.docked = False
+            self.lay.setContentsMargins(8, 4, 8, 4)
+            self.setParent(self._canvas)
+            apply_style(self, self._float_css)
+            self.hide()
+
     def place(self):
+        if getattr(self, "docked", False):
+            return
         c = self.parentWidget()
         self.adjustSize()
         vp = c.viewport().geometry()
         w = min(self.sizeHint().width(), vp.width() - 16)
         self.setGeometry(vp.left() + (vp.width() - w) // 2, vp.top() + 10, w, self.sizeHint().height())
 
-    def show_bar(self):
+    def show_bar(self, app=None):
+        if app is not None and self.dock(app):
+            anim.fade(self, True, 160)
+            return
         self.place()
         end = QRect(self.geometry())
         anim.fade(self, True, 180)
@@ -456,6 +597,11 @@ class SketchMode:
         self.color = app.settings.value("sketch/color", PALETTE[0])
         self.size = int(app.settings.value("sketch/size", 6))
         self.esize = int(app.settings.value("sketch/esize", 24))
+        self.tsize = int(app.settings.value("sketch/tsize", 40))     # text: letter height in image pixels
+        from AIO_QC.core.sketch_text import DEFAULT_LOOK, LOOK_KEYS
+        self.tlook = str(app.settings.value("sketch/text_look", DEFAULT_LOOK))
+        if self.tlook not in LOOK_KEYS:
+            self.tlook = DEFAULT_LOOK
         self.fill = app.settings.value("sketch/fill", False, type=bool)
         self.els, self.redo_stack = [], []
         self.layer = None
@@ -492,7 +638,7 @@ class SketchMode:
         self.custom = b.btn(None, "Any colour…", self._pick_color, text="＋")
         b.sep()
         self.size_lbl = QLabel()
-        self.size_lbl.setMinimumWidth(48)
+        self.size_lbl.setMinimumWidth(64)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(1, 120)
         self.slider.setFixedWidth(110)
@@ -538,7 +684,13 @@ class SketchMode:
             self.app.settings.setValue("sketch/tool", key)
         self.tool_btns[key].setChecked(True)
         self.slider.blockSignals(True)
-        self.slider.setValue(self.esize if key == "erase" else self.size)
+        if key == "text":
+            self.slider.setRange(6, 400)
+            self.slider.setToolTip("Text size — the height of the letters in image pixels ( [ smaller · ] bigger )")
+        else:
+            self.slider.setRange(1, 120)
+            self.slider.setToolTip("Size  ( [ smaller · ] bigger ) — the eraser and the text keep their own sizes")
+        self.slider.setValue(self.esize if key == "erase" else self.tsize if key == "text" else self.size)
         self.slider.setEnabled(key != "pick")
         if key in SHAPES and self.shapes_box is not None:
             self.shapes_box.show_btn(self.tool_btns[key])        # a shape chosen by key / setting scrolls into view
@@ -550,6 +702,9 @@ class SketchMode:
         if self.tool == "erase":
             self.esize = v
             self.app.settings.setValue("sketch/esize", v)
+        elif self.tool == "text":
+            self.tsize = v
+            self.app.settings.setValue("sketch/tsize", v)
         else:
             self.size = v
             self.app.settings.setValue("sketch/size", v)
@@ -557,14 +712,18 @@ class SketchMode:
         self._cursor()
 
     def _size_label(self):
-        self.size_lbl.setText(f"{self.esize if self.tool == 'erase' else self.size} px")
+        if self.tool == "text":
+            self.size_lbl.setText(f"Aa {self.tsize} px")
+        else:
+            self.size_lbl.setText(f"{self.esize if self.tool == 'erase' else self.size} px")
 
     def _toggle_fill(self):
         self.fill = self.fill_btn.isChecked()
         self.app.settings.setValue("sketch/fill", self.fill)
 
     def _bump(self, d):
-        self.slider.setValue(max(1, min(120, self.slider.value() + d)))
+        step = d * (4 if self.tool == "text" else 1)
+        self.slider.setValue(max(self.slider.minimum(), min(self.slider.maximum(), self.slider.value() + step)))
 
     # ---- cursor: the real brush size at the current zoom
     def _cursor(self):
@@ -649,7 +808,7 @@ class SketchMode:
             self._shortcuts.append(sc)
         self.c.viewport().installEventFilter(self._filter)
         self.image_changed(app.current_key)
-        self.bar.show_bar()
+        self.bar.show_bar(self.app)
         self._cursor()
         app.statusBar().showMessage("✎ Sketch — draw on the image · labels are hidden: tick the ones you want in "
                                     "Labels · Ctrl+C copies, Esc leaves", 7000)
@@ -666,7 +825,10 @@ class SketchMode:
         self._shortcuts = []
         self.c.viewport().removeEventFilter(self._filter)
         self._drop_layer()
-        anim.fade(self.bar, False, 150)
+        if self.bar.docked:
+            self.bar.undock(app)
+        else:
+            anim.fade(self.bar, False, 150)
         if self._saved_hidden is not None:                # the label choice from before the sketch
             labels = {app.unique_labels.item(i).data(Qt.ItemDataRole.UserRole)
                       for i in range(app.unique_labels.count())} | set(app.visible_labels)
@@ -728,7 +890,11 @@ class SketchMode:
     # ---- editing
     def undo(self):
         if self.els:
-            self.redo_stack.append(self.els.pop())
+            el = self.els.pop()
+            was = el.get("was")
+            if was is not None and 0 <= was < len(self.els):
+                self.els[was].pop("gone", None)           # an edit undone: the text as it was comes back
+            self.redo_stack.append(el)
             self.layer.render_all(self.els)
             self._buttons()
             self._save()
@@ -736,8 +902,14 @@ class SketchMode:
     def redo(self):
         if self.redo_stack:
             el = self.redo_stack.pop()
-            self.els.append(el)
-            self.layer.commit(el)
+            was = el.get("was")
+            if was is not None and 0 <= was < len(self.els):
+                self.els[was]["gone"] = True
+                self.els.append(el)
+                self.layer.render_all(self.els)
+            else:
+                self.els.append(el)
+                self.layer.commit(el)
             self._buttons()
             self._save()
 
@@ -748,6 +920,69 @@ class SketchMode:
             self.layer.render_all([])
             self._buttons()
             self._save()
+
+    def _shape_under(self, pt):
+        """(index, shape) of the smallest annotation whose box holds the point, or None."""
+        from AIO_QC.core.autosketch import shape_box
+        ann = getattr(self.app, "current_ann", None)
+        if ann is None:
+            return None
+        pix = self.c.pixmap_item.pixmap()
+        if getattr(ann, "normalized", False) and not pix.isNull():
+            ann = ann.scaled(pix.width(), pix.height())
+        best = None
+        for i, s in enumerate(ann.shapes):
+            b = shape_box(s.get("points"), s.get("shape_type"))
+            if b and b[0] <= pt.x() <= b[2] and b[1] <= pt.y() <= b[3]:
+                a = (b[2] - b[0]) * (b[3] - b[1])
+                if best is None or a < best[0]:
+                    best = (a, i, s)
+        return (best[1], best[2]) if best else None
+
+    def _text_at(self, pt):
+        """Text tool click: on an existing text — edit it (text, size); elsewhere — new text from a template."""
+        from .sketch_text_dialog import TextDialog
+        hit = None
+        for i in range(len(self.els) - 1, -1, -1):
+            el = self.els[i]
+            if el["t"] == "text" and not el.get("gone") and el_bounds(el).contains(pt):
+                hit = i
+                break
+        fields = {"file": Path(self.key).name if self.key else None}
+        hit_shape = self._shape_under(pt)                # labels are hidden in sketch mode: from the file itself
+        if hit_shape is not None:
+            fields.update(label=str(hit_shape[1].get("label")), n=hit_shape[0] + 1)
+        old = self.els[hit] if hit is not None else None
+        pm = self.c.pixmap_item.pixmap()                    # what is on screen (brightness / contrast included)
+        img = pm.toImage() if not pm.isNull() else QImage()
+        at = (old["pts"][0][0], old["pts"][0][1]) if old else (pt.x(), pt.y())
+        dlg = TextDialog(self.app.settings, self.app, text=old["text"] if old else "",
+                         size=text_px(old) if old else self.tsize, fields=fields,
+                         title="Edit text" if old else "Text", look=(old or {}).get("look", self.tlook),
+                         image=img, scale=img.width() / max(1, self.layer.W), point=at,
+                         sketch_color=(old or {}).get("c", self.color) if old and old.get("look") in
+                         (None, "sketch_outline", "plain") else self.color)
+        if not dlg.exec():
+            return
+        el = dlg.styled_el()
+        if el is None:
+            return
+        self.tlook = dlg.look()
+        self.app.settings.setValue("sketch/text_look", self.tlook)
+        if old is None:
+            self.tsize = dlg.value()
+            self.app.settings.setValue("sketch/tsize", self.tsize)
+            self.slider.blockSignals(True)
+            self.slider.setValue(self.tsize)
+            self.slider.blockSignals(False)
+            self._size_label()
+            self.layer.commit(el)
+            self._add(el)
+            return
+        el["was"] = hit                                     # an edit: the old one hides, Undo brings it back
+        old["gone"] = True
+        self._add(el)
+        self.layer.render_all(self.els)
 
     def _add(self, el):
         self.els.append(el)
@@ -812,11 +1047,7 @@ class SketchMode:
             self._pick(pt)
             return True
         if self.tool == "text":
-            text, ok = QInputDialog.getMultiLineText(self.app, "Text", "Text to put on the image:")
-            if ok and text.strip():
-                el = {"t": "text", "c": self.color, "w": self.size, "pts": [[pt.x(), pt.y()]], "text": text.strip()}
-                self.layer.commit(el)
-                self._add(el)
+            self._text_at(pt)
             return True
         w = self.esize if self.tool == "erase" else self.size
         el = {"t": self.tool, "c": self.color, "w": w, "pts": [[pt.x(), pt.y()]]}
@@ -1060,7 +1291,7 @@ class RoiMode:
             self._shortcuts.append(sc)
         self.c.viewport().installEventFilter(self._filter)
         self.image_changed(app.current_key)
-        self.bar.show_bar()
+        self.bar.show_bar(self.app)
         self.c.viewport().setCursor(Qt.CursorShape.CrossCursor)
         app.statusBar().showMessage("⬚ ROI — drag a box · right-click a box removes it · Ctrl+C copies · O leaves",
                                     7000)
@@ -1078,7 +1309,10 @@ class RoiMode:
         self._shortcuts = []
         self.c.viewport().removeEventFilter(self._filter)
         self._drop()
-        anim.fade(self.bar, False, 150)
+        if self.bar.docked:
+            self.bar.undock(self.app)
+        else:
+            anim.fade(self.bar, False, 150)
         self.app.inline.refresh()
         self.c._apply_mode_cursor()
 

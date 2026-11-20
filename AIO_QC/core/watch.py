@@ -21,16 +21,24 @@ META_NAMES = {"classes.txt"}
 META_SUFFIXES = {".yaml", ".yml"}
 
 
-def snapshot(root: str | Path, exts: set[str]) -> dict[str, str]:
-    """Signature of every relevant file (plus class-list / YAML files, which change the dataset's meaning)."""
+def snapshot(root: str | Path, exts: set[str], should_stop=None) -> dict[str, str] | None:
+    """Signature of every relevant file (plus class-list / YAML files, which change the dataset's meaning).
+    should_stop() is asked between folders and every few thousand files: True -> None at once (closing a big dataset
+    must not wait for a full scan)."""
     out: dict[str, str] = {}
     stack = [str(root)]
+    n = 0
     while stack:
+        if should_stop is not None and should_stop():
+            return None
         d = stack.pop()
         try:
             with os.scandir(d) as it:
                 for e in it:
                     name = e.name
+                    n += 1
+                    if should_stop is not None and not n % 4096 and should_stop():
+                        return None
                     if name.startswith("."):
                         continue
                     try:

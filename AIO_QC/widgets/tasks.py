@@ -4,7 +4,7 @@
 One background-task indicator for the whole app.
 
 Long jobs from any mode report here - Frame Extractor batch extraction, marker extraction, timeline analysis,
-clip / annotated-video exports, Testing runs / test-set builds / reports, Image QC scans and Data Prep runs, Data
+clip / annotated-video exports, Testing runs / test-set builds / reports, Image QC scans and Preparation runs, Data
 Studio exports. Every mode window shows the same indicator in its status bar (installed by the shell): a loading
 ring, then the latest job's text and progress; when everything has finished the ring turns into a green tick for a
 moment. Click it (or the Background Tasks toolbar button) for the Background Tasks window: every job of this session,
@@ -16,18 +16,19 @@ running and finished, with progress, timings and Cancel.
 """
 from __future__ import annotations
 
-import math
 import time
 
-from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QConicalGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from AIO_QC.core.diag import ignored as _ignored
 
 
 class Task:
     def __init__(self, center, title, cancel=None):
         self.center, self.title, self.cancel_fn = center, title, cancel
+        self.owner = None                          # the job's window / object (the shelf shows its progress)
         self.fraction, self.text = None, ""
         self.t0 = time.monotonic()
         self.started = time.time()                # wall clock, for the viewer
@@ -62,8 +63,8 @@ class Task:
             self.cancelled = True
             try:
                 self.cancel_fn()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
 
     def label(self):
         pct = f" {self.fraction * 100:.0f}%" if self.fraction is not None else ""
@@ -72,6 +73,7 @@ class Task:
 
 class TaskCenter(QObject):
     changed = pyqtSignal()
+    finished = pyqtSignal(object)                 # a Task that ended (done or cancelled)
 
     HISTORY = 300
 
@@ -87,6 +89,7 @@ class TaskCenter(QObject):
         # the job's QObject (given, or the one whose method cancels it) going away ends the task: a window closed
         # mid-job must not leave a task "running" forever
         owner = owner if owner is not None else getattr(cancel, "__self__", None)
+        t.owner = owner
         if isinstance(owner, QObject):
             try:
                 owner.destroyed.connect(lambda *_a, t=t: t.finish())
@@ -100,11 +103,14 @@ class TaskCenter(QObject):
             self._timer.start()
 
     def _remove(self, t):
-        if t in self.tasks:
+        ended = t in self.tasks
+        if ended:
             self.tasks.remove(t)
             self.history.append(t)
             del self.history[:-self.HISTORY]
         self.changed.emit()
+        if ended:
+            self.finished.emit(t)
 
     def clear_history(self):
         self.history.clear()
@@ -137,7 +143,7 @@ def start(title, cancel=None, owner=None):
 
 # ---------------------------------------------------------------------------------------------------- loading ring
 BLUE, CYAN, GREEN = QColor("#2f7fe8"), QColor("#9be3f5"), QColor("#2fb344")
-TURN_S = 1.1           # one turn of the gradient
+TURN_S = 0.9           # one turn of the arc
 MORPH_S = 0.30         # ring: blue gradient -> plain green
 TICK_S = 0.32          # the tick draws itself
 
@@ -151,40 +157,39 @@ def _ease(x):
 
 
 def paint_ring(p: QPainter, rect: QRectF, angle: float, done_k: float = 0.0, tick_k: float = 0.0, wobble: float = 0.0):
-    """One frame: a ring with a turning blue → cyan gradient and a soft wobbling glow; done_k morphs it into a plain
-    green ring, tick_k draws the green tick (0..1 each)."""
+    """One frame. 3.0.1 (as in the reference): a thin, faint track ring with a brighter arc turning on it — the arc
+    fades out along its tail. Ink = the theme's text colour (dark on light, light on dark). done_k morphs it into a
+    plain green ring, tick_k draws the green tick (0..1 each)."""
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     s = min(rect.width(), rect.height())
     c = rect.center()
-    pen_w = max(1.6, s * 0.15)
-    r = s / 2 - pen_w / 2 - max(0.6, s * 0.06)
+    pen_w = max(1.4, s * 0.11)
+    r = s / 2 - pen_w / 2 - max(0.5, s * 0.04)
     spin_a = 1.0 - done_k
     if spin_a > 0:
-        # glow: two translucent, slightly squashed loops turning the other way (the GIF's soft halo)
-        for i, (col, k) in enumerate(((CYAN, 0.9), (QColor("#7fd8e8"), 0.7))):
-            g = QColor(col)
-            g.setAlphaF(0.28 * k * spin_a)
-            p.save()
-            p.translate(c)
-            p.rotate(-angle * (0.6 + 0.3 * i) + 40 * i)
-            dx = (0.5 + 0.5 * math.sin(wobble + i)) * s * 0.05
-            p.setPen(QPen(g, pen_w * 1.25))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(QPointF(dx, 0), r + s * 0.03, r - s * 0.02)
-            p.restore()
-        grad = QConicalGradient(c, -angle)
-        b, cy = QColor(BLUE), QColor(CYAN)
-        b.setAlphaF(spin_a)
-        cy.setAlphaF(0.55 * spin_a)
-        mid = QColor("#5aa9f0")
-        mid.setAlphaF(spin_a)
-        grad.setColorAt(0.0, b)
-        grad.setColorAt(0.45, cy)
-        grad.setColorAt(0.75, mid)
-        grad.setColorAt(1.0, b)
-        p.setPen(QPen(grad, pen_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        try:
+            from AIO_QC.widgets.design import tokens
+            ink = QColor(tokens()["text"])
+        except Exception as _exc:
+            _ignored(_exc)
+            ink = QColor("#1B1F24")
+        track = QColor(ink)
+        track.setAlphaF(0.18 * spin_a)
+        p.setPen(QPen(track, pen_w))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(c, r, r)
+        span = 110.0                                            # the bright arc, in degrees
+        head = -angle                                           # turning clockwise
+        grad = QConicalGradient(c, head)
+        lead, tail = QColor(ink), QColor(ink)
+        lead.setAlphaF(0.95 * spin_a)
+        tail.setAlphaF(0.0)
+        grad.setColorAt(0.0, lead)
+        grad.setColorAt(span / 360.0, tail)
+        grad.setColorAt(1.0, tail)
+        p.setPen(QPen(grad, pen_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        arc = QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
+        p.drawArc(arc, int(head * 16), int(span * 16))
     if done_k > 0:
         g = QColor(GREEN)
         g.setAlphaF(done_k)
@@ -215,7 +220,14 @@ class LoadingRing(QWidget):
         self.setFixedSize(size, size)
         self.mode = "spin"
         self._t_done = None
-        self._timer = QTimer(self, interval=33, timeout=self.update)        # ~30 fps, only while it moves
+        self._timer = QTimer(self, timeout=self.update)                     # every display frame, only while it moves
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        try:
+            from AIO_QC.widgets.mini_session import refresh_hz
+            self._timer.setInterval(max(2, int(1000 / refresh_hz(self))))
+        except Exception as _exc:
+            _ignored(_exc)
+            self._timer.setInterval(8)
 
     def spin(self):
         self.mode, self._t_done = "spin", None
@@ -264,7 +276,11 @@ DONE_HOLD_MS = 1800      # the green tick stays this long after the last job end
 
 class TaskIndicator(QWidget):
     """Status bar: loading ring + the latest job's text (hidden when nothing runs). When the last job ends the ring
-    becomes a green tick for a moment. Click: the Background Tasks window."""
+    becomes a green tick for a moment. Click: the Background Tasks window.
+
+    `active_changed(bool)` says when it appears / goes, for a window that shares its place with something else (the
+    Frame Extractor's left slot: the jobs replace the output-folder line while they run)."""
+    active_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -275,17 +291,47 @@ class TaskIndicator(QWidget):
         lay.setSpacing(6)
         self.ring = LoadingRing(16)
         self.label = QLabel("")
+        from PyQt6.QtWidgets import QSizePolicy
+        self.label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         lay.addWidget(self.ring)
-        lay.addWidget(self.label)
+        lay.addWidget(self.label, 1)
+        self.setFixedWidth(self.WIDTH)            # one fixed slot: changing job text never moves its neighbours
+        self._full = ""
         self._was_running = False
         self._hold = QTimer(self, singleShot=True, interval=DONE_HOLD_MS, timeout=self._end_hold)
         self.c = center()
         self.c.changed.connect(self.refresh)
+        self._active = False
         self.setVisible(False)
         self.refresh()
 
+    def active(self) -> bool:
+        """Showing a job (or its "Done" moment) — independent of a status message covering it."""
+        return self._active
+
+    def _show(self, on: bool):
+        if self.isHidden() == on:
+            self.setVisible(on)
+        if on != self._active:
+            self._active = on
+            self.active_changed.emit(on)
+
+    WIDTH = 260
+
     def text(self) -> str:
-        return self.label.text()
+        return self._full
+
+    def _set_text(self, t: str):
+        self._full = t
+        self._elide()
+
+    def _elide(self):
+        w = max(0, self.label.width() or (self.WIDTH - 34))
+        self.label.setText(self.label.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, w))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._elide()
 
     def _front(self) -> bool:
         w = self.window()
@@ -298,23 +344,23 @@ class TaskIndicator(QWidget):
         if ts:
             self._hold.stop()
             self._was_running = True
-            if self.isHidden():
-                self.setVisible(True)
+            if not self._active or self.isHidden():
+                self._show(True)
             self.ring.spin()
             last = ts[-1]
             more = f"  (+{len(ts) - 1} more)" if len(ts) > 1 else ""
             txt = last.label()
-            self.label.setText(f"{txt[:60]}{'…' if len(txt) > 60 else ''}{more}")
+            self._set_text(f"{txt}{more}" if not more else f"{txt[:48]}{'…' if len(txt) > 48 else ''}{more}")
             self.setToolTip("Background tasks — click for the Background Tasks window:\n"
                             + "\n".join(f"• {t.label()}" for t in ts))
             return
-        if self._was_running and self._front() and not self.isHidden():
+        if self._was_running and self._front() and self._active:
             self._was_running = False
             last = self.c.history[-1] if self.c.history else None
             if last is not None and last.cancelled:
-                self.label.setText(f"Cancelled · {last.title[:50]}")
+                self._set_text(f"Cancelled · {last.title}")
             else:
-                self.label.setText(f"Done · {last.title[:50]}" if last is not None else "Done")
+                self._set_text(f"Done · {last.title}" if last is not None else "Done")
             self.setToolTip("Every background task has finished — click for the list")
             self.ring.done()
             self._hold.start()
@@ -322,17 +368,17 @@ class TaskIndicator(QWidget):
         if self._hold.isActive():
             return
         self._was_running = False
-        if not self.isHidden():
-            self.setVisible(False)
+        if self._active or not self.isHidden():
+            self._show(False)
 
     def _end_hold(self):
         if not self.c.tasks:
-            self.setVisible(False)
+            self._show(False)
 
     def showEvent(self, e):
         super().showEvent(e)
         if not self.c.tasks and not self._hold.isActive():
-            self.setVisible(False)
+            self._show(False)
             return
         self.refresh()
 
@@ -349,7 +395,17 @@ def install(window):
     ind = TaskIndicator(window)
     # first of the permanent widgets: its changing text only moves the message area, never the steady items to its
     # right (review mark, position, mode)
-    window.statusBar().insertPermanentWidget(0, ind)
+    sb = window.statusBar()
+    from AIO_QC.widgets.status_fields import PaintStatusBar
+    slot = getattr(window, "task_slot", None)
+    if callable(slot):          # the window has a place of its own for it (Frame Extractor: the left slot)
+        ind.setMinimumWidth(0)
+        ind.setMaximumWidth(16777215)
+        slot(ind)
+    elif isinstance(sb, PaintStatusBar):
+        sb.insertPermanentWidget(0, ind)
+    else:                       # a bar with its own (non-permanent) items first: Qt only accepts it after them
+        sb.addPermanentWidget(ind)
     window._task_indicator = ind
     return ind
 
@@ -386,7 +442,8 @@ class TaskViewer(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Background Tasks")
         self.setObjectName("taskViewer")
-        self.resize(860, 420)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "small")
         self.c = center()
         lay = QVBoxLayout(self)
         self.summary = QLabel("")

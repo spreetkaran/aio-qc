@@ -3,7 +3,8 @@ Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at: https://openfontlicense.org
 
-Bundled file: AIO_QC/fonts/Inter_24pt-SemiBold.ttf (unmodified)
+Bundled files: AIO_QC/fonts/Inter-Regular.otf, Inter-Medium.otf, Inter-SemiBold.otf, Inter-Bold.otf,
+Inter_24pt-SemiBold.ttf, inter-Regular-web.woff, inter-SemiBold-web.woff (unmodified)
 
 -----------------------------------------------------------
 

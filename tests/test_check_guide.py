@@ -65,7 +65,8 @@ def test_guide_on_open_and_after_a_check(shell, qtbot, tmp_path):  # noqa: F811
     assert g.recs and g.next() is not None
     assert g._sample["frame_like"] == 1.0                     # cam_frame_0000 …
     assert not g.btn.isHidden() and "Next check" in g.btn.full
-    assert w.toast.find("check_guide") is not None
+    assert w.hint_banner.isVisibleTo(w) and w.hint_banner.key == "check_guide"      # banner above the image
+    assert "Start here" in w.hint_banner.text.text()
     first = g.next().tool
     g.record(first, 5)
     assert g.next().tool != first

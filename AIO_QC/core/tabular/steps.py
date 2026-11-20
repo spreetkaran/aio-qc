@@ -645,7 +645,7 @@ class Join(Op):
                       "else F.col(c) for c in _r.columns])",
                       f"df = df.join(_r, on={_q(left)}, how={_q(how)})"]
         else:
-            lines += [f"_r = _r.select(*[F.col(c).alias(c + '_right') if c in df.columns else F.col(c) for c in "
+            lines += ["_r = _r.select(*[F.col(c).alias(c + '_right') if c in df.columns else F.col(c) for c in "
                       "_r.columns])",
                       f"_rk = [c + '_right' if c in df.columns else c for c in {_q(right)}]",
                       f"df = df.join(_r, on=[df[a] == _r[b] for a, b in zip({_q(left)}, _rk)], how={_q(how)})"]

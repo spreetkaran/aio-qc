@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 
 from AIO_QC.tools.frame_extractor.core.common import model_hex
 from AIO_QC.widgets import motion as anim
+from AIO_QC.core.diag import ignored as _ignored
 
 ERR = QColor("#e34948")
 SEL = QColor("#f2c94c")
@@ -364,8 +365,8 @@ class LabelEditor(QDialog):
         self.dirty = False
         self.changed = set()
         self.boxes, self.cls, self.origin = np.zeros((0, 4), np.float32), np.zeros(0, int), []
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 1180, 760, 0.9)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
 
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -622,6 +623,7 @@ class LabelEditor(QDialog):
             else:
                 path = write()
         except Exception as e:
+            _ignored(e)
             QMessageBox.warning(self, "Fix labels", f"Could not save the labels:\n{e}")
             return False
         self.dirty = False
@@ -653,8 +655,8 @@ class ABViewer(QDialog):
         self.run, self.items, self.get_frame = run, list(items), get_frame
         self.slots = slots or list(range(len(run.specs)))
         self.pos = -1
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 1320, 760, 0.92)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
         self.prev_b = QToolButton()
@@ -807,6 +809,7 @@ def save_plot_dialog(parent, img, default_name):
     try:
         imwrite(path, img, quality=95)
     except Exception as e:                       # noqa: BLE001 - shown to the user
+        _ignored(e)
         QMessageBox.warning(parent, "Save image", f"Could not save the image:\n{e}")
         return None
     remember_dir(path)
@@ -833,8 +836,8 @@ class PlotViewer(QDialog):
         self.slots = slots or list(range(len(run.specs)))
         self.pos = -1
         self._img = None
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 1180, 780, 0.9)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
         self.prev_b = QToolButton()
@@ -915,7 +918,6 @@ class PlotViewer(QDialog):
 
     def current_conf(self):
         mi = self.model.currentData()
-        res = self.run.results[mi] if mi is not None else None
         if self.own.isChecked():
             return model_conf(self.run, mi)
         return self.conf.value() / 100

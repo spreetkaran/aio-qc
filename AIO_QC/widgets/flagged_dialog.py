@@ -18,10 +18,11 @@ from PyQt6.QtWidgets import (
     QProgressBar, QRadioButton, QVBoxLayout, QWidget,
 )
 
-from AIO_QC.core.flagged_export import LIST_MODES, FlaggedItem, copy_items, write_list
+from AIO_QC.core.flagged_export import LIST_FORMATS, LIST_MODES, FlaggedItem, copy_items, write_list
 from AIO_QC.core.state import REVIEW_FIXED, REVIEW_FLAG
 from AIO_QC.utils import newButton, newIcon, style as apply_style
 from .inference_service import FuncWorker
+from AIO_QC.core.diag import ignored as _ignored
 
 
 SCOPE_ROLE = 0x0100 + 1           # Qt.ItemDataRole.UserRole + 1: "all" | "list"
@@ -52,8 +53,11 @@ class FlaggedFilesDialog(QDialog):
 
         # ---------------------------------------------------------------- option 1: copy to a folder
         self.rb_copy = QRadioButton("Copy the files to a folder")
-        self.folder = QLineEdit(st.value("flagged/folder", "") or str(self.session.root.parent /
-                                                                       f"{self.session.root.name}_flagged"))
+        # the place used last time, the folder always named after THIS dataset: <dataset>_flagged
+        # (a place you chose yourself is kept; otherwise next to the dataset)
+        chosen = st.value("flagged/base", "") or ""
+        base = Path(chosen) if chosen and Path(chosen).is_dir() else self.session.root.parent
+        self.folder = QLineEdit(str(base / f"{self.session.root.name}_flagged"))
         self.folder_btn = newButton("Browse…", icon="open", slot=self._browse_folder)
         self.keep_tree = QCheckBox("Keep the dataset's folder structure (YOLO images / labels stay paired)")
         self.keep_tree.setChecked(st.value("flagged/keep_tree", True, type=bool))
@@ -68,9 +72,17 @@ class FlaggedFilesDialog(QDialog):
         cg.addWidget(self.notes_csv, 2, 0, 1, 2)
 
         # ---------------------------------------------------------------- option 2: names in a text file
-        self.rb_list = QRadioButton("Save the file names to a text file")
-        self.txt = QLineEdit(st.value("flagged/txt", "") or str(self.session.root.parent /
-                                                                f"{self.session.root.name}_flagged.txt"))
+        self.rb_list = QRadioButton("Save a list of the files (CSV or TXT)")
+        self.fmt = QComboBox()
+        for k, t in LIST_FORMATS.items():
+            self.fmt.addItem(t, k)
+        fmt = str(st.value("flagged/list_format", "csv") or "csv")
+        self.fmt.setCurrentIndex(max(0, self.fmt.findData(fmt)))
+        # the folder used last time, the name always <dataset>_flagged.<csv|txt>
+        last = str(st.value("flagged/txt", "") or "")
+        folder = Path(last).parent if last and Path(last).parent.is_dir() else self.session.root.parent
+        self.txt = QLineEdit(str(folder / f"{self.session.root.name}_flagged.{self.fmt.currentData()}"))
+        self.fmt.currentIndexChanged.connect(lambda _i: self._format_changed())
         self.txt_btn = newButton("Browse…", icon="save", slot=self._browse_txt)
         self.list_mode = QComboBox()
         for k, t in LIST_MODES.items():
@@ -83,6 +95,8 @@ class FlaggedFilesDialog(QDialog):
         lg.addWidget(self.txt, 0, 0)
         lg.addWidget(self.txt_btn, 0, 1)
         row = QHBoxLayout()
+        row.addWidget(QLabel("Format:"))
+        row.addWidget(self.fmt)
         row.addWidget(QLabel("Write:"))
         row.addWidget(self.list_mode)
         row.addWidget(self.list_notes)
@@ -98,7 +112,7 @@ class FlaggedFilesDialog(QDialog):
         (self.rb_list if st.value("flagged/choice", "copy") == "list" else self.rb_copy).setChecked(True)
         self.group.idToggled.connect(lambda _i, _on: self._update())
         self._copy_widgets = (self.folder, self.folder_btn, self.keep_tree, self.notes_csv)
-        self._list_widgets = (self.txt, self.txt_btn, self.list_mode, self.list_notes)
+        self._list_widgets = (self.txt, self.txt_btn, self.fmt, self.list_mode, self.list_notes)
         for e in (self.folder, self.txt):
             e.textChanged.connect(lambda _t: self._update())
 
@@ -124,8 +138,21 @@ class FlaggedFilesDialog(QDialog):
         lay.addWidget(list_box)
         lay.addWidget(self.status)
         lay.addLayout(foot)
+        self.list_notes.setVisible(self.fmt.currentData() == "txt")
         self._fill_scope()
         self._update()
+        # a mark set or cleared (or the list filter changed) while this is open: the counts follow
+        from PyQt6.QtCore import QTimer
+        self._live = QTimer(self, singleShot=True, interval=150, timeout=self._live_fill)
+        self.session.reviewChanged.connect(self._schedule)        # bound methods: dropped with the window
+        app.file_dock.countChanged.connect(self._schedule)
+
+    def _schedule(self, *_a):
+        self._live.start()
+
+    def _live_fill(self):
+        if self.worker is None and self.isVisible():
+            self._fill_scope()
 
     # ------------------------------------------------------------------ helpers
     def _statuses(self):
@@ -177,12 +204,28 @@ class FlaggedFilesDialog(QDialog):
         if d:
             self.folder.setText(d)
 
+    def _format_changed(self):
+        ext = self.fmt.currentData()
+        p = Path(self.txt.text().strip() or f"{self.session.root.name}_flagged.{ext}")
+        self.txt.setText(str(p.with_suffix("." + ext)))
+        self.list_notes.setVisible(ext == "txt")              # the CSV always has a note column
+        self._update()
+
     def _browse_txt(self):
         from AIO_QC.utils.save_dirs import ask_save
-        p, _ = ask_save(self, "Text file for the flagged file names", self.txt.text(), "Text (*.txt);;All files (*)",
-                        kind="exports", keep_dir=True)
+        ext = self.fmt.currentData()
+        filt = "CSV (*.csv);;Text (*.txt)" if ext == "csv" else "Text (*.txt);;CSV (*.csv)"
+        p, chosen = ask_save(self, "List of the flagged files", self.txt.text(), filt, kind="exports", keep_dir=True)
         if p:
-            self.txt.setText(p if Path(p).suffix else p + ".txt")
+            if not Path(p).suffix:
+                p += ".csv" if "csv" in chosen.lower() else ".txt"
+            suf = Path(p).suffix.lower().lstrip(".")
+            if suf in LIST_FORMATS and suf != ext:
+                self.fmt.blockSignals(True)
+                self.fmt.setCurrentIndex(self.fmt.findData(suf))
+                self.fmt.blockSignals(False)
+                self.list_notes.setVisible(suf == "txt")
+            self.txt.setText(p)
 
     def _items(self, keys):
         """Annotation + image of each file (LabelMe images are resolved like the viewer does)."""
@@ -196,7 +239,8 @@ class FlaggedFilesDialog(QDialog):
             if img is None and smp.ann_path is not None:
                 try:
                     img = s.base_adapter.load(smp, light=True).image_path
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     img = None
             e = s.review.get(k) or {}
             files = [p for p in (smp.ann_path, img) if p is not None]
@@ -207,10 +251,13 @@ class FlaggedFilesDialog(QDialog):
         st = self.app.settings
         st.setValue("flagged/choice", "copy" if self.rb_copy.isChecked() else "list")
         st.setValue("flagged/folder", self.folder.text().strip())
+        parent = Path(self.folder.text().strip()).parent if self.folder.text().strip() else None
+        st.setValue("flagged/base", str(parent) if parent is not None and parent != self.session.root.parent else "")
         st.setValue("flagged/txt", self.txt.text().strip())
         st.setValue("flagged/keep_tree", self.keep_tree.isChecked())
         st.setValue("flagged/notes_csv", self.notes_csv.isChecked())
         st.setValue("flagged/list_mode", self.list_mode.currentData())
+        st.setValue("flagged/list_format", self.fmt.currentData())
 
     # ------------------------------------------------------------------ save
     def _save(self):

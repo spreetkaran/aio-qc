@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QVBoxLayout
+from AIO_QC.core.diag import ignored as _ignored
 
 AUTHOR = "Preetkaran Singh"          # fallback only: the installed package's metadata is the source (author())
 DIST = "aio-qc"                      # pyproject.toml [project] name
@@ -28,7 +29,8 @@ def author() -> str:
         if not name:                                   # "Name <mail>" style lives in Author-email
             name = (md.get("Author-email") or "").split("<")[0].strip().strip('"')
         return name or AUTHOR
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return AUTHOR
 
 

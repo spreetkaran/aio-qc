@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🎞 Sequence Check — consecutive frames checked against their neighbours (any dataset; see core.sequences).
+ Sequence Check — consecutive frames checked against their neighbours (any dataset; see core.sequences).
 
 Finds what a single image never reveals: an object present in the frames before and after but not annotated here,
 a label that flips for a frame or two, a box that suddenly balloons or jumps, a text / attribute that changes for one
@@ -14,18 +14,19 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QGridLayout, QLabel, QMessageBox, QWidget
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QGridLayout, QMessageBox, QWidget
 
 from AIO_QC.core.dataset import DETECTION_TYPES
 from AIO_QC.core.sequences import CODES, FrameInfo, attrs_of, build_sequences, check_sequence, split_name
 from AIO_QC.core.state import REVIEW_FLAG
 from AIO_QC.utils import hexc
 from .base_scan import BaseScanDialog, ResultRow, dspin, ispin
+from AIO_QC.core.diag import ignored as _ignored
 
 
 class SequenceDialog(BaseScanDialog):
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
-    TITLE, ICON = "Sequence Check", "🎞"
+    TITLE, ICON = "Sequence Check", ""
     HELP = ("Frames from one video / burst are compared with their neighbours. Sequences are found from the file "
             "names (folder + the name without its last number, ordered by that number; a big jump in the number "
             "starts a new sequence). Each object is followed from frame to frame, and one-frame breaks are reported "
@@ -68,14 +69,9 @@ class SequenceDialog(BaseScanDialog):
             grid.addWidget(cb, i // 3, i % 3)
             self.checks[code] = cb
         form.addRow("Order by:", self.mode)
-        row = QWidget()
-        g2 = QGridLayout(row)
-        g2.setContentsMargins(0, 0, 0, 0)
-        for c, (text, w) in enumerate((("new sequence at step ×", self.gap), ("min frames", self.min_len),
-                                       ("missing up to", self.max_gap), ("link IoU", self.iou),
-                                       ("size spike ×", self.size))):
-            g2.addWidget(QLabel(text), 0, 2 * c)
-            g2.addWidget(w, 0, 2 * c + 1)
+        from AIO_QC.utils.qt_utils import flow_row
+        row = flow_row([("new sequence at step ×", self.gap), ("min frames", self.min_len),
+                        ("missing up to", self.max_gap), ("link IoU", self.iou), ("size spike ×", self.size)])
         form.addRow("Sequences:", row)
         form.addRow("", self.scene)
         form.addRow("Label:", self.label)
@@ -233,5 +229,6 @@ def _thumb(path):
         if img is None:
             return None
         return cv2.resize(img, (32, 32), interpolation=cv2.INTER_AREA).astype(np.uint8)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None

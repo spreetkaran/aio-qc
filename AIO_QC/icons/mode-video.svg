@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <!-- SPDX-FileCopyrightText: 2026 Preetkaran Singh -->
-  <!-- SPDX-License-Identifier: MIT -->
+  <!-- SPDX-License-Identifier: GPL-3.0-only -->
   <!-- Frame Extractor app icon: a video player (screen with a mountain lake, play / next / progress / fullscreen),
        drawn as vectors so it is sharp at every size, from 16 px to 8K screens. -->
   <defs>

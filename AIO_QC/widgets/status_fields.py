@@ -110,8 +110,9 @@ class PaintStatusBar(QStatusBar):
         self.image = Field("status-image-size", "Image size (pixels)", 170)
         self.ftype = Field(None, "File type of the image", 70)
         self.fsize = Field("status-file-size", "Size of the image file", 130)
-        for w in (self.pointer, _sep(), self.selection, _sep(), self.image, _sep(), self.ftype, _sep(), self.fsize,
-                  _sep()):
+        self._fields = [self.pointer, _sep(), self.selection, _sep(), self.image, _sep(), self.ftype, _sep(),
+                        self.fsize, _sep()]
+        for w in self._fields:
             lay.addWidget(w)
         self.message = _Elided()
         self.message.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -119,6 +120,12 @@ class PaintStatusBar(QStatusBar):
         lay.addWidget(self.message, 1)
         self.addPermanentWidget(self.strip, 1)
         self.messageChanged.connect(self._message)
+
+    def set_fields_visible(self, on: bool):
+        """3.0: with the read-outs over the image, the status bar keeps only messages and the indicators on the
+        right (the values are still updated here, for the read-outs and for when they are turned off)."""
+        for w in self._fields:
+            w.setVisible(bool(on))
 
     def _message(self, text):
         self.message.setText(text)

@@ -9,7 +9,7 @@ Where AIO QC keeps its own files (Qt-free) — the same rules for a pip install,
                   executable, or AIO_QC_PORTABLE=1 is set
     data_home()   portable → <app dir>/data   ·   otherwise the per-user folder:
                   Windows %LOCALAPPDATA%\\AIO_QC · macOS ~/Library/Application Support/AIO_QC · Linux ~/.local/share/aio_qc
-    log_dir()     where aio_qc_tool.log goes: the current folder when run from source (as before), data_home()/logs
+    log_dir()     where aio-qc.log goes: the current folder when run from source (as before), data_home()/logs
                   for frozen builds (an installed .exe may sit in a read-only folder)
     settings_file()  portable builds keep their settings in data/settings.ini (else: the OS store, as before)
     app_python()  the Python that runs AIO QC — None for frozen builds (the .exe cannot create environments;

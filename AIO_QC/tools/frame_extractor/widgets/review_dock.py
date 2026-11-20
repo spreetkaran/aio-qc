@@ -15,6 +15,12 @@ Testing only hands over the playlist (core.testing.review.ReviewPlaylist); this 
     the video that was open before comes back at its frame
 
 Boxes on frames the models did not see themselves (interpolated between two analysed frames, or held) are dashed.
+
+Display: boxes coloured by CLASS (Image QC's palette — each class its own, clearly different colour, the same in every
+video and session; with several models a numbered badge in the model's colour leads each label) or by model; labels
+"class + confidence", "class" or off; a light fill; label size. The legend lists the classes with their colour and how
+many are on the current frame — click one to hide / show it. "Save frame…" writes the frame at full resolution with
+its boxes as a PNG.
 """
 from __future__ import annotations
 
@@ -22,14 +28,45 @@ import os
 import threading
 import time
 
+from AIO_QC.utils.qt_utils import later
+
 from loguru import logger
 from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog, QFormLayout,
                              QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QToolButton, QVBoxLayout, QWidget)
+from AIO_QC.core.diag import ignored as _ignored
 
 MODE_TEXT = {"balanced": "Balanced", "best": "Best quality", "fixed": "Fixed step"}
+STYLE_KEY = "fx/review/style"
+LABEL_SIZES = (("Small", 0.85), ("Medium", 1.0), ("Large", 1.25), ("Extra large", 1.6))
+
+
+def _swatch(color, text="", size=14):
+    pm = QPixmap(size, size)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    c = QColor(color)
+    if text:                                        # a model: the same dark numbered badge its labels carry
+        from AIO_QC.tools.frame_extractor.widgets.det_paint import BADGE_BG, badge_ink
+        p.setBrush(BADGE_BG)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(QRectF(0, 0, size, size), 3, 3)
+        p.fillRect(QRectF(1, size - 2.5, size - 2, 2), c)
+        f = p.font()
+        f.setPixelSize(int(size * 0.72))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(badge_ink(c))
+        p.drawText(QRectF(0, -1, size, size), Qt.AlignmentFlag.AlignCenter, text)
+    else:                                           # a class: its colour
+        p.setBrush(c)
+        p.setPen(QPen(c.darker(150), 1))
+        p.drawRoundedRect(QRectF(0.5, 0.5, size - 1, size - 1), 3, 3)
+    p.end()
+    return QIcon(pm)
 EVENT_COLORS = {"disagree": "#e53935", "flicker": "#fb8c00", "uncertain": "#fdd835"}
 
 
@@ -192,9 +229,9 @@ class ReviewDock(QDockWidget):
         self.list.itemDoubleClicked.connect(lambda it: self.play_item(self.list.row(it)))
         v.addWidget(self.list, 1)
         row = QHBoxLayout()
-        self.prev_btn = QPushButton("⏮ Previous")
+        self.prev_btn = QPushButton("Previous")
         self.prev_btn.clicked.connect(lambda _c=False: self.step(-1))
-        self.next_btn = QPushButton("Next ⏭")
+        self.next_btn = QPushButton("Next")
         self.next_btn.clicked.connect(lambda _c=False: self.step(1))
         self.loop = QCheckBox("Loop")
         self.loop.toggled.connect(lambda on: setattr(self.playlist, "loop", bool(on)) if self.playlist else None)
@@ -215,16 +252,74 @@ class ReviewDock(QDockWidget):
         self.conf_label.setMinimumWidth(36)
         crow.addWidget(self.conf_label)
         v.addLayout(crow)
-        frow = QHBoxLayout()
-        self.class_btn = QToolButton()
-        self.class_btn.setText("Classes: all")
-        self.class_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # display: colours, labels, fill, size
+        st = self._style_load()
+        drow = QHBoxLayout()
+        self.color_by = QComboBox()
+        self.color_by.addItem("Colour by class", "class")
+        self.color_by.addItem("Colour by model", "model")
+        self.color_by.setCurrentIndex(max(0, self.color_by.findData(st["color_by"])))
+        self.color_by.setToolTip("Class: every class its own, clearly different colour (as in Image QC), the same in "
+                                 "every video; with several models a numbered badge in the model's colour leads each "
+                                 "label.\nModel: one colour per model.")
+        self.labels_cb = QComboBox()
+        self.labels_cb.addItem("Class + confidence", "full")
+        self.labels_cb.addItem("Class only", "class")
+        self.labels_cb.addItem("No labels", "off")
+        self.labels_cb.setCurrentIndex(max(0, self.labels_cb.findData(st["labels"])))
+        drow.addWidget(self.color_by, 1)
+        drow.addWidget(self.labels_cb, 1)
+        v.addLayout(drow)
+        d2 = QHBoxLayout()
+        self.fill_cb = QCheckBox("Fill boxes")
+        self.fill_cb.setChecked(bool(st["fill"]))
+        self.fill_cb.setToolTip("A light fill in the box colour — easier to see small boxes on busy frames")
+        self.size_cb = QComboBox()
+        for t, k in LABEL_SIZES:
+            self.size_cb.addItem(f"Labels: {t.lower()}", k)
+        self.size_cb.setCurrentIndex(max(0, self.size_cb.findData(st["size"])))
+        d2.addWidget(self.fill_cb)
+        d2.addWidget(self.size_cb, 1)
+        v.addLayout(d2)
+        d3 = QHBoxLayout()
+        self.clean_cb = QCheckBox("Clean while playing")
+        self.clean_cb.setToolTip("While the video plays: thin outlines, no labels (hover a box for its details); "
+                                 "labels come back when you pause")
+        self.shade_cb = QCheckBox("Shade by confidence")
+        self.shade_cb.setToolTip("Less sure boxes are fainter")
+        self.glide_cb = QCheckBox("Glide labels")
+        self.glide_cb.setToolTip("A label that has to move slides to its new place instead of jumping")
+        for cb, k in ((self.clean_cb, "clean"), (self.shade_cb, "shade"), (self.glide_cb, "glide")):
+            cb.setChecked(bool(st[k]))
+            cb.toggled.connect(lambda _on: self._style_changed())
+            d3.addWidget(cb)
+        d3.addStretch(1)
+        v.addLayout(d3)
+        self._playing = False
+        self._drawn_labels = True
+        for wdg in (self.color_by, self.labels_cb, self.size_cb):
+            wdg.currentIndexChanged.connect(lambda _i: self._style_changed())
+        self.fill_cb.toggled.connect(lambda _on: self._style_changed())
+        # legend: classes, their colour, how many on this frame; click hides / shows
+        lrow = QHBoxLayout()
+        self.legend_label = QLabel("<b>Classes</b>")
+        lrow.addWidget(self.legend_label, 1)
+        self.class_btn = QToolButton()                     # kept for the shortcut menu: Show all / only …
+        self.class_btn.setText("Show all")
+        self.class_btn.setToolTip("Show every class again")
+        self.class_btn.clicked.connect(self._show_all_classes)
+        lrow.addWidget(self.class_btn)
+        v.addLayout(lrow)
+        self.legend = QListWidget()
+        self.legend.setMaximumHeight(150)
+        self.legend.setToolTip("Untick a class to hide it · the number is how many are on the current frame")
+        self.legend.itemChanged.connect(self._legend_toggled)
+        v.addWidget(self.legend)
         self.class_menu = QMenu(self)
         self.class_menu.aboutToShow.connect(self._fill_classes)
-        self.class_btn.setMenu(self.class_menu)
-        frow.addWidget(self.class_btn)
-        frow.addStretch(1)
-        v.addLayout(frow)
+        self._legend_names: list[str] = []
+        self._legend_counts: dict = {}
+        self._colored_models: set = set()
         erow = QHBoxLayout()
         self.events_label = QLabel("<b>Events</b>")
         erow.addWidget(self.events_label, 1)
@@ -248,6 +343,10 @@ class ReviewDock(QDockWidget):
                                  "Image QC dataset")
         self.hard_btn.clicked.connect(self.send_hard_frames)
         brow.addWidget(self.hard_btn)
+        self.shot_btn = QPushButton("Save frame…")
+        self.shot_btn.setToolTip("This frame at full resolution with its boxes, as a PNG")
+        self.shot_btn.clicked.connect(self.save_frame)
+        brow.addWidget(self.shot_btn)
         self.csv_btn = QPushButton("CSV…")
         self.csv_btn.setToolTip("This video's detections (every analysed frame) as a CSV file")
         self.csv_btn.clicked.connect(self.export_csv)
@@ -268,6 +367,12 @@ class ReviewDock(QDockWidget):
         lay = getattr(win, "canvas_layout", None)
         if lay is not None:
             lay.insertWidget(lay.indexOf(win.strip) + 1, self.strip)
+        for n in range(1, 10):                               # Alt+1 … Alt+9: show / hide model n
+            act = QAction(f"Show / hide review model {n}", win)
+            act.setObjectName(f"review_model_{n}")
+            act.setShortcut(QKeySequence(f"Alt+{n}"))
+            act.triggered.connect(lambda _c=False, n=n: self.toggle_model_n(n))
+            win.addAction(act)
         for key, d, text in (("Alt+]", 1, "Next review event"), ("Alt+[", -1, "Previous review event")):
             act = QAction(text, win)
             act.setObjectName(f"review_event_{'next' if d > 0 else 'prev'}")
@@ -313,7 +418,9 @@ class ReviewDock(QDockWidget):
                           f"{MODE_TEXT[playlist.mode]}" + (f" (every {playlist.stride})" if playlist.mode == "fixed"
                                                          else "") + f"<br><small>from {playlist.source}</small>")
         self.hidden_classes = set()
-        self.class_btn.setText("Classes: all")
+        self._legend_names, self._legend_counts = [], {}
+        self.legend.clear()
+        self._style_changed(save=False)
         self.events, self._ev_key = [], None
         self.ev_list.clear()
         self.strip.show()
@@ -332,6 +439,7 @@ class ReviewDock(QDockWidget):
             a.stop(wait=0)
         self.analysers.clear()
         self.win.canvas.set_detections([])
+        self.win.canvas.set_detection_style(labels=True, thin=False)   # the paused-frame Detect overlay: labelled
         self.strip.hide()
         self.state.setText("Review ended.")
         prev, self.prev = self.prev, None
@@ -428,7 +536,7 @@ class ReviewDock(QDockWidget):
         self._advancing = True
         try:
             self._set_item_state(self.index, "done")
-            QTimer.singleShot(0, lambda: self.step(1))
+            later(0, self, lambda: self.step(1))
         finally:
             self._advancing = False
         return True
@@ -451,6 +559,7 @@ class ReviewDock(QDockWidget):
             self.on_video_end()
             return
         self.strip.set_playhead(idx)
+        self._playing = bool(playing)
         per, how = a.detections(idx)
         if not playing and how != "exact":
             a.request_exact(idx)
@@ -459,25 +568,150 @@ class ReviewDock(QDockWidget):
 
     def _draw(self, per, how):
         pl = self.playlist
+        a = self.current()
         boxes = []
         thr = self.conf.value() / 100.0
         multi = len(self.visible_models) > 1
         dashed = how in ("interpolated", "held")
+        by_class = self.color_by.currentData() == "class"
+        lab_mode = self.labels_cb.currentData()
+        from AIO_QC.tools.frame_extractor.widgets.det_paint import ClassColors, label_text
+        cc = ClassColors.shared()
+        counts = {}
         for i, s in enumerate(pl.specs):
-            if s.key not in self.visible_models or s.key not in per:
+            if s.key not in per:
                 continue
-            col = QColor(pl.colors[i] if i < len(pl.colors) else "#e53935")
-            names = self.current().names(s.key) if self.current() else {}
+            names = a.names(s.key) if a else {}
+            if by_class and s.key not in self._colored_models and names:
+                cc.ensure([names[k] for k in sorted(names)])          # a model's first classes: most distinct
+                self._colored_models.add(s.key)
+            mcol = QColor(pl.colors[i] if i < len(pl.colors) else "#e53935")
+            shown = s.key in self.visible_models
+            from AIO_QC.tools.frame_extractor.widgets.det_paint import classifier_answer
+            best = classifier_answer(per[s.key])
+            if best is not None:                         # a classifier: its answer for the frame, as a pill
+                x1, y1, x2, y2, c, k = (float(v) for v in best)
+                name = names.get(int(k), str(int(k)))
+                if shown:
+                    counts[name] = counts.get(name, 0) + 1
+                if shown and name not in self.hidden_classes:          # below the threshold: faint ("unsure")
+                    text = name if lab_mode in ("off", "class") else label_text(name, c)
+                    badge = (str(i + 1), mcol, s.label) if multi else None
+                    boxes.append((x1, y1, x2, y2, text, cc.get(name) if by_class else mcol, dashed or c < thr,
+                                  badge, c, "class"))
+                continue
             for x1, y1, x2, y2, c, k in per[s.key]:
                 if c < thr:
                     continue
                 name = names.get(int(k), str(int(k)))
-                if name in self.hidden_classes:
+                if shown:
+                    counts[name] = counts.get(name, 0) + 1
+                if not shown or name in self.hidden_classes:
                     continue
-                boxes.append((float(x1), float(y1), float(x2), float(y2),
-                              f"{s.label + ': ' if multi else ''}{name} {c:.2f}", col, dashed))
+                text = "" if lab_mode == "off" else (name if lab_mode == "class" else label_text(name, c))
+                badge = (str(i + 1), mcol, s.label) if multi and by_class and lab_mode != "off" else None
+                boxes.append((float(x1), float(y1), float(x2), float(y2), text,
+                              cc.get(name) if by_class else mcol, dashed, badge, float(c)))
+        clean = self.clean_cb.isChecked() and self._playing
+        self.win.canvas.set_detection_style(labels=lab_mode != "off" and not clean, thin=clean)
+        self._drawn_labels = not clean
         self.win.canvas.set_detections(boxes)
         self.win.pixel_label.setText(f"{len(boxes)} detection(s)" + (" · interpolated" if dashed else ""))
+        self._update_legend(counts)
+
+    # ------------------------------------------------------------------ display style / legend
+    def _style_load(self):
+        from AIO_QC.utils import app_settings
+        d = {"color_by": "class", "labels": "full", "fill": False, "size": 1.0, "clean": False, "shade": False,
+             "glide": True}
+        try:
+            raw = app_settings().value(STYLE_KEY, "") or ""
+            if raw:
+                import json
+                got = json.loads(raw)
+                if isinstance(got, dict):
+                    d.update({k: got[k] for k in d if k in got})
+        except (ValueError, TypeError):
+            pass
+        return d
+
+    def _style_changed(self, save=True):
+        st = {"color_by": self.color_by.currentData(), "labels": self.labels_cb.currentData(),
+              "fill": self.fill_cb.isChecked(), "size": self.size_cb.currentData(), "clean": self.clean_cb.isChecked(),
+              "shade": self.shade_cb.isChecked(), "glide": self.glide_cb.isChecked()}
+        if save:
+            import json
+            from AIO_QC.utils import app_settings
+            app_settings().setValue(STYLE_KEY, json.dumps(st))
+        self.win.canvas.set_detection_style(fill=st["fill"], labels=st["labels"] != "off", scale=st["size"],
+                                            shade=st["shade"], glide=st["glide"])
+        self._legend_names = []                                   # swatches follow the colour choice
+        if self.active:
+            self.redraw()
+
+    def _update_legend(self, counts):
+        names = self._all_classes()
+        by_class = self.color_by.currentData() == "class"
+        if names != self._legend_names:
+            from AIO_QC.tools.frame_extractor.widgets.det_paint import ClassColors
+            cc = ClassColors.shared()
+            self.legend.blockSignals(True)
+            self.legend.clear()
+            for n in names:
+                it = QListWidgetItem(n)
+                it.setData(Qt.ItemDataRole.UserRole, n)
+                it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                it.setCheckState(Qt.CheckState.Unchecked if n in self.hidden_classes else Qt.CheckState.Checked)
+                if by_class:
+                    it.setIcon(_swatch(cc.get(n)))
+                self.legend.addItem(it)
+            self.legend.blockSignals(False)
+            self._legend_names, self._legend_counts = list(names), {}
+        self.legend.blockSignals(True)                               # ticks follow hidden classes, however hidden
+        for r in range(self.legend.count()):
+            it = self.legend.item(r)
+            want = Qt.CheckState.Unchecked if it.data(Qt.ItemDataRole.UserRole) in self.hidden_classes else \
+                Qt.CheckState.Checked
+            if it.checkState() != want:
+                it.setCheckState(want)
+        self.legend.blockSignals(False)
+        if counts != self._legend_counts:
+            self.legend.blockSignals(True)
+            for r in range(self.legend.count()):
+                it = self.legend.item(r)
+                n = it.data(Qt.ItemDataRole.UserRole)
+                k = counts.get(n, 0)
+                it.setText(f"{n}   ·  {k}" if k else n)
+            self.legend.blockSignals(False)
+            self._legend_counts = dict(counts)
+        hidden = len(self.hidden_classes & set(names))
+        self.legend_label.setText(f"<b>Classes</b> {len(names) - hidden} of {len(names)} shown" if hidden else
+                                  f"<b>Classes</b> {len(names)}" if names else "<b>Classes</b>")
+        self.class_btn.setEnabled(bool(hidden))
+
+    def _legend_toggled(self, it):
+        n = it.data(Qt.ItemDataRole.UserRole)
+        if n is not None:
+            self._toggle_class(n, it.checkState() == Qt.CheckState.Checked)
+
+    # ------------------------------------------------------------------ save frame
+    def save_frame(self):
+        if not self.active or self.win.current is None:
+            return
+        img = self.win.canvas.frame_with_detections()
+        if img is None:
+            img = self.win.canvas.grab().toImage()          # e.g. a player that keeps frames on the GPU
+        it = self.playlist.items[self.index]
+        stem = os.path.splitext(os.path.basename(it.path))[0]
+        default = os.path.join(self.win.output_dir or os.path.dirname(it.path),
+                               f"{stem}_frame{self.win.current_frame:06d}_detections.png")
+        p, _ = QFileDialog.getSaveFileName(self, "Frame with detections", default, "PNG (*.png);;JPEG (*.jpg)")
+        if not p:
+            return
+        if not img.save(p):
+            QMessageBox.warning(self, "Save frame", f"Could not write\n{p}")
+            return
+        self.win.flash_status(f"Frame saved: {p}", 5000)
 
     def redraw(self):
         a = self.current()
@@ -495,11 +729,20 @@ class ReviewDock(QDockWidget):
         for i, s in enumerate(self.playlist.specs):
             cb = QCheckBox(s.label)
             col = self.playlist.colors[i] if i < len(self.playlist.colors) else "#e53935"
+            cb.setIcon(_swatch(col, str(i + 1)))                 # the badge its labels carry
             cb.setStyleSheet(f"QCheckBox::indicator:checked {{ background: {col}; border: 1px solid {col}; }}")
             cb.setChecked(True)
-            cb.setToolTip(s.path)
+            cb.setToolTip(f"{s.path}\nAlt+{i + 1} shows / hides it")
             cb.toggled.connect(lambda on, k=s.key: self._toggle_model(k, on))
             self.models_box.addWidget(cb)
+
+    def toggle_model_n(self, n):
+        """Alt+n: the n-th model's tick in the panel."""
+        if not self.active or not (1 <= n <= self.models_box.count()):
+            return
+        cb = self.models_box.itemAt(n - 1).widget()
+        if cb is not None:
+            cb.setChecked(not cb.isChecked())
 
     def _toggle_model(self, key, on):
         (self.visible_models.add if on else self.visible_models.discard)(key)
@@ -537,14 +780,11 @@ class ReviewDock(QDockWidget):
 
     def _toggle_class(self, name, on):
         (self.hidden_classes.discard if on else self.hidden_classes.add)(name)
-        total = len(self._all_classes())
-        shown = total - len(self.hidden_classes & set(self._all_classes()))
-        self.class_btn.setText("Classes: all" if not self.hidden_classes else f"Classes: {shown} of {total}")
         self.redraw()
 
     def _show_all_classes(self):
         self.hidden_classes.clear()
-        self.class_btn.setText("Classes: all")
+        self._legend_names = []                              # rebuild the ticks
         self.redraw()
 
     # ------------------------------------------------------------------ events / strip
@@ -706,6 +946,7 @@ class ReviewDock(QDockWidget):
                                                   o["label_model"], thr, backend, cancel=stop.is_set)
                     box["done"] += 1
             except Exception as e:
+                _ignored(e)
                 box["error"] = f"{type(e).__name__}: {e}"
 
         th = threading.Thread(target=work, name="review-hard-frames", daemon=True)
@@ -714,7 +955,7 @@ class ReviewDock(QDockWidget):
         def poll():
             task.update(box["done"] / max(1, box["total"]), f"{len(box['paths'])} frame(s)")
             if th.is_alive():
-                QTimer.singleShot(200, poll)
+                later(200, self, poll)
                 return
             task.finish()
             if box["error"]:
@@ -727,7 +968,7 @@ class ReviewDock(QDockWidget):
             self.win.flash_status(f"{len(box['paths'])} hard frame(s) saved in {out_root}", 8000)
             if shell is not None:
                 shell.open_in_qc(out_root)
-        QTimer.singleShot(200, poll)
+        later(200, self, poll)
 
     # ------------------------------------------------------------------ status / buffering / prefetch
     def _tick(self):
@@ -745,7 +986,7 @@ class ReviewDock(QDockWidget):
             self.state.setText(f"<span style='color:#d03b3b'>Analysis failed: {st['error']}</span>")
             if self._autoplay_at is not None and not w.is_playing:
                 self._autoplay_at = None
-                QTimer.singleShot(1500, lambda: self.step(1))      # skip a video that can't be analysed
+                later(1500, self, lambda: self.step(1))      # skip a video that can't be analysed
             return
         # start playing once the first seconds are ready (at most a few seconds' wait)
         if self._autoplay_at is not None and a.ready.is_set():
@@ -761,9 +1002,13 @@ class ReviewDock(QDockWidget):
         elif self._buffering and ready:
             self._buffering = False
             w.play()
-        # a paused frame whose own detections just arrived
+        # a paused frame whose own detections just arrived — or, in Clean mode, its labels come back
         if not w.is_playing and self._last[0] == idx and self._last[1] != "exact" and a.has(idx):
             self.redraw()
+        elif not w.is_playing and self._playing:
+            self._playing = False
+            if not self._drawn_labels:
+                self.redraw()
         # analyse the next video once this one is complete
         nxt = self.index + 1
         if st["coverage"] >= 0.999 and nxt < len(self.playlist.items) and nxt not in self.analysers:

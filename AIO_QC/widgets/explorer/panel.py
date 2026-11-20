@@ -1,18 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔭 Prediction Explorer — every image of the dataset with your labels and every model's predictions drawn on it.
+ Prediction Explorer — every image of the dataset with your labels and every model's predictions drawn on it.
 
-    sidebar     layers (labels + each model with its own confidence), colour by match / class / model, match IoU,
+    sidebar layers (labels + each model with its own confidence), colour by match / class / model, match IoU,
                 match results (correct · wrong class · poor fit · duplicate · not labelled · missed · not checked ·
                 models disagree), classes, split / folder / review / training filters — every count live
-    grid        images, objects drawn live over cached thumbnails; sort by errors, missed, unlabelled, wrong
+    grid images, objects drawn live over cached thumbnails; sort by errors, missed, unlabelled, wrong
                 class, box fit, uncertainty, model disagreement, confidence, name, random
-    objects     every object as a crop (labels, predictions or only the problems), sorted by class / confidence
-    map         the objects Visual Similarity embedded, on a 2-D map coloured by match result or class
-    thresholds  per model (and class): confidence histogram with a draggable threshold, precision / recall curve
-    viewer      double-click: full resolution, hover details, accept / relabel / delete / add, compare 2 models
-    views       save / restore named views (filters + sort + thresholds) per dataset
+    objects every object as a crop (labels, predictions or only the problems), sorted by class / confidence
+    map the objects Visual Similarity embedded, on a 2-D map coloured by match result or class
+    thresholds per model (and class): confidence histogram with a draggable threshold, precision / recall curve
+    viewer double-click: full resolution, hover details, accept / relabel / delete / add, compare 2 models
+    views save / restore named views (filters + sort + thresholds) per dataset
 Edits go through the session (backed up, undoable); the labels of changed files are re-matched on the fly.
 """
 from __future__ import annotations
@@ -39,6 +39,8 @@ from .charts import ConfHistogram, PRCurve, ScatterMap
 from .grid import ExplorerGrid, chips_for
 from .paint import object_text, tag_color
 from .sidebar import Sidebar
+from AIO_QC.utils.qt_utils import set_shown
+from AIO_QC.core.diag import ignored as _ignored
 
 PATCH_SOURCES = [("errors", "Problems only"), ("gt", "Labels"), ("pred", "Predictions")]
 PATCH_SORTS = [("class", "Class, least confident first"), ("conf", "Confidence"), ("tag", "Match result"),
@@ -81,7 +83,7 @@ class ExplorerPanel(QWidget):
         cv = QVBoxLayout(center)
         cv.setContentsMargins(0, 0, 0, 0)
         cv.setSpacing(4)
-        cv.addLayout(self._build_topbar())
+        cv.addWidget(self._build_topbar())
         self.banner = QLabel()
         self.banner.setTextFormat(Qt.TextFormat.RichText)
         self.banner.setVisible(False)
@@ -112,13 +114,15 @@ class ExplorerPanel(QWidget):
         self._timer = QTimer(self, singleShot=True, interval=90, timeout=self.refresh)
         self._edit_timer = QTimer(self, singleShot=True, interval=250, timeout=self._apply_dirty)
         self.session.annotationsChanged.connect(self.on_annotations_changed)
-        self.session.reviewChanged.connect(lambda _k: self._on_review_changed())
+        self.session.reviewChanged.connect(self._on_review_changed)    # bound: disconnected in shutdown()
         self._enable(False)
 
     # ================================================================== layout
     def _build_topbar(self):
-        bar = QHBoxLayout()
-        bar.setSpacing(6)
+        """The Explorer's controls — one row that wraps onto a second line on narrow screens."""
+        from AIO_QC.utils.qt_utils import FlowLayout
+        host = QWidget()
+        bar = FlowLayout(host, spacing=6)
         self.mode_group = QButtonGroup(self)
         self.mode_btns = {}
         for k, text, tip in (("grid", "▦ Images", "Every image with its labels and predictions"),
@@ -199,7 +203,7 @@ class ExplorerPanel(QWidget):
         self.undo_btn = newButton("↶", slot=self.undo, tip="Undo the last explorer edit")
         self.undo_btn.setEnabled(False)
         self.thr_btn = QToolButton()
-        self.thr_btn.setText("📈 Thresholds")
+        self.thr_btn.setText("Thresholds")
         self.thr_btn.setCheckable(True)
         self.thr_btn.setToolTip("Confidence histogram (drag the threshold) and precision / recall per model")
         self.thr_btn.toggled.connect(self._toggle_insight)
@@ -222,7 +226,17 @@ class ExplorerPanel(QWidget):
         for w in (self.accept_btn, self.relabel_btn, self.delete_btn, self.undo_btn, self.thr_btn, more):
             bar.addWidget(w)
         self._mode_widgets()
-        return bar
+        return host
+
+    EMPTY_TEXT = ("No predictions yet.\n\nPress ▶ Scan above: the models run once (cached), then every image is "
+                  "shown here with your labels (solid) and the predictions (dashed).")
+
+    def show_message(self, text: str | None = None):
+        """The centre's message while there is nothing to show (None: the default one)."""
+        if self.data is None:
+            self.empty.setText(text or self.EMPTY_TEXT)
+            self.status.setText(text.split("\n")[0] if text else
+                                "Run the check (▶ Scan) — or reopen: the last run is restored automatically.")
 
     def _wrap_grid(self):
         w = QWidget()
@@ -232,8 +246,7 @@ class ExplorerPanel(QWidget):
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
         apply_style(self.empty, "color:@muted; font-size:14px; padding:40px;")
-        self.empty.setText("No predictions yet.\n\nPress ▶ Scan above: the models run once (cached), then every "
-                           "image is shown here with your labels (solid) and the predictions (dashed).")
+        self.empty.setText(self.EMPTY_TEXT)
         lay.addWidget(self.empty)
         lay.addWidget(self.grid, 1)
         self.grid.setVisible(False)
@@ -243,7 +256,9 @@ class ExplorerPanel(QWidget):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        row = QHBoxLayout()
+        from AIO_QC.utils.qt_utils import FlowLayout
+        row_host = QWidget()                      # wraps on narrow screens
+        row = FlowLayout(row_host, spacing=6)
         self.map_src = QComboBox()
         self.map_src.setToolTip("Object embeddings cached by Visual Similarity (one per vision model)")
         self.map_method = QComboBox()
@@ -264,9 +279,8 @@ class ExplorerPanel(QWidget):
         for x in (QLabel("Embeddings"), self.map_src, self.map_method, QLabel("max"), self.map_n, go,
                   QLabel("colour"), self.map_color):
             row.addWidget(x)
-        row.addStretch(1)
         row.addWidget(sim)
-        lay.addLayout(row)
+        lay.addWidget(row_host)
         self.map = ScatterMap()
         self.map.selected.connect(self._map_selected)
         self.map.activated.connect(self._map_open)
@@ -289,7 +303,7 @@ class ExplorerPanel(QWidget):
         w.setMinimumWidth(280)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(4, 0, 0, 0)
-        t = QLabel("📈 Thresholds")
+        t = QLabel("Thresholds")
         apply_style(t, "font-weight:700;")
         lay.addWidget(t)
         f = QFormLayout()
@@ -317,12 +331,12 @@ class ExplorerPanel(QWidget):
     def _mode_widgets(self):
         mode = self.mode()
         for w in (self.sort, self.desc, self.shuffle):
-            w.setVisible(mode == "grid")
+            set_shown(w, mode == "grid")
         for w in (self.psource, self.psort):
-            w.setVisible(mode == "objects")
-        self.relabel_btn.setVisible(mode == "objects")
-        self.delete_btn.setVisible(mode == "objects")
-        self.size.setVisible(mode != "map")
+            set_shown(w, mode == "objects")
+        set_shown(self.relabel_btn, mode == "objects")
+        set_shown(self.delete_btn, mode == "objects")
+        set_shown(self.size, mode != "map")
 
     def _enable(self, on: bool):
         for w in (self.sidebar, self.accept_btn, self.thr_btn, self.views, self.sort, self.search):
@@ -451,13 +465,14 @@ class ExplorerPanel(QWidget):
 
         def failed(msg):
             self._worker = None
-            self.status.setText(f"❌ {msg}")
+            self.status.setText(f"{msg}")
 
         n = len(d.p_img) + len(d.g_img)
         if n < 150_000:                                   # small: synchronous, no thread hop
             try:
                 done(run())
             except Exception as exc:                      # never leave the panel half-updated
+                _ignored(exc)
                 failed(f"{type(exc).__name__}: {exc}")
             return
         self.status.setText("updating…")
@@ -736,7 +751,10 @@ class ExplorerPanel(QWidget):
         if not ops:
             return None
         n = sum(len(v) for v in ops.values())
-        st = self.session.apply_fixes(self, dict(ops), what=f"explorer: {what}")
+        from AIO_QC.core import provenance
+        model = "accept" in what or "prediction" in what            # a model's suggestion taken over
+        with provenance.origin("model" if model else "manual", "Explorer"):
+            st = self.session.apply_fixes(self, dict(ops), what=f"explorer: {what}")
         if st["files"]:
             self.undo_stack.append(st["backup"])
             self.undo_btn.setEnabled(True)
@@ -783,7 +801,8 @@ class ExplorerPanel(QWidget):
                 continue
             try:
                 ann = self.session.adapter.load(s, light=True)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 continue
             shapes = ann.shapes
             if agnostic:
@@ -913,7 +932,10 @@ class ExplorerPanel(QWidget):
             return
         self.set_review([self.data.keys[i] for i in imgs], status)
 
-    def _on_review_changed(self):
+    def _on_review_changed(self, *_keys):
+        from PyQt6 import sip
+        if sip.isdeleted(self) or sip.isdeleted(self.grid):          # the window closed without shutdown()
+            return
         self.grid.viewport().update()
         if self.view.review:
             self.schedule()
@@ -923,11 +945,11 @@ class ExplorerPanel(QWidget):
 
     def show_in_file_list(self):
         if self.data is not None:
-            self.app.apply_file_filter(self._keys(), "🔭 Prediction Explorer")
+            self.app.apply_file_filter(self._keys(), "Prediction Explorer")
 
     def open_review_grid(self):
         if self.data is not None:
-            self.app.open_review_grid(self._keys(), "🔭 Prediction Explorer")
+            self.app.open_review_grid(self._keys(), "Prediction Explorer")
 
     def export_csv(self):
         if self.state is None:
@@ -1149,7 +1171,7 @@ class ExplorerPanel(QWidget):
 
         w = FuncWorker(run, self)
         w.done.connect(done)
-        w.failed.connect(lambda m: self.map_info.setText(f"❌ {m}"))
+        w.failed.connect(lambda m: self.map_info.setText(f"{m}"))
         self._map_worker = w
         w.start()
 
@@ -1231,7 +1253,8 @@ class ExplorerPanel(QWidget):
     def shutdown(self):
         self._timer.stop()
         self._edit_timer.stop()
-        for sig, slot in ((self.session.annotationsChanged, self.on_annotations_changed),):
+        for sig, slot in ((self.session.annotationsChanged, self.on_annotations_changed),
+                          (self.session.reviewChanged, self._on_review_changed)):
             try:
                 sig.disconnect(slot)
             except TypeError:

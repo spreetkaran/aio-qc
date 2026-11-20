@@ -9,6 +9,7 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QFont
 
 from AIO_QC.utils import theme_color
+from AIO_QC.core.diag import ignored as _ignored
 
 
 def fmt(v) -> str:
@@ -49,7 +50,8 @@ class FrameModel(QAbstractTableModel):
     def _raw(self, r, c):
         try:
             return self.df.iat[r, c]
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):

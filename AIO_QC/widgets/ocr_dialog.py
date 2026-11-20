@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔤 OCR Check — read the text inside text-class boxes with an OCR engine from your own Python environment and
+ OCR Check — read the text inside text-class boxes with an OCR engine from your own Python environment and
 check it: no text · low confidence · validator rules · truncated / loose boxes · several lines · stored-text
 mismatch; across the dataset: identity leakage between splits and very frequent identities.
 
@@ -41,7 +41,7 @@ TONE = {"error": "error", "warn": "warning", "muted": "muted"}
 
 class OcrCheckDialog(BaseScanDialog):
     SUPPORTED = DETECTION_TYPES          # needs shapes (not for classification datasets)
-    TITLE, ICON = "OCR Check", "🔤"
+    TITLE, ICON = "OCR Check", ""
     HELP = ("Reads the text in your text-class boxes with an OCR engine from your own Python environment and checks "
             "it (validators, readability, box fit, stored transcriptions, identity leakage). OCR runs once per box and "
             "is cached; changing thresholds or validators re-checks instantly.")
@@ -147,7 +147,7 @@ class OcrCheckDialog(BaseScanDialog):
         form.addRow("Before checking:", norm)
         self._fill_classes()
 
-        self.add_action("🔧 Fix in editor", self._fix_in_editor, "Open the files of the ticked rows in labelme / labelImg")
+        self.add_action("Fix in editor", self._fix_in_editor, "Open the files of the ticked rows in labelme / labelImg")
         self.add_action("⤓ Export reads", self._export_reads, "CSV of every read: file, shape, class, text, confidence, "
                                                               "validator, issues")
         self.engine_versions: dict = {}
@@ -606,7 +606,7 @@ class OcrCheckDialog(BaseScanDialog):
         self._refresh_cards()
         live = [r for r in self.rows if r]
         c = Counter(KINDS[r.payload.kinds[0]][0] for r in live)
-        return " · ".join(f"{n:,} {k}" for k, n in c.most_common()) or "✅ Every text box reads and passes its checks"
+        return " · ".join(f"{n:,} {k}" for k, n in c.most_common()) or "Every text box reads and passes its checks"
 
     def _open_identity(self, r, _c):
         rows = getattr(self, "_ident_rows", [])
@@ -617,7 +617,7 @@ class OcrCheckDialog(BaseScanDialog):
             files = sorted({x.key for x in self.ctx["reads"] if VL.identity_key(
                 VL.normalize((x.res or {}).get("text") or "", self._collect()["classes"].get(x.label, DEFAULT_CLASS)
                              .get("normalize"))) == ident})
-        self.app.apply_file_filter(files, f"🔤 {kind}: {ident}")
+        self.app.apply_file_filter(files, f"{kind}: {ident}")
 
     # ================================================================== actions
     def _fix_in_editor(self):

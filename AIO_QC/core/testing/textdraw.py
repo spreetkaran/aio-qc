@@ -13,12 +13,14 @@ nothing breaks.
   text_size(text, px, weight)            -> (width, height) of the label box content
   put_text(img, text, x, y, px, color, weight)   draws with (x, y) = top-left of the text box
 """
+
 import os
 import threading
 from collections import OrderedDict
 
 import cv2
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__import__("AIO_QC").__file__)), "fonts")   # AIO QC's font folder (Qt-free)
 _fonts = {}
@@ -35,7 +37,8 @@ def available():
         try:
             from PIL import ImageFont  # noqa: F401
             _ok = os.path.isfile(os.path.join(FONT_DIR, "Inter-SemiBold.otf"))
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             _ok = False
     return _ok
 

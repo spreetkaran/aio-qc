@@ -38,7 +38,8 @@ class StorageDialog(QDialog):
         self.app, self.session = app, app.session
         self.setWindowTitle(f"{self.TITLE} — {self.session.root.name}")
         self.setWindowIcon(newIcon("open"))
-        self.resize(860, 620)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "small")
         self.worker = None
         st = app.settings
         lay = QVBoxLayout(self)

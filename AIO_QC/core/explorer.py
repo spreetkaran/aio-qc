@@ -38,6 +38,7 @@ import numpy as np
 from .evaluation import IOU_GRID
 from .geometry import to_polygon
 from .model_check import iou_matrix
+from AIO_QC.core.diag import ignored as _ignored
 
 FORMAT = 1
 
@@ -1230,7 +1231,8 @@ def project(vecs: np.ndarray, method: str = "pca", seed: int = 0, progress=None)
             import umap                                               # optional
             xy = umap.UMAP(n_components=2, random_state=seed).fit_transform(red)
             used = "umap"
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             method = "tsne"
     if method == "tsne" and len(x) >= 10:
         try:
@@ -1238,8 +1240,8 @@ def project(vecs: np.ndarray, method: str = "pca", seed: int = 0, progress=None)
             xy = TSNE(n_components=2, init="pca", random_state=seed,
                       perplexity=float(min(30, max(5, len(x) // 100)))).fit_transform(red)
             used = "tsne"
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     xy = np.asarray(xy, np.float32)
     if len(xy):
         lo, hi = xy.min(0), xy.max(0)

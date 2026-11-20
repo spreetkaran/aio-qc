@@ -29,6 +29,7 @@ from PyQt6.QtCore import QObject, QTimer, Qt, QPointF, QEvent, QRect
 from PyQt6.QtGui import QColor, QPainter, QGuiApplication
 from PyQt6.QtWidgets import (QWidget, QGraphicsOpacityEffect, QGraphicsView, QProgressBar, QStackedWidget,
                              QAbstractScrollArea, QApplication)
+from AIO_QC.core.diag import ignored as _ignored
 
 # ------------------------------------------------------------------ settings
 MODES = ("full", "reduced", "off")
@@ -59,8 +60,8 @@ def set_mode(m):
     try:
         from AIO_QC.widgets import anim as _legacy           # the FrameAnimator helpers follow the same switch
         _legacy.ENABLED = _mode != "off"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
 
 
 def enabled():
@@ -179,8 +180,8 @@ class FrameClock(QObject):
                         import traceback
                         from loguru import logger
                         logger.error("Animation callback failed:\n" + traceback.format_exc())
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _ignored(_exc)
                 if not keep:
                     self._subs.pop(key, None)
         finally:
@@ -199,7 +200,8 @@ def _alive(obj):
     try:
         from PyQt6 import sip
         return not sip.isdeleted(obj)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return True
 
 
@@ -456,11 +458,16 @@ class Transition(QWidget):
             return
         self._gone = True
         _OVERLAYS.discard(self)
+        # Let go of the host now, on our terms — not from inside the overlay's destructor, where releasing what might
+        # be the last reference to a window Python owns would delete the window (and with it this overlay) while Qt
+        # is still deleting the overlay.
+        host, self.host = self.host, None
         try:
             self.hide()
             self.deleteLater()
         except RuntimeError:
             pass
+        del host
 
     def paintEvent(self, _ev):
         p = QPainter(self)
@@ -609,6 +616,8 @@ class AppMotion(QObject):
             if wt in (Qt.WindowType.Window, Qt.WindowType.Dialog):
                 from AIO_QC.utils.qt_utils import fit_to_screen
                 fit_to_screen(obj)                       # every window stays inside its screen
+                from AIO_QC.utils import later         # again, once it has placed / sized itself after showing
+                later(0, obj, lambda o=obj: o.isVisible() and fit_to_screen(o))
                 if enabled() and wt == Qt.WindowType.Dialog and not obj.property("noFade"):
                     fade_window(obj, 160)
         return False

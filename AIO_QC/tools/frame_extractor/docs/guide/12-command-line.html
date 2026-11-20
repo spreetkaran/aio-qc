@@ -1,5 +1,5 @@
 <!--title: Command line-->
-<!--keywords: cli command line terminal headless script extract probe testset eval clip automation server-->
+<!--keywords: cli command line terminal headless script extract probe testset eval clip autoannotate automation server-->
 <h1>Command line</h1>
 <p>Everything heavy also runs without the window — on a server, in a script, or overnight:</p>
 <pre>aio-qc &lt;command&gt; [options]</pre>
@@ -10,6 +10,8 @@
 <tr><td><code>testset</code></td><td>Build or extend a Testing test set of unique frames</td></tr>
 <tr><td><code>eval</code></td><td>Score weights on a test set / dataset / videos and write the HTML report</td></tr>
 <tr><td><code>clip</code></td><td>Cut a clip (fast lossless, or <code>--exact</code>)</td></tr>
+<tr><td><code>autoannotate</code></td><td>Videos → unique frames → LabelMe files → parts to upload, step by step (see
+<i>Auto-Annotate</i>; a setup saved in its window runs unchanged)</td></tr>
 </table>
 <h2>Examples</h2>
 <pre># one sharp frame per second, skip near-duplicates, 4 workers
@@ -20,6 +22,10 @@ aio-qc testset testsets/gate --add cam1.mp4 cam2.mp4 frames/ --every 1s
 aio-qc eval testsets/gate -m old.pt -m new.onnx --env yolo --report comparison
 
 # cut 1:00 - 1:30 frame-exactly
-aio-qc clip cam1.mp4 1:00 1:30 -o clip.mp4 --exact</pre>
+aio-qc clip cam1.mp4 1:00 1:30 -o clip.mp4 --exact
+
+# auto-annotate a batch with a saved setup; then only redo annotations and the keep rule
+aio-qc autoannotate D:/runs/b12 --videos D:/videos/b12 --setup project.aasetup.json
+aio-qc autoannotate D:/runs/b12 --only annotate,rules --conf 0.4</pre>
 <h2>Full reference</h2>
 <!--@cli-->

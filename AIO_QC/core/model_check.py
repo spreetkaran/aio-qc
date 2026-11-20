@@ -7,7 +7,9 @@ Findings (per image):
     class mismatch       GT box overlaps a confident prediction of a DIFFERENT class (and no same-class one)
     missing annotation   confident prediction with no GT box nearby  -> object probably not labelled
     missed by model      GT box with no matching prediction           -> doubtful / wrong / very hard label
-    poor box fit         same class, but IoU below the match threshold -> sloppy box
+    poor box fit         same class, but the label's box does not fit the object: IoU below the match threshold,
+                         or matched yet one side of the label sticks out past the model's box (loose) or cuts into
+                         it (tight) by more than `fit_tol` of the object's size — `Finding.sides` says which sides
 
 Ultralytics is imported lazily; only ModelRunner needs it. match() is pure Python/numpy.
 """
@@ -36,6 +38,37 @@ class Finding:
     score: float                  # ranking key: higher = more likely a real label error
     model: str = ""               # id of the model that produced the prediction
     gt_box: tuple | None = None   # the labelled box (pixels) — for crops / cards
+    sides: tuple | None = None    # poor box fit: (left, top, right, bottom) of the label vs the model's box, as a
+                                  # fraction of the model box's width / height; + sticks out (loose), − cuts in
+
+
+def fit_sides(g, p) -> tuple:
+    """How far each side of box g lies outside box p, as a fraction of p's width / height (+ outside, − inside)."""
+    w = max(float(p[2]) - float(p[0]), 1e-6)
+    h = max(float(p[3]) - float(p[1]), 1e-6)
+    return ((float(p[0]) - float(g[0])) / w, (float(p[1]) - float(g[1])) / h,
+            (float(g[2]) - float(p[2])) / w, (float(g[3]) - float(p[3])) / h)
+
+
+SIDE_NAMES = ("left", "top", "right", "bottom")
+
+
+def fit_text(sides, tol: float = 0.0) -> str:
+    """'loose: left 18 %, bottom 12 % · tight: top 9 %' — the sides beyond tol, worst first."""
+    if not sides:
+        return ""
+    order = sorted(range(4), key=lambda k: -abs(sides[k]))
+    loose = [f"{SIDE_NAMES[k]} {sides[k] * 100:.0f} %" for k in order if sides[k] > max(tol, 0.005)]
+    tight = [f"{SIDE_NAMES[k]} {-sides[k] * 100:.0f} %" for k in order if sides[k] < -max(tol, 0.005)]
+    return " · ".join(p for p in (("loose: " + ", ".join(loose)) if loose else "",
+                                  ("tight: " + ", ".join(tight)) if tight else "") if p)
+
+
+def fit_kind(sides, tol: float = 0.0) -> str:
+    """'loose', 'tight' or 'off' (both) for the sides beyond tol."""
+    lo = any(v > tol for v in sides or ())
+    ti = any(v < -tol for v in sides or ())
+    return "off" if lo and ti else "loose" if lo else "tight" if ti else ""
 
 
 def gt_boxes(shapes, width: float, height: float, normalized: bool):
@@ -67,12 +100,16 @@ def iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def match(gt, preds, iou_thr=0.5, conf_thr=0.25, missing_conf=0.5, mismatch_conf=0.4,
-          near_iou=0.3, agnostic=False, covered: set | None = None, mismatch_ok=None) -> list[Finding]:
+          near_iou=0.3, agnostic=False, covered: set | None = None, mismatch_ok=None,
+          fit_tol: float | None = 0.1, fit_conf: float = 0.5, fit_px: float = 2.0) -> list[Finding]:
     """
     gt:    [(shape_index, label, xyxy)]
     preds: [(label, conf, xyxy[, model_id])]  (already mapped to dataset label names)
     covered:     labels at least one model can predict; GT of other labels is never "missed by model"
     mismatch_ok: fn(gt_label, pred) -> bool; e.g. only when the predicting model also knows gt_label
+    fit_tol:     a MATCHED label whose side sticks out past (or cuts into) the model's box by more than this fraction of
+                 the object's size — and by fit_px pixels — is a poor box fit; only predictions with conf ≥ fit_conf
+                 are trusted for that (None: off)
     """
     preds = [p for p in preds if p[1] >= conf_thr]
     G = np.array([g[2] for g in gt], dtype=float).reshape(-1, 4)
@@ -81,6 +118,7 @@ def match(gt, preds, iou_thr=0.5, conf_thr=0.25, missing_conf=0.5, mismatch_conf
     same = np.array([[agnostic or g[1] == p[0] for p in preds] for g in gt], dtype=bool).reshape(len(gt), len(preds))
     findings: list[Finding] = []
     used_p, used_g = set(), set()
+    pairs = []
 
     # 1) one-to-one same-class matching, most confident predictions first
     for j in sorted(range(len(preds)), key=lambda j: -preds[j][1]):
@@ -89,6 +127,7 @@ def match(gt, preds, iou_thr=0.5, conf_thr=0.25, missing_conf=0.5, mismatch_conf
             _, i = max(cand)
             used_g.add(i)
             used_p.add(j)
+            pairs.append((i, j))
 
     # 2) unmatched GT: class mismatch / poor fit / missed
     for i, (idx, label, _box) in enumerate(gt):
@@ -108,12 +147,28 @@ def match(gt, preds, iou_thr=0.5, conf_thr=0.25, missing_conf=0.5, mismatch_conf
             j = max(sloppy, key=lambda j: M[i, j])
             used_p.add(j)
             findings.append(Finding(POOR_FIT, idx, label, preds[j][0], preds[j][1], float(M[i, j]),
-                                    tuple(preds[j][2]), (1 - M[i, j]) * preds[j][1], _mid(preds[j])))
+                                    tuple(preds[j][2]), (1 - M[i, j]) * preds[j][1], _mid(preds[j]),
+                                    sides=fit_sides(gt[i][2], preds[j][2])))
             continue
         if covered is not None and not agnostic and label not in covered:
             continue                                  # no model knows this class: nothing to say
         best = float(M[i].max()) if len(preds) else 0.0
         findings.append(Finding(MISSED, idx, label, "", 0.0, best, None, 0.5 * (1 - best)))
+
+    # 2b) matched, but a side of the label is off: loose (sticks out) or tight (cuts the object)
+    if fit_tol is not None:
+        for i, j in pairs:
+            if preds[j][1] < fit_conf:
+                continue
+            g, p = gt[i][2], preds[j][2]
+            sd = fit_sides(g, p)
+            w, h = float(p[2]) - float(p[0]), float(p[3]) - float(p[1])
+            px = (abs(sd[0]) * w, abs(sd[1]) * h, abs(sd[2]) * w, abs(sd[3]) * h)
+            worst = max((abs(sd[k]) for k in range(4) if px[k] >= fit_px), default=0.0)
+            if worst <= fit_tol:
+                continue
+            findings.append(Finding(POOR_FIT, gt[i][0], gt[i][1], preds[j][0], preds[j][1], float(M[i, j]),
+                                    tuple(p), min(worst, 1.0) * preds[j][1], _mid(preds[j]), sides=sd))
 
     # 3) confident predictions far from every GT box -> probably unlabeled object
     for j, p in enumerate(preds):

@@ -15,10 +15,12 @@ from __future__ import annotations
 import base64
 import io
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     from PIL import Image  # type: ignore
-except Exception:                                        # pragma: no cover - PIL is optional
+except Exception as _exc:                                        # pragma: no cover - PIL is optional
+    _ignored(_exc)
     Image = None
 
 KEY = "imageData"
@@ -35,7 +37,8 @@ def major(version) -> int:
 def _oriented(im):
     try:
         o = (im.getexif() or {}).get(_ORIENTATION, 1)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         o = 1
     if o in (None, 1):
         return im

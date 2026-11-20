@@ -149,7 +149,24 @@ nothing is analysed yet) with the <b>events</b> as coloured ticks: <span style='
 object for one frame) and <span style='color:#c9a800'>uncertain</span> (a box just below the threshold). Classes are
 compared by name, so models with different class orders compare correctly. Click the strip to seek; the event list and
 <span class="k">Alt</span>+<span class="k">[</span> / <span class="k">Alt</span>+<span class="k">]</span> jump between events.
-<b>Classes</b> hides classes in the player; <b>CSV…</b> saves every detection of the video.</p>
+<b>CSV…</b> saves every detection of the video.</p>
+<p><b>How the boxes look.</b> By default every <b>class</b> has its own colour, picked to be as different as possible
+from the others (the same palette as Image QC) and kept for that class in every video and session; with several models
+each label starts with a small dark badge carrying the model's number in the model's colour (the same badge as next to
+the model's switch). <b>Colour by model</b> goes back to one colour per model. Labels show class + confidence (<i>car : 0.64</i>), the
+class only, or nothing; <b>Fill boxes</b> adds a light fill; the label size goes from small to extra large. Outlines have a
+dark halo and label text is black or white by contrast, so boxes read on bright and dark footage. Labels are rounded
+tags like Image QC's, with the score in fixed-width digits so it does not wobble; a long class name is shortened with
+"…" (the full name is in the hover). Labels <b>stay put</b> while boxes move — each box keeps its label spot from frame
+to frame and only moves it when another label really covers it; in a crowd a label steps up or down and a thin line
+with a dot joins it to its box. Boxes too small to carry a label get a coloured dot instead; boxes filled in between
+model runs (estimated) are drawn fainter and dashed. Options: <b>Clean while playing</b> (thin outlines, no labels
+during playback — labels come back on pause), <b>Shade by confidence</b> (weak detections fainter, strong ones solid)
+and <b>Glide labels</b> (a label that must move slides there instead of jumping). The <b>Classes</b> legend lists every class with its colour and how many are on the current frame —
+untick one to hide it, <b>Show all</b> brings them back. Hover a box for its model, class, confidence and size;
+<span class="k">Alt</span>+<span class="k">1</span> … <span class="k">9</span> show / hide model 1 … 9. <b>Save
+frame…</b> writes the frame at full resolution with its boxes as a PNG. The paused-frame <b>Detect</b> overlay uses the
+same class colours.</p>
 <p><b>Send hard frames to Image QC…</b> picks the frames worth labelling - where the models disagree, flicker or
 hesitate, strongest first and spread out (at most N per video, at least S seconds apart) - saves them in the output
 folder with LabelMe pre-labels from the model you choose, remembers each frame's video (Image QC ▸ Show Source Video)

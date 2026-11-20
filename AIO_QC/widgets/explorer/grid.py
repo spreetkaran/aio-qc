@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDel
 
 from AIO_QC.core.explorer import ERROR_TAGS, TAG_NAMES, decode_id
 from AIO_QC.utils import LRUCache, theme_color
+from AIO_QC.utils.qt_utils import later
 from ..card_gallery import draw_review_badge
 from .paint import CropTask, Signals, ThumbTask, draw_objects, image_path, object_text, tag_color
 
@@ -228,7 +229,7 @@ class ExplorerGrid(QListView):
                     sm.select(self.model_.index(n), sm.SelectionFlag.Select)
             if cur is not None and cur in pos:
                 sm.setCurrentIndex(self.model_.index(pos[cur]), sm.SelectionFlag.NoUpdate)
-            QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(bar))
+            later(0, self, lambda: self.verticalScrollBar().setValue(bar))
         else:
             self.scrollToTop()
         self.selectionChangedSoon.emit()

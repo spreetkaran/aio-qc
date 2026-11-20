@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterator
+from AIO_QC.core.diag import ignored as _ignored
 
 try:  # optional speed-up (3-10x faster JSON parsing)
     import orjson  # type: ignore
@@ -193,11 +194,11 @@ def image_size(path: str | Path) -> tuple[int, int] | None:
                 try:
                     if im.getexif().get(_EXIF_ORIENTATION) in (5, 6, 7, 8):
                         w, h = h, w
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
                 return int(w), int(h)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     img = decode_image(path)
     if img is None:
         return None
@@ -213,7 +214,8 @@ def decode_image(path: str | Path):
         if buf.size == 0:
             return None
         return cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
@@ -227,10 +229,11 @@ def verify_image(path: str | Path) -> tuple[bool, tuple[int, int] | None, str]:
                 try:
                     if im.getexif().get(_EXIF_ORIENTATION) in (5, 6, 7, 8):
                         w, h = h, w
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
                 return True, (int(w), int(h)), ""
         except Exception as exc:
+            _ignored(exc)
             pil_error = str(exc)
     else:
         pil_error = "PIL unavailable"

@@ -26,8 +26,11 @@ import cv2
 import numpy as np
 from loguru import logger
 from PyQt6.QtCore import Qt, QThread, QRectF, QPointF, QPoint, pyqtSignal
+
+from AIO_QC.widgets.lifecycle import RetainedThread
 from PyQt6.QtGui import QPainter, QColor, QPen, QPainterPath, QFont, QImage
 from PyQt6.QtWidgets import QWidget, QSizePolicy
+from AIO_QC.core.diag import ignored as _ignored
 
 
 THUMB_W = 192
@@ -47,7 +50,7 @@ class Sample:
     small: np.ndarray = None
 
 
-class TimelineWorker(QThread):
+class TimelineWorker(RetainedThread, QThread):
     """Parallel keyframe sampling (core.fast_sampler): cost is independent of the video's length -
     about 1-2 s for typical videos, a few seconds for multi-hour ones. Coarse-to-fine, so the strip is
     covered almost immediately; hovering jumps the queue. Optional model track runs on the samples."""
@@ -97,6 +100,7 @@ class TimelineWorker(QThread):
             c = self.model_cfg
             return load_detectors(c["models"], min(c["conf"], c["unc_low"]), **detector_kwargs(c, threads=2))
         except Exception as e:
+            _ignored(e)
             self.model_error.emit(str(e))
             return None
 
@@ -129,6 +133,7 @@ class TimelineWorker(QThread):
                     try:
                         self._model_fields(smp, r.full, detectors)
                     except Exception as e:
+                        _ignored(e)
                         self.model_error.emit(str(e))
             with lock:
                 batch.append(smp)

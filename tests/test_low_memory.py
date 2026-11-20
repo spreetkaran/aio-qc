@@ -6,7 +6,7 @@ import pytest
 from PyQt6.QtGui import QImage
 
 from AIO_QC.utils import memory as M
-from AIO_QC.widgets import canvas as C
+from AIO_QC.widgets import canvas_common as C          # (the canvas's image helpers live here)
 
 from . import fixtures as FX
 from .test_aio_image import _open, shell  # noqa: F401

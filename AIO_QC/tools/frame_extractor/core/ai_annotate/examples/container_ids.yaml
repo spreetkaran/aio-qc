@@ -1,0 +1,118 @@
+# AIO QC · AI annotate project — made in the app (Auto-Annotate ▸ Annotate ▸ AI annotate).
+# Every setting is in the app; edit there, or here if you prefer (the app checks this file as you type).
+# The API key is NOT in this file: only the name of the environment variable that holds it.
+version: 1
+project: container-ids
+description: Yard and gate camera frames with shipping containers.
+connection:
+  provider: litellm
+  base_url: http://localhost:4000
+  api_key_env: LITELLM_API_KEY
+  api_version: ''
+  region: ''
+  timeout_s: 120
+  workers: 12
+  retries: 5
+classes:
+- name: container_id
+  description: the full horizontal 11-character container ID (4 letters ending in U, 6 digits, 1 framed check digit),
+    with a small safe margin around all characters. Not vertical or stacked text.
+  min_confidence: 0.0
+  max_per_image: 0
+  min_size_px: 0
+  inside: ''
+  text: true
+  text_pattern: ^[A-Z]{3}[UJZ]\s?\d{6}\s?\[?\d\]?$
+  text_check: iso6346
+  parts:
+  - bic_code
+  - serial_number
+  - checksum_digit
+- name: bic_code
+  description: the first 4 capital letters of the ID, with a small margin
+  min_confidence: 0.0
+  max_per_image: 0
+  min_size_px: 0
+  inside: container_id
+  text: false
+  text_pattern: ''
+  text_check: none
+  parts: []
+- name: serial_number
+  description: the 6 serial digits, with a small margin
+  min_confidence: 0.0
+  max_per_image: 0
+  min_size_px: 0
+  inside: container_id
+  text: false
+  text_pattern: ''
+  text_check: none
+  parts: []
+- name: checksum_digit
+  description: the single check digit and the rectangle around it
+  min_confidence: 0.0
+  max_per_image: 0
+  min_size_px: 0
+  inside: container_id
+  text: false
+  text_pattern: ''
+  text_check: none
+  parts: []
+flags: []
+references:
+  max_side: 1024
+  draw_boxes: true
+  views:
+    default:
+      match: ''
+      images: []
+      note: ''
+mode: vlm_detect
+roi:
+  class: ''
+  padding: 0.1
+  max_crops_per_image: 4
+vlm:
+  model: gemini-2.5-flash
+  params:
+    temperature: 0
+    max_tokens: 3000
+  json_mode: true
+  image_max_side: 1536
+  box_format: auto
+  instructions: Only horizontal IDs that are fully legible.
+detector:
+  type: grounding_dino
+  model: ''
+  prompts: {}
+  box_threshold: 0.3
+  text_threshold: 0.25
+  iou: 0.5
+  device: auto
+segment:
+  type: none
+  model: ''
+checks:
+  fields: {}
+  accept: []
+  require_boxes: false
+  keep_rejected: true
+  on_text_fail: review
+limits:
+  targets: {}
+  max_images: 0
+  max_attempts_factor: 2.0
+  budget_usd: 0
+  seed: 42
+pricing:
+  input: 0.3
+  output: 2.5
+output:
+  format: yolo
+  labelme_version: 6.3.1
+  image_data: false
+  write_confidence: true
+  needs_review_below: 0.7
+  merge_with_existing: add
+  audit: true
+  data_yaml: true

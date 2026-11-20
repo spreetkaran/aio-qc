@@ -16,6 +16,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from AIO_QC.core.env_manager import missing_packages, remove_env
 from AIO_QC.core.inference import InferenceClient, InferenceError
 from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.core.diag import ignored as _ignored
 
 DEFAULTS = {"mode": "standard", "device": "cpu", "half": False, "batch": 8, "slice": 640, "overlap": 0.2,
             "nms_iou": 0.6}
@@ -28,13 +29,19 @@ class FuncWorker(RetainedThread, QThread):
 
     def __init__(self, fn, parent=None):
         super().__init__(parent)
+        import threading
         self.fn = fn
+        self.cancel_event = threading.Event()          # set by stop() / the app closing: fn may poll it
         self.setObjectName(f"FuncWorker({getattr(fn, '__qualname__', getattr(fn, '__name__', 'fn'))})")
+
+    def stop(self):
+        self.cancel_event.set()
 
     def run(self):
         try:
             self.done.emit(self.fn())
         except Exception as exc:
+            _ignored(exc)
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
@@ -124,6 +131,12 @@ class InferenceService(QObject):
             if self.client is None or not self.client.alive:
                 raise InferenceError("inference process is not running")
             return self.client.predict(images, ids, conf, batch or self.opts["batch"], classes, cancel)
+
+    def segment(self, model: str, image, boxes) -> list:
+        """SAM / SAM2 outlines (Model Assist) — needs ultralytics in the environment; [polygon | None] per box."""
+        with self._lock:
+            self.ensure_started()
+            return self.client.segment(model, image, boxes)
 
     # -------------------------------------------------------------- lifecycle
     def run_async(self, fn, on_done=None, on_fail=None):

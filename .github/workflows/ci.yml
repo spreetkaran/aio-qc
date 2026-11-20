@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: 2026 Preetkaran Singh
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Every push and pull request: lint once, then the whole test suite on Windows, macOS and Linux (the GUI runs
+# off-screen: QT_QPA_PLATFORM=offscreen), with coverage measured on Linux — the run fails if coverage of AIO QC's
+# own code drops below 65 % (it was 67 % when this floor was set; raise it as tests are added).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Lockfile is up to date with pyproject.toml
+        run: uv lock --check
+      - name: Ruff (pyflakes rules; vendored editors excluded — see pyproject.toml)
+        run: |
+          uv sync --locked --only-group dev
+          uv run --no-sync ruff check --output-format github
+
+  tests:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.10" }      # the oldest supported Python, where users run it
+          - { os: macos-latest,   python: "3.12" }
+          - { os: ubuntu-latest,  python: "3.10" }
+          - { os: ubuntu-latest,  python: "3.13", coverage: true }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      QT_QPA_PLATFORM: offscreen
+      AIOQC_NO_LIBMPV_DOWNLOAD: "1"       # never download libmpv during tests
+      PYTHONFAULTHANDLER: "1"             # a native crash prints every thread's stack
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libdbus-1-3 libglib2.0-0
+      - name: Install AIO QC with every optional part and the test tools (exact versions from uv.lock)
+        run: uv sync --locked --all-extras --python ${{ matrix.python }}
+      - name: Tests
+        if: ${{ !matrix.coverage }}
+        run: uv run --no-sync pytest -q -p no:cacheprovider --timeout=900 -ra tests
+      - name: Tests with coverage
+        if: ${{ matrix.coverage }}
+        run: >
+          uv run --no-sync pytest -q -p no:cacheprovider --timeout=900 -ra tests
+          --cov --cov-report=term-missing:skip-covered --cov-report=xml --cov-report=html
+          --cov-fail-under=70
+      - name: Coverage report
+        if: ${{ matrix.coverage && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+      - name: Crash and run logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}-py${{ matrix.python }}
+          path: |
+            **/aio-qc*.log
+            **/aio_qc_crash*.log
+          if-no-files-found: ignore

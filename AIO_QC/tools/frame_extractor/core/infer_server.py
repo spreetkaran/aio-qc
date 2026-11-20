@@ -230,7 +230,6 @@ def predict_arrays(paths, ids, conf, batch, classes):
         entry = MODELS.get(mid)
         if entry is None:
             continue
-        spec = entry["spec"]
         keep = set(classes.get(mid)) if classes and classes.get(mid) is not None else None
         pending = []
         for p in good:

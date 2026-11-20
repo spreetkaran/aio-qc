@@ -37,6 +37,7 @@ from AIO_QC.tools.frame_extractor.core.sources import open_source, parse_time
 from AIO_QC.tools.frame_extractor.core.metrics import sharpness, SceneDetector
 from AIO_QC.tools.frame_extractor.core.imageio import imread
 from AIO_QC.tools.frame_extractor.core import frame_sources
+from AIO_QC.core.diag import ignored as _ignored
 
 NEGATIVE_DIR = "negatives_blurry"
 
@@ -125,9 +126,20 @@ class Job:
     frames: list = None           # explicit picks: [frame, roi | None] (timeline markers); ignores start/end
 
 
-def _imwrite(path, img, ext, quality=95):
+def _imwrite(path, img, ext, quality=95, video=None, idx=None, t=None, tool="Frame Extractor"):
     from AIO_QC.tools.frame_extractor.core.imageio import imwrite
-    imwrite(path, img, ext, quality)   # any format, quality, non-ASCII Windows paths
+    imwrite(path, img, ext, quality, provenance=frame_provenance(video, idx, t, tool))   # any format, quality …
+
+
+def frame_provenance(video, idx, t=None, tool="Frame Extractor") -> dict | None:
+    """What a saved frame is: the video (by name), the frame number and time — embedded in the image."""
+    from AIO_QC.core import provenance as PV
+    if not PV.enabled():
+        return None
+    return PV.image_record(PV.make_origin("conversion", tool, detail="frame of a video"),
+                           video=os.path.basename(str(video)) if video else None,
+                           frame=int(idx) if idx is not None else None,
+                           time_s=round(float(t), 3) if t is not None else None)
 
 
 def _clamp_roi(roi, w, h):
@@ -274,7 +286,8 @@ def extract_frames(job, s, progress=None, cancelled=lambda: False, detectors=Non
             try:
                 mx.save(idx, roi)
                 stats["saved"] += 1
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 stats["failed"] += 1
             stats["frames"] += 1
             if progress:
@@ -307,6 +320,8 @@ def extract(job, settings, progress=None, cancelled=lambda: False, detectors=Non
             detectors = load_detectors(s.models, min(s.det_conf, s.unc_low if "uncertain" in mining else 1.0),
                                        **detector_kwargs(s))
         use_models = bool(detectors) and (mining or s.preannot != "none")
+        # a classifier: pre-annotations are classes — LabelMe flags, or (YOLO layout) one folder per class
+        is_cls = use_models and getattr(detectors[0], "task", "") == "classify"
 
         name = os.path.splitext(os.path.basename(job.video_path))[0]
         video_key = os.path.abspath(job.video_path)
@@ -331,7 +346,7 @@ def extract(job, settings, progress=None, cancelled=lambda: False, detectors=Non
             roi = tuple(state["roi"]) if state.get("roi") else roi
             stats["resumed_from"] = first
 
-        if use_models and s.preannot == "yolo" and detectors[0].names:
+        if use_models and s.preannot == "yolo" and detectors[0].names and not is_cls:
             with open(os.path.join(job.output_dir, "classes.txt"), "w", encoding="utf-8") as f:
                 f.write("\n".join(detectors[0].names[i] for i in sorted(detectors[0].names)) + "\n")
         log = None
@@ -378,7 +393,7 @@ def extract(job, settings, progress=None, cancelled=lambda: False, detectors=Non
             if path is None:
                 stats["skipped_existing"] = stats.get("skipped_existing", 0) + 1
                 return None
-            _imwrite(path, img, s.ext, s.quality)
+            _imwrite(path, img, s.ext, s.quality, job.video_path, idx, src.time_of(idx))
             frame_sources.record(path, job.video_path, idx, src.time_of(idx))
             return os.path.relpath(path, job.output_dir).replace(os.sep, "/")
 
@@ -403,7 +418,17 @@ def extract(job, settings, progress=None, cancelled=lambda: False, detectors=Non
             return (h, ts_), False
 
         def write_outputs(idx, img, per_model, reasons, h=None):
-            fname = save(idx, img, None, "mined" if reasons else "batch", "+".join(reasons))
+            folder, answer = None, None
+            if is_cls and per_model is not None and s.preannot != "none":
+                from AIO_QC.tools.frame_extractor.core.detector import class_answer, class_dir
+                answer = class_answer(per_model[0], s.det_conf)
+                if s.preannot == "yolo" and answer:          # classification layout: <output>/<class>/frame
+                    folder = os.path.join(job.output_dir, class_dir(answer))
+                    from AIO_QC.core.fx_to_qc import CLASS_FOLDERS_MARK
+                    mark = os.path.join(job.output_dir, CLASS_FOLDERS_MARK)
+                    if not os.path.exists(mark):                  # Open in Image QC: a class-folder dataset
+                        open(mark, "w").close()
+            fname = save(idx, img, folder, "mined" if reasons else "batch", "+".join(reasons))
             if fname is None:
                 return
             saved_idx.add(idx)
@@ -417,10 +442,15 @@ def extract(job, settings, progress=None, cancelled=lambda: False, detectors=Non
                 ih, iw = img.shape[:2]
                 stem = os.path.join(job.output_dir, os.path.splitext(fname)[0])
                 final = [d for d in per_model[0] if d.conf >= s.det_conf]
-                if s.preannot == "labelme":
+                if is_cls:
+                    if s.preannot == "labelme":
+                        from AIO_QC.tools.frame_extractor.core.detector import write_class_labelme
+                        write_class_labelme(stem + ".json", os.path.basename(fname), iw, ih, answer, reasons)
+                elif s.preannot == "labelme":
                     from AIO_QC.tools.frame_extractor.core.detector import write_labelme
                     write_labelme(stem + ".json", os.path.basename(fname), iw, ih, final,
-                                  flags={r: True for r in reasons})
+                                  flags={r: True for r in reasons},
+                                  source={"video": os.path.basename(job.video_path), "frame": int(idx)})
                 elif s.preannot == "yolo":
                     from AIO_QC.tools.frame_extractor.core.detector import write_yolo
                     write_yolo(stem + ".txt", iw, ih, final)
@@ -599,4 +629,5 @@ def job_process(job_id, job, settings, queue, cancel_event):
         stats = extract(job, settings, progress, cancel_event.is_set)
         queue.put(("done", job_id, stats))
     except Exception as e:
+        _ignored(e)
         queue.put(("error", job_id, f"{type(e).__name__}: {e}"))

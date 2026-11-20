@@ -31,6 +31,7 @@ import time
 
 import numpy as np
 from AIO_QC.core import procs
+from AIO_QC.core.diag import ignored as _ignored
 
 
 
@@ -67,7 +68,8 @@ def find_ffmpeg(user_path=""):
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
@@ -76,7 +78,8 @@ def ffmpeg_info(ffmpeg):
     def run(*a):
         try:
             return procs.run([ffmpeg, "-hide_banner", *a], text=True, timeout=15).stdout
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return ""
     m = re.search(r"version\s+n?(\d+)\.(\d+)", run("-version"))
     ver = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
@@ -134,12 +137,15 @@ class PreviewPipe:
         self.proc = procs.popen(cmd, background=background, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 stdin=subprocess.DEVNULL, bufsize=self.frame_bytes * 2, env=_hw_env())
         self._err = []
-        threading.Thread(target=self._drain, daemon=True).start()
+        threading.Thread(target=self._drain, args=(self.proc,), daemon=True).start()
 
-    def _drain(self):
-        for line in self.proc.stderr:
-            if len(self._err) < 20:
-                self._err.append(line.decode("utf-8", "replace").rstrip())
+    def _drain(self, proc):
+        try:
+            for line in proc.stderr:
+                if len(self._err) < 20:
+                    self._err.append(line.decode("utf-8", "replace").rstrip())
+        except (OSError, ValueError):                  # the pipe was closed under us
+            pass
 
     def read(self):
         """Next frame (h, w, 3) uint8, or None at the end / on error."""
@@ -168,18 +174,18 @@ class PreviewPipe:
         proc = self.proc
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
         def reap():
             try:
                 proc.stdout.close()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             try:
                 proc.wait(timeout=5)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         threading.Thread(target=reap, daemon=True).start()
 
 
@@ -250,7 +256,8 @@ def keyframes_ffprobe(path, ffprobe, timeout=120):
         out = procs.run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
                               "packet=pts_time,dts_time,flags", "-of", "csv=p=0", path],
                              text=True, timeout=timeout).stdout
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
     pk = []
     for line in out.splitlines():
@@ -279,7 +286,8 @@ def probe_color(path, ffprobe):
                              text=True, timeout=10).stdout
         kv = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
         return kv.get("color_space", ""), kv.get("color_range", "")
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return "", ""
 
 
@@ -304,7 +312,7 @@ class ParallelPipe:
             min_seconds = 0.0
         # segments: [start, next keyframe) then whole GOPs merged to >= min_seconds
         keys = [k for k in keyframes if k > start_idx]
-        bounds, cur = [start_idx], start_idx
+        bounds = [start_idx]
         for k in keys:
             if time_of(k) - time_of(bounds[-1]) >= min_seconds or bounds[-1] == start_idx and k > start_idx:
                 bounds.append(k)
@@ -335,6 +343,7 @@ class ParallelPipe:
             seg["pipe"] = PreviewPipe(ffmpeg, path, chain, w, h, max(0.0, t), version=version, pix_fmt=pix_fmt,
                                       threads=2, frames=b - a)
         except Exception as e:
+            _ignored(e)
             self._err.append(str(e))
             seg["done"] = True
             self._live.append(seg)

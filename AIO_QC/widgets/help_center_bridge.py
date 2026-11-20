@@ -9,6 +9,7 @@ in different modes listed).
 from __future__ import annotations
 
 import re
+from AIO_QC.core.diag import ignored as _ignored
 
 _HC = {"w": None}
 
@@ -66,15 +67,16 @@ images and filters Image QC's file list to them.</td></tr>
 Testing) are offered everywhere; one Python environment runs .pt / .engine models. Testing and Model Check share one
 prediction cache per dataset (<code>.aio_qc/predictions.db</code>).<br>
 <b>Background tasks:</b> one indicator in every mode's status bar lists long jobs (extraction, batch, timeline
-analysis, exports, Testing, scans, Data Prep) — click it for the list and Cancel.<br>
+analysis, exports, Testing, scans, Preparation) — click it for the list and Cancel.<br>
 <b>Settings:</b> every mode has its own Settings window - the gear next to the mode switch, File ▸ Settings…
 (Ctrl+,) - searchable, applied at once, with reset and import / export; its General section is shared by all modes.<br>
 <b>Animations:</b> one setting (Settings ▸ General ▸ Animations). <b>Theme:</b> the system's light / dark, everywhere.
-<b>Log:</b> one log file (<code>aio_qc_tool.log</code>).</p>
+<b>Log:</b> one log file (<code>aio-qc.log</code>).</p>
 <h2>Get started</h2>
-<p><a href="action:getstarted-image">Image QC — the 1-minute tour</a> ·
-<a href="action:getstarted-video">Frame Extractor — Get Started cards</a> ·
-<a href="action:toolmap">Which Image QC tool for what?</a></p>
+<p>Quick tour: <a href="action:tour-image">Image QC</a> · <a href="action:tour-video">Frame Extractor</a> ·
+<a href="action:tour-data">Data Studio</a> — a short tour over the real window, one part at a time.<br>
+<a href="action:toolmap">Which Image QC tool for what?</a> — every tool on one page, with what it deliberately
+leaves to another.</p>
 <h2>Same keys, different modes</h2>
 <p>Each mode has its own window, so a key does what that window's menu says. These keys exist in more than one mode
 with different commands (within one window every key is unique):</p>
@@ -121,7 +123,8 @@ def all_shortcut_entries():
     if sh.video is not None:
         try:
             out += [(f"Frame Extractor › {c}", n, k) for c, n, k in sh.video._shortcut_entries()]
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             out += _window_entries(sh.video, "Frame Extractor")
     if sh.studio is not None:
         out += _window_entries(sh.studio, "Data Studio")
@@ -154,26 +157,24 @@ def _actions():
     def toolmap():
         sh = _shell()
         if sh is not None:
-            sh.window("image").show_tool_map()
+            open_help(sh.window(sh.mode), "aio-image-qc#toolmap")     # a section of the Image QC guide
 
-    def gs_image():
-        sh = _shell()
-        if sh is not None:
-            sh.switch("image") if sh.mode != "image" else None
-            sh.window("image").show_get_started()
-
-    def gs_video():
-        sh = _shell()
-        if sh is not None:
-            sh.switch("video") if sh.mode != "video" else None
-            sh.window("video").show_get_started()
+    def tour(mode):
+        def run():
+            sh = _shell()
+            if sh is not None:
+                sh.switch(mode) if sh.mode != mode else None
+                w = sh.window(mode)
+                w.start_tour(force=True, empty_ok=True) if mode == "data" else w.start_tour(force=True)
+        return run
 
     def customize():
         sh = _shell()
         if sh is not None:
             sh.switch("video") if sh.mode != "video" else None
             sh.window("video").show_shortcuts()
-    return {"toolmap": toolmap, "getstarted-image": gs_image, "getstarted-video": gs_video, "customize": customize}
+    return {"toolmap": toolmap, "tour-image": tour("image"), "tour-video": tour("video"), "tour-data": tour("data"),
+            "getstarted-image": tour("image"), "getstarted-video": tour("video"), "customize": customize}
 
 
 def live_help():
@@ -191,7 +192,8 @@ def open_help(parent=None, page=None):
         HC.EXTRA_CHAPTERS[:] = _chapters()
         try:
             from AIO_QC.tools.frame_extractor.app import MOUSE_HELP
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             MOUSE_HELP = []
         w = HC.HelpCenter(None, all_shortcut_entries, MOUSE_HELP, actions=_actions(), icon_loader=_icon)
         from AIO_QC.utils import newIcon
@@ -202,8 +204,14 @@ def open_help(parent=None, page=None):
         w.chapters = HC.load_chapters()
         w.refresh()
     page = PAGES.get(page, page)
+    anchor = ""
+    if page and "#" in page:                                # "chapter#section": that part of the page
+        page, anchor = page.split("#", 1)
     if page or not w._hist:
         w.show_page(page or "aio-image-qc")
+        if anchor:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: w.view.scrollToAnchor(anchor))
     w.show()
     w.raise_()
     w.activateWindow()

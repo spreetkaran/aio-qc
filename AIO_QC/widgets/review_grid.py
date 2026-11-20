@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from AIO_QC.core.state import REVIEW_FIXED, REVIEW_FLAG, REVIEW_OK
 from AIO_QC.utils import LRUCache, newButton, style as apply_style, theme_color
+from AIO_QC.core.diag import ignored as _ignored
 
 STATUS_ROLE = {REVIEW_OK: "success", REVIEW_FLAG: "warn", REVIEW_FIXED: "info"}
 GRIDS = [(2, 2), (3, 2), (3, 3), (4, 3), (4, 4), (5, 4), (6, 5)]
@@ -31,6 +32,28 @@ GRIDS = [(2, 2), (3, 2), (3, 3), (4, 3), (4, 4), (5, 4), (6, 5)]
 
 class _Signals(QObject):
     done = pyqtSignal(str, int, QImage)
+
+
+def _class_chip(p: QPainter, img: QImage, tags: list[str], colors: dict):
+    """The image's class(es) on a dark pill with the class colour's dot — readable on any picture."""
+    from PyQt6.QtGui import QFontMetricsF
+    f = QFont()
+    f.setPixelSize(max(10, min(14, img.height() // 12)))
+    f.setBold(True)
+    p.setFont(f)
+    fm = QFontMetricsF(f)
+    text = fm.elidedText(", ".join(tags), Qt.TextElideMode.ElideRight, max(30.0, img.width() - 30.0))
+    h = fm.height() + 4
+    w = fm.horizontalAdvance(text) + h + 6
+    r = QRectF(5, img.height() - h - 5, w, h)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(20, 20, 24, 215))
+    p.drawRoundedRect(r, h / 2, h / 2)
+    p.setBrush(QColor(colors.get(tags[0], "#9e9e9e")))
+    d = h * 0.45
+    p.drawEllipse(QRectF(r.left() + h / 2 - d / 2, r.center().y() - d / 2, d, d))
+    p.setPen(QColor("white"))
+    p.drawText(r.adjusted(h, 0, -4, 0), int(Qt.AlignmentFlag.AlignVCenter), text)
 
 
 class TileTask(QRunnable):
@@ -93,8 +116,12 @@ class TileTask(QRunnable):
                     if self.tags:
                         top = min(q, key=lambda a: (a.y(), a.x()))
                         p.drawText(QPointF(top.x() + 2, max(9.0, top.y() - 2)), str(sh.get("label")))
+                tags = [str(t) for t in (getattr(ann, "tags", None) or [])]
+                if tags and not ann.shapes:                       # a classifier's image: its class, bottom-left
+                    _class_chip(p, img, tags, self.colors)
                 p.end()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.sig.done.emit(self.s.key, self.gen, img)
 
@@ -149,7 +176,7 @@ class GridView(QWidget):
                 p.setPen(muted)
                 p.drawText(area, Qt.AlignmentFlag.AlignCenter, "…")
             s = self.o.session.by_key.get(key)
-            mark = {REVIEW_OK: "✓ ", REVIEW_FLAG: "⚑ ", REVIEW_FIXED: "🔧 "}.get(st, "")
+            mark = {REVIEW_OK: "✓ ", REVIEW_FLAG: "⚑ ", REVIEW_FIXED: ""}.get(st, "")
             name = (mark + (s.display if s else key))
             tr = QRect(cell.x() + 6, cell.bottom() - 20, cell.width() - 12, 18)
             p.setPen(theme_color("text"))
@@ -209,7 +236,8 @@ class ReviewGridDialog(QDialog):
         self.app, self.session = app, app.session
         self.setWindowTitle(self.TITLE)
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(int(app.width() * 0.85), int(app.height() * 0.9))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
         st = app.settings
         self.grid = tuple(st.value("grid/size", [3, 3])) if st.value("grid/size") else (3, 3)
         self.grid = (int(self.grid[0]), int(self.grid[1]))
@@ -434,7 +462,7 @@ class ReviewGridDialog(QDialog):
         mins = max((time.monotonic() - self._started) / 60, 1e-6)
         rate = (self.stats["ok"] + self.stats["flag"]) / mins
         self.info.setText(
-            ("✅ Last page reviewed — " if done else "") +
+            ("Last page reviewed — " if done else "") +
             f"Page {self.page + 1:,} / {self.pages():,} · {n:,} file(s) · this session: {self.stats['ok']:,} OK, "
             f"{self.stats['flag']:,} flagged" + (f" · {rate:,.0f} files / min" if rate >= 1 else ""))
         self.prev_btn.setEnabled(self.page > 0)

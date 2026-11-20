@@ -20,6 +20,7 @@ benchmarks, batch workers and their Manager) goes through here, so that:
   * nothing pops up a console window on Windows;
   * kill_all() at exit stops whatever is still running.
 """
+
 import atexit
 import math
 import os
@@ -29,6 +30,7 @@ import sys
 import threading
 import time
 import weakref
+from AIO_QC.core.diag import ignored as _ignored
 
 WIN, LINUX = sys.platform == "win32", sys.platform.startswith("linux")
 CREATE_NO_WINDOW = 0x08000000
@@ -41,7 +43,8 @@ if LINUX:
     try:
         import ctypes
         _prctl = ctypes.CDLL("libc.so.6", use_errno=True).prctl
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         _prctl = None
 PR_SET_PDEATHSIG, SIGKILL = 1, 9
 
@@ -110,8 +113,8 @@ def _linux_prefix(background):
                 h = subprocess.run([sp, "--help"], capture_output=True, text=True, timeout=5)
                 if "pdeathsig" in (h.stdout + h.stderr):
                     _wrap["setpriv"] = [sp, "--pdeathsig", "KILL", "--"]
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         nc = shutil.which("nice")
         if nc:
             _wrap["nice"] = [nc, "-n", "10"]
@@ -158,8 +161,8 @@ def kill_all():
         try:
             if p.poll() is None:
                 p.kill()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
 
 atexit.register(kill_all)
@@ -196,7 +199,9 @@ def install_job_object():
         if not job:
             return False
         info = EXTENDED()
-        info.Basic.LimitFlags = 0x2000                     # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        info.Basic.LimitFlags = 0x2000 | 0x800             # KILL_ON_JOB_CLOSE | BREAKAWAY_OK: only a child
+        #                                                    started with CREATE_BREAKAWAY_FROM_JOB (a
+        #                                                    training run) may outlive the app
         if not k32.SetInformationJobObject(W.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info)):
             k32.CloseHandle(W.HANDLE(job))
             return False
@@ -205,7 +210,8 @@ def install_job_object():
             return False
         _job = job      # never closed: the handle closes when this process ends -> all descendants killed
         return True
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return False
 
 
@@ -222,16 +228,16 @@ def worker_init(threads=1, background=True):
                 k32.SetPriorityClass(k32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS)
             else:
                 os.nice(10)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     threads = max(1, int(threads))
     os.environ["OMP_NUM_THREADS"] = str(threads)
     os.environ["FX_DECODE_THREADS"] = str(threads)
     try:
         import cv2
         cv2.setNumThreads(threads)        # otherwise every worker's OpenCV uses ALL cores
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
 
 
 def terminate_pool(executor, grace=3.0):
@@ -242,27 +248,27 @@ def terminate_pool(executor, grace=3.0):
     procs = list((getattr(executor, "_processes", None) or {}).values())   # before shutdown() drops it
     try:
         executor.shutdown(wait=False, cancel_futures=True)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     deadline = time.monotonic() + grace
     for p in procs:
         try:
             p.join(max(0.0, deadline - time.monotonic()))
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     for p in procs:
         try:
             if p.is_alive():
                 p.terminate()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     for p in procs:
         try:
             p.join(2.0)
             if p.is_alive():
                 p.kill()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
 
 def start_manager(ctx, threads=1):
@@ -277,7 +283,8 @@ def start_manager(ctx, threads=1):
 def cpu_count():
     try:
         return len(os.sched_getaffinity(0))
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return os.cpu_count() or 2
 
 
@@ -286,8 +293,8 @@ def available_memory():
     try:
         import psutil
         return int(psutil.virtual_memory().available)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     try:
         if LINUX:
             with open("/proc/meminfo") as f:
@@ -306,8 +313,8 @@ def available_memory():
             ms.dwLength = ctypes.sizeof(MS)
             ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
             return int(ms.ullAvailPhys)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     return 4 * 2 ** 30
 
 
@@ -316,11 +323,12 @@ def cpu_busy_fraction():
     try:
         import psutil
         return psutil.cpu_percent(interval=0.2) / 100.0
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     try:
         return min(1.0, os.getloadavg()[0] / cpu_count())
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 

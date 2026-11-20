@@ -5,7 +5,7 @@ Save flagged files: copy them to a folder, or write their names to a text file (
 
     items = [FlaggedItem(display, [ann_path, image_path, …], status, note, ts), …]
     copy_items(items, root, out, keep_structure=True)  -> stats   (never overwrites; LabelMe imagePath kept valid)
-    write_list(items, root, path, mode="relative")      -> lines written
+    write_list(items, root, path, mode="relative")      -> lines written (a .csv path: a table with notes)
 
 Structure kept: paths relative to the dataset root are reproduced (YOLO images/ + labels/ stay paired, splits stay
 splits). Flat: every file of an item gets the same unique stem (a.jpg + a.txt -> a_1.jpg + a_1.txt on a clash).
@@ -134,7 +134,32 @@ def list_line(item: FlaggedItem, root: Path, mode: str) -> str:
     return r.as_posix() if r.parts[0] != OUTSIDE else os.path.abspath(p)
 
 
+LIST_FORMATS = {"csv": "CSV (file, status, note, flagged at)", "txt": "TXT (one file per line)"}
+
+
+def write_csv(items: list[FlaggedItem], root, path, mode: str = "relative") -> int:
+    """The flagged files as a table: file (written like the TXT list), image, status, note, flagged at."""
+    root = Path(root)
+    rows = 0
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8-sig") as f:          # BOM: Excel reads UTF-8 notes right
+        w = csv.writer(f)
+        w.writerow(["file", "image", "status", "note", "flagged_at"])
+        for it in items:
+            if not it.files:
+                continue
+            img = ""
+            if len(it.files) > 1:
+                img = list_line(FlaggedItem(it.display, [it.files[1]]), root, mode)
+            w.writerow([list_line(it, root, mode), img, it.status, it.note, it.ts])
+            rows += 1
+    os.replace(tmp, path)
+    return rows
+
+
 def write_list(items: list[FlaggedItem], root, path, mode: str = "relative", with_notes: bool = False) -> int:
+    if str(path).lower().endswith(".csv"):
+        return write_csv(items, root, path, mode)
     root = Path(root)
     lines = []
     for it in items:

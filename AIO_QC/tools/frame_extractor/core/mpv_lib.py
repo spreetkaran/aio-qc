@@ -31,6 +31,7 @@ import sys
 import threading
 
 from loguru import logger
+from AIO_QC.core.diag import ignored as _ignored
 
 # ------------------------------------------------------------------ constants (client.h / render.h)
 FMT_NONE, FMT_STRING, FMT_FLAG, FMT_INT64, FMT_DOUBLE = 0, 1, 3, 4, 5
@@ -83,7 +84,8 @@ def user_lib_dir():
     try:
         from AIO_QC.core.appdirs import data_home
         return str(data_home() / "libmpv")
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return ""
 
 
@@ -308,7 +310,8 @@ class MpvPlayer:
     def err(self, code):
         try:
             return self.lib.mpv_error_string(code).decode()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return str(code)
 
     # -------------------------------------------------------------- events
@@ -435,7 +438,8 @@ class MpvPlayer:
         def gpa(_ctx, name):
             try:
                 return int(get_proc_address(name) or 0)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 return 0
         self._gpa = GET_PROC(gpa)
         init = _GLInit(self._gpa, None, None)
@@ -449,14 +453,19 @@ class MpvPlayer:
             raise RuntimeError(f"mpv_render_context_create: {self.err(r)}")
         self.render_ctx = ctx
 
+        import weakref
+        me = weakref.ref(self)                       # the kept-alive thunk must not keep the player alive
+
         def upd(_):
-            cb = self.on_update
+            p = me()
+            cb = p.on_update if p is not None else None
             if cb is not None:
                 try:
                     cb()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
         self._ucb = UPDATE_CB(upd)
+        _KEEP_ALIVE.extend((self._ucb, self._gpa))   # mpv threads may call them until the very end of the process
         self.lib.mpv_render_context_set_update_callback(self.render_ctx, self._ucb, None)
         return True
 
@@ -475,9 +484,24 @@ class MpvPlayer:
         if self.render_ctx is not None:
             self.lib.mpv_render_context_report_swap(self.render_ctx)
 
+    def _drop_update_callback(self):
+        """mpv calls the update callback from its own threads, through a C pointer to a ctypes thunk: tell mpv to
+        stop first, and keep the thunk alive for the rest of the process (a freed thunk called by a late mpv thread
+        was an access violation on Windows)."""
+        if self.render_ctx is not None:
+            try:
+                self.lib.mpv_render_context_set_update_callback(self.render_ctx, UPDATE_CB(0), None)
+            except Exception as _exc:
+                _ignored(_exc)
+        for cb in (getattr(self, "_ucb", None), getattr(self, "_gpa", None)):
+            if cb is not None:
+                _KEEP_ALIVE.append(cb)
+
     def free_render(self):
         """Must run with the same GL context current; before terminate()."""
         if self.render_ctx is not None:
+            self.on_update = None
+            self._drop_update_callback()
             self.lib.mpv_render_context_free(self.render_ctx)
             self.render_ctx = None
 
@@ -488,12 +512,23 @@ class MpvPlayer:
         self.on_update = None
         self._quit = True
         self.lib.mpv_wakeup(self.h)
-        self._ev.join(2.0)
+        self._ev.join(5.0)
+        if self._ev.is_alive():
+            # destroying the handle under a thread still inside mpv_wait_event / a property read is an access
+            # violation: leave this one handle to the OS (the process ends soon, or the thread ends on its own)
+            logger.warning("mpv event thread did not stop - leaving its handle alive")
+            _KEEP_ALIVE.append((self.h, self.render_ctx))
+            self.h = None
+            return
         if self.render_ctx is not None:
             logger.warning("mpv render context still alive at terminate (GL context gone?) - leaking it")
+            self._drop_update_callback()     # its update callback must stay callable (or be cleared)
             self.render_ctx = None           # freeing without its GL context would crash
         self.lib.mpv_terminate_destroy(self.h)
         self.h = None
+
+
+_KEEP_ALIVE: list = []      # ctypes thunks mpv may still hold (never freed while the process runs)
 
 
 def view_params(zoom, cx, cy, vw, vh):

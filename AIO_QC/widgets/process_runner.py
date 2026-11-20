@@ -59,6 +59,7 @@ class StepRunner(QObject):
         self._cancelled = True
         if self.proc is not None and self.proc.state() != QProcess.ProcessState.NotRunning:
             self.proc.kill()
+            self.proc.waitForFinished(3000)         # never leave a running process to be destroyed with its owner
 
     def _next(self):
         self.i += 1

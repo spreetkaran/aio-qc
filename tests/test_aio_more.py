@@ -27,7 +27,8 @@ def test_handoff_round_trip(shell, qtbot, tmp_path):  # noqa: F811
     assert ex._keys(), "no flagged files offered"
     ex._export()
     qtbot.waitUntil(lambda: ex.worker is None, timeout=30000)
-    assert "Exported" in ex.status.text(), ex.status.text()
+    assert "Exported" in ex.job.text.text(), ex.job.text.text()
+    assert not ex.job.undo_btn.isHidden() and not ex.job.open_btn.isHidden()     # the job bar's result line
     batch = tmp_path / "out" / "b1"
     assert (batch / "batch.json").is_file()
     # the annotator edits one returned file

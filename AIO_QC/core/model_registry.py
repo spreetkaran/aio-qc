@@ -101,9 +101,10 @@ def find(path: str, root=None) -> dict | None:
     return next((m for m in all_models(root) if _norm(m.get("path", "")) == n), None)
 
 
-def register(path: str, root=None, name: str | None = None, **kw) -> dict:
+def register(path: str, root=None, name: str | None = None, labels=None, **kw) -> dict:
     """Add weights: to the dataset's models.json when a dataset is given, and (always) to the app-wide list.
-    Returns the entry (an existing one when the file is known)."""
+    Returns the entry (an existing one when the file is known). labels: the dataset's label names — the model's
+    classes of the same names are mapped to them at once (else that waits until the model is loaded)."""
     path = os.path.abspath(path)
     n = _norm(path)
     apps = app_models()
@@ -117,8 +118,13 @@ def register(path: str, root=None, name: str | None = None, **kw) -> dict:
         hit = next((m for m in ds if _norm(m.get("path", "")) == n), None)
         if hit is None:
             hit = {k: v for k, v in entry.items() if k != "source"}
-            hit["class_map"] = class_map_for_dataset(entry, None)
+            hit["class_map"] = class_map_for_dataset(entry, labels)
             ds.append(hit)
+            save_dataset_models(root, ds)
+        elif labels is not None and not any((hit.get("class_map") or {}).values()):
+            if not hit.get("names") and entry.get("names"):
+                hit["names"] = entry["names"]
+            hit["class_map"] = class_map_for_dataset(dict(hit, class_map=None), labels)
             save_dataset_models(root, ds)
         return dict(hit, source="dataset")
     return dict(entry, source="app")
@@ -248,3 +254,14 @@ def shared_lookup(root, path: str, imgsz: int, sahi=None):
         return None
     from AIO_QC.core.testing.runner import PredCache
     return PredCache(str(p)), best
+
+
+def origin_for(model_id: str = "", root=None, tool: str = "Model Assist", path: str = ""):
+    """A provenance origin for shapes a registered model made (its weights file name and SHA-256; no folders)."""
+    from . import provenance
+    e = None
+    if model_id:
+        e = next((m for m in all_models(root) if m.get("id") == model_id), None)
+    p = path or (e or {}).get("path") or ""
+    return provenance.make_origin("model", tool, model=Path(p).name if p else str(model_id or ""),
+                                  model_path=p if p and Path(p).is_file() else None)

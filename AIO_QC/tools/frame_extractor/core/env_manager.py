@@ -14,12 +14,12 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import uuid
 from pathlib import Path
 from AIO_QC.core import procs
+from AIO_QC.core.diag import ignored as _ignored
 
 
 
@@ -50,10 +50,10 @@ def python_in_env(path: str | Path) -> Path | None:
 
 
 def _run(cmd, timeout=20) -> str:
-    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
         return procs.run(cmd, text=True, timeout=timeout).stdout
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return ""
 
 

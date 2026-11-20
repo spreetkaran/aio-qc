@@ -36,6 +36,7 @@ from AIO_QC.tools.frame_extractor.utils import newIcon
 
 from AIO_QC.tools.frame_extractor.core.common import VIDEO_EXTS, VIDEO_FILTER
 from AIO_QC.utils.fx_settings import fx_settings
+from AIO_QC.core.diag import ignored as _ignored
 C_VIDEO, C_START, C_END, C_ROI, C_STATUS, C_PROGRESS, C_FPS, C_ETA, C_SAVED = range(9)
 RED, GREEN = QColor(214, 69, 69), QColor(31, 157, 107)
 
@@ -429,8 +430,8 @@ class BatchQueueDialog(QDialog):
         self.dedup_win_sb.setEnabled(on and key != "exact")
 
     def _fit_to_screen(self):
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 960, 700, frac=0.9)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")      # by the screen it opens on
         self.setMinimumWidth(min(640, self.width()))
 
     # ------------------------------------------------------------ settings
@@ -544,6 +545,7 @@ class BatchQueueDialog(QDialog):
         try:
             s = ExtractSettings.load_preset(path)
         except Exception as e:
+            _ignored(e)
             QMessageBox.warning(self, "Preset", f"Could not load preset:\n{e}")
             return
         self.apply_settings(s, output=True)
@@ -588,7 +590,8 @@ class BatchQueueDialog(QDialog):
                 con = sqlite3.connect(path, timeout=5)
                 n = con.execute("SELECT COUNT(*) FROM hashes").fetchone()[0]
                 con.close()
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 n = "?"
         self.db_label.setText(f"{n} frame hash(es) in {os.path.basename(path)} (output root)")
 
@@ -788,7 +791,8 @@ class BatchQueueDialog(QDialog):
                 c = _cv.VideoCapture(job.video_path)
                 sizes.append((int(c.get(_cv.CAP_PROP_FRAME_WIDTH)) or 1920, int(c.get(_cv.CAP_PROP_FRAME_HEIGHT)) or 1080))
                 c.release()
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 sizes.append((1920, 1080))
         auto_workers, threads = procs.plan_batch_workers(sizes, share)
         workers = self.workers_sb.value() or auto_workers
@@ -841,8 +845,8 @@ class BatchQueueDialog(QDialog):
         try:
             while not self.queue.empty():
                 touched.add(self._handle(self.queue.get_nowait()))
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         for tid, fut in self.futures.items():
             st = self.tstate[tid]
             if fut.done() and not st["finished"]:
@@ -981,8 +985,8 @@ class BatchQueueDialog(QDialog):
         if self.manager:
             try:
                 self.manager.shutdown()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             self.manager = None
 
     def cancel(self):

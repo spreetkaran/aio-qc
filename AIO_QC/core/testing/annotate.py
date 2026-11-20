@@ -10,6 +10,7 @@ Drawing conventions (same in the app, the reports and exported videos):
   error             solid red with the error type ("wrong class", "duplicate", ...) - only in error views
   missed object     dashed red, "missed"
 """
+
 import os
 import subprocess
 import threading
@@ -20,6 +21,7 @@ import numpy as np
 
 from AIO_QC.tools.frame_extractor.core.common import model_hex
 from AIO_QC.core.testing.textdraw import put_text, text_size
+from AIO_QC.core.diag import ignored as _ignored
 
 CRITICAL = (59, 59, 208)          # BGR of #d03b3b
 GT_INK = (245, 245, 245)
@@ -118,6 +120,70 @@ def draw(img, gt=None, preds=None, names=None, color=(214, 120, 42), conf=0.0, p
     return out
 
 
+def draw_cls(img, top, truth=None, color=(214, 120, 42), conf=0.0, tw=None, k=3, compact=False):
+    """A classifier's answer on an image: a caption band under it (the picture stays uncovered) with the best class
+    and its confidence in the model colour (red when it is wrong, grey when below conf = unsure), the image's true
+    class(es) when known, and the runner-ups. top: [(name, conf)] best first. tw: width the image is shown at
+    (text sized to stay readable there); small images are enlarged (pixel-sharp) so the band fits. compact: the
+    answer line only (gallery thumbnails, whose caption names the true class)."""
+    img = img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    h, w = img.shape[:2]
+    if w < 320:                                                     # tiny images (digits, thumbnails): enlarge
+        f = int(np.ceil(320 / max(1, w)))
+        img = cv2.resize(img, (w * f, h * f), interpolation=cv2.INTER_NEAREST)
+        h, w = img.shape[:2]
+    px = max(12.0, 15.0 * (w / tw if tw else w / 640))
+    pad = int(px * 0.6)
+    lines = []
+    top = list(top or [])
+    if top:
+        name, c = top[0]
+        if c < conf:
+            ink, mark = (150, 150, 150), "  (unsure)"
+        elif truth:
+            ink, mark = (color if name in truth else CRITICAL), ("  · right" if name in truth else "  · wrong")
+        else:
+            ink, mark = color, ""
+        lines.append((f"{name}  {c:.0%}{mark}", ink, "SemiBold", 1.0))
+    else:
+        lines.append(("no answer", (150, 150, 150), "SemiBold", 1.0))
+    if truth and not compact:
+        lines.append(("true: " + ", ".join(truth), (90, 90, 90), "Medium", 0.85))
+    if len(top) > 1 and not compact:
+        lines.append(("then " + " · ".join(f"{n} {c:.0%}" for n, c in top[1:k]), (110, 110, 110), "Regular", 0.8))
+    sizes = [text_size(t, px * f, wt) for t, _c, wt, f in lines]
+    band = pad + sum(th + int(px * 0.35) for _tw, th in sizes) + pad // 2
+    out = np.full((h + band, w, 3), 250, np.uint8)
+    out[:h] = img
+    if top:                                                         # a model-coloured rule between image and band
+        cv2.rectangle(out, (0, h), (w - 1, h + max(2, int(px / 6))), lines[0][1], -1)
+    y = h + pad
+    for (t, c, wt, f), (_tw, th) in zip(lines, sizes):
+        put_text(out, t, pad, y, px * f, c, wt)
+        y += th + int(px * 0.35)
+    return out
+
+
+def draw_answers(img, rows, tw=None):
+    """Several classifiers' answers on one frame: one line per model under the image, "■ model: class 97%" in the
+    model's colour. rows: [(model label, class name or None, conf, BGR colour)]."""
+    img = img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    h, w = img.shape[:2]
+    px = max(12.0, 15.0 * (w / tw if tw else w / 640))
+    pad = int(px * 0.6)
+    texts = [(f"{lab}: {name} {c:.0%}" if name else f"{lab}: no answer", col) for lab, name, c, col in rows]
+    lh = max([text_size(t, px)[1] for t, _ in texts] + [int(px)]) + int(px * 0.35)
+    out = np.full((h + pad + lh * len(texts), w, 3), 250, np.uint8)
+    out[:h] = img
+    y = h + pad // 2
+    for t, col in texts:
+        sq = int(px * 0.7)
+        cv2.rectangle(out, (pad, y + (lh - sq) // 2 - 2), (pad + sq, y + (lh - sq) // 2 - 2 + sq), col, -1)
+        put_text(out, t, pad + sq + int(px * 0.4), y, px, (40, 40, 40))
+        y += lh
+    return out
+
+
 def thumb(img, max_w=360, quality=80):
     """JPEG bytes of a downscaled frame."""
     h, w = img.shape[:2]
@@ -169,7 +235,8 @@ def available_encoders(ffmpeg):
     try:
         from AIO_QC.core import procs
         out = procs.run([ffmpeg, "-hide_banner", "-encoders"], timeout=15, text=True).stdout
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return []
     names = {l.split()[1] for l in out.splitlines() if len(l.split()) > 1 and l.strip()[:1] == "V"}
     return [e for e, _ in ENCODERS if e in names]
@@ -196,7 +263,8 @@ def pick_encoder(ffmpeg, w, h, prefer="auto"):
             if r.returncode == 0:
                 _ENC_CACHE[key] = name
                 return name
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             continue
     _ENC_CACHE[key] = None
     return None
@@ -395,8 +463,8 @@ def export_annotated(video, out_path, specs, cache, ffmpeg, start=None, end=None
         if not ok:
             try:
                 proc.kill()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             try:
                 os.remove(part)
             except OSError:
@@ -414,7 +482,8 @@ def keyframe_before(video, t):
             from AIO_QC.tools.frame_extractor.core.mp4index import mp4_index
             idx = mp4_index(video)
             _KF[video] = sorted(idx[0][k] for k in idx[1]) if idx else None
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             _KF[video] = None
     kf = _KF[video]
     if not kf:
@@ -486,8 +555,8 @@ def export_clip(video, out_path, start, end, ffmpeg, mode="fast", encoder="auto"
         if not ok:
             try:
                 proc.kill()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             try:
                 os.remove(part)
             except OSError:

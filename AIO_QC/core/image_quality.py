@@ -17,6 +17,7 @@ from __future__ import annotations
 import struct
 import zlib
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 ERROR, WARN, INFO = "error", "warn", "info"
 DEFAULT_THRESHOLDS = {"blur": 40.0, "dark_mean": 45.0, "bright_mean": 215.0, "low_std": 18.0,
@@ -129,6 +130,7 @@ def integrity(path, decode: bool = False) -> list[tuple]:
             with Image.open(p) as im:
                 im.verify()
         except Exception as exc:
+            _ignored(exc)
             out.append(("corrupt", ERROR, f"Pillow cannot verify the image: {exc}"))
     if decode and not any(s == ERROR for _c, s, _m in out):
         try:
@@ -137,6 +139,7 @@ def integrity(path, decode: bool = False) -> list[tuple]:
             with Image.open(BytesIO(data)) as im:
                 im.load()
         except Exception as exc:
+            _ignored(exc)
             out.append(("decode", ERROR, f"decoding failed: {exc}"))
     return out
 
@@ -157,10 +160,11 @@ def exif_info(path) -> tuple[int, int, int] | None:
             o = 1
             try:
                 o = int(im.getexif().get(0x0112, 1) or 1)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             return im.width, im.height, o
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
@@ -200,7 +204,8 @@ def metrics(path) -> dict | None:
             im = ImageOps.exif_transpose(im).convert("L")
             im.thumbnail((512, 512))
             a = np.asarray(im, dtype=np.float32)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
     if a.size < 16:
         return None

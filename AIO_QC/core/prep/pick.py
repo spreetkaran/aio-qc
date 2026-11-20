@@ -25,6 +25,7 @@ import os
 import shutil
 
 from . import common as C
+from AIO_QC.core.diag import ignored as _ignored
 
 GRID, HIST_BINS = 4, 8
 
@@ -40,7 +41,8 @@ def features(path, size: int = 64):
             im = im.resize((size, size), Image.BILINEAR)
             rgb = np.asarray(im, dtype=np.float32) / 255.0
             hsv = np.asarray(im.convert("HSV"), dtype=np.float32) / 255.0
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
     grey = rgb @ np.array([0.299, 0.587, 0.114], np.float32)
     # 1. layout: 16×16 grey, zero-mean / unit-norm (robust to overall brightness)
@@ -153,16 +155,74 @@ def pool(src, skip_labelled: bool = True, cancel=None) -> tuple[list[str], int]:
     return out, skipped
 
 
-def plan(src, out, picked_paths, scores, copy=True):
-    """picked_paths in rank order; scores: [(novelty, uncertainty)] per pick."""
+def plan(src, out, picked_paths, scores, copy=True, folders=None):
+    """picked_paths in rank order; scores: [(novelty, uncertainty)] per pick. folders: a sub-folder per pick (a
+    classifier's best guess: the picks arrive sorted into class folders, to be confirmed)."""
     from .tasks import Plan
     src, out = os.path.abspath(src), os.path.abspath(out)
     if C.inside(out, src):
         raise ValueError("Choose an output folder outside the pool folder.")
     P = Plan("pick", opts={"src": src, "out": out, "copy": copy, "scores": scores})
-    for p in picked_paths:
-        P.actions.append(("pick", p, os.path.join(out, os.path.relpath(p, src)), {}))
+    dsts = []
+    for i, p in enumerate(picked_paths):
+        sub = folders[i] if folders and i < len(folders) and folders[i] else None
+        dsts.append(os.path.join(out, _safe_dir(sub), os.path.basename(p)) if sub else
+                    os.path.join(out, os.path.relpath(p, src)))
+    dsts, renamed = _unique_names(src, out, picked_paths, dsts)
+    for p, dst in zip(picked_paths, dsts):
+        P.actions.append(("pick", p, dst, {}))
+    if renamed:
+        P.details["Renamed (the name was taken in that folder)"] = renamed[:1000]
     return P
+
+
+def _unique_names(src, out, paths, dsts):
+    """Two picks with one name in one folder (class folders gather images from everywhere), or a name an earlier
+    pick already left there: the naming engine (core.naming) gives them the folder prefix — only those."""
+    from AIO_QC.core import naming as N
+    items, existing = [], {}
+    for i, (p, d) in enumerate(zip(paths, dsts)):
+        folder = os.path.relpath(os.path.dirname(d), out).replace("\\", "/").lower()
+        items.append(N.Item(i, os.path.relpath(p, src).replace("\\", "/"), split=folder, path=p,
+                            extra_exts=(".json",)))
+        if folder not in existing:
+            try:
+                existing[folder] = {N.name_key(os.path.splitext(f)[0]) for f in os.listdir(os.path.dirname(d))}
+            except OSError:
+                existing[folder] = set()
+    seen = {}
+    for it in items:
+        seen[(it.split, it.nk)] = seen.get((it.split, it.nk), 0) + 1
+    touch = {it.key for it in items if seen[(it.split, it.nk)] > 1 or it.nk in existing.get(it.split, ())}
+    if not touch:
+        return dsts, []
+    NP = N.plan(items, N.Scheme(preset="folder"), flat=True, existing=existing, root_len=len(out) + 40, touch=touch)
+    if not NP.ok:
+        NP = N.resolve(NP, existing=existing, root_len=len(out) + 40)
+    out_d, renamed = list(dsts), []
+    for it in NP.items:
+        stem = NP.new[it.key]
+        if stem != it.stem:
+            d = os.path.join(os.path.dirname(dsts[it.key]), stem + it.suffix)
+            renamed.append(f"{it.rel}  →  {os.path.relpath(d, out)}")
+            out_d[it.key] = d
+    return out_d, renamed
+
+
+def _safe_dir(name: str) -> str:
+    return "".join("_" if c in '<>:"/\\|?*' else c for c in str(name)).strip(" .") or "_"
+
+
+def cls_uncertainty(rows) -> tuple[float, int | None]:
+    """A classifier's answer for one image (whole-frame rows: conf, class id) -> (uncertainty 0 … 1 = 1 - margin
+    between the best two classes, best class id)."""
+    import numpy as np
+    a = np.asarray(rows, np.float32).reshape(-1, 6) if rows is not None and len(rows) else None
+    if a is None:
+        return 1.0, None
+    c = np.sort(a[:, 4])[::-1]
+    best = int(a[int(np.argmax(a[:, 4])), 5])
+    return float(1.0 - (c[0] - (c[1] if len(c) > 1 else 0.0))), best
 
 
 def run(P, progress=None, cancel=None) -> dict:

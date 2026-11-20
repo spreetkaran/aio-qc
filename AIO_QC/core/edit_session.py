@@ -42,6 +42,7 @@ from .dataset import DatasetType
 from .editors import LABELIMG, LABELME
 from .io import atomic_write_text, load_json
 from .labelme_image import KEY as IMG_KEY, encode_b64, image_file_of, sniff_ext
+from AIO_QC.core.diag import ignored as _ignored
 
 SESSIONS = "edit_sessions"
 STATUS = ("waiting", "fixed", "unchanged", "rejected", "conflict", "error")
@@ -150,6 +151,7 @@ class EditSession:
         self.backup_op: int | None = None     # operation id in backups.sqlite
         self.task = task                      # YOLO: detect | segment | obb | mixed
         self.flags_matter = False             # LabelMe-flag classification: flag changes are edits
+        self.class_folders = False            # class folders: the editor ticks the class (a flag); the image moves
         self.only_labels: list[str] | None = None   # show only these labels in the editor (others kept as they are)
         self._pending_hidden: dict[str, list] = {}
         self.entries: list[Entry] = []
@@ -172,6 +174,7 @@ class EditSession:
                 d["source_title"], d.get("task", ""))
         s.created, s.active = d.get("created", ""), d.get("active", True)
         s.flags_matter = d.get("flags_matter", False)
+        s.class_folders = d.get("class_folders", False)
         s.source_version = d.get("source_version", "")
         s.backup_op = d.get("backup_op")
         s.only_labels = d.get("only_labels")
@@ -245,7 +248,8 @@ class EditSession:
         is_yolo = adapter.type in (DatasetType.YOLO, DatasetType.YOLO_SPLIT)
         s = cls(root, work, editor, "yolo" if is_yolo else "labelme", class_names, image_data, source_title)
         s.source_version = source_version
-        s.flags_matter = getattr(adapter.type, "value", "") == "cls_labelme"
+        s.flags_matter = getattr(adapter.type, "value", "") in ("cls_labelme", "cls_folders")
+        s.class_folders = getattr(adapter.type, "value", "") == "cls_folders"
         s.only_labels = sorted(set(only_labels)) if only_labels is not None else None
         loaded = []
         for sample in samples:
@@ -275,6 +279,7 @@ class EditSession:
             try:
                 s._prepare_entry(e, sample, ann, adapter, stem, source_version)
             except Exception as exc:                           # one bad file never breaks the session
+                _ignored(exc)
                 e.status, e.message = "error", str(exc)
         if not is_yolo or editor == LABELME:
             names = class_names or sorted(set(label_hints or []))      # hints: suggestions, not validated
@@ -295,6 +300,19 @@ class EditSession:
             link_or_copy(img, work / e.image)
         e.orig_existed = bool(sample.ann_path and Path(sample.ann_path).is_file())
         e.orig_sig = _sig(Path(sample.ann_path)) if sample.ann_path else None
+        if self.class_folders:                 # no annotation file: a LabelMe copy whose flags are the classes
+            if e.image is None:
+                raise ValueError("image file not found")
+            size = adapter.image_size(sample, ann) if hasattr(adapter, "image_size") else None
+            W, H = size or (0, 0)
+            tags = list(ann.tags or [])
+            names = list(dict.fromkeys(list(self.class_names) + tags))
+            data = {"version": source_version or "5.5.0", "flags": {c: c in tags for c in names}, "shapes": [],
+                    "imagePath": e.image, "imageData": None, "imageHeight": H, "imageWidth": W}
+            (work / e.mirror).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            e.base = _digest_labelme([], data["flags"])
+            e.message = "tick the image's class (a flag) — the image moves to that class folder"
+            return
         if self.dataset_type == "labelme":
             data = {k: v for k, v in ann.raw.items() if k != IMG_KEY}     # never copy the embedded image
             embedded = ann.raw.get(IMG_KEY)
@@ -571,6 +589,16 @@ class EditSession:
     def after_write(self, e: Entry, sample, summary: str):
         if e.key in self._pending_hidden:
             e.hidden, e.hidden_stale = self._pending_hidden.pop(e.key), False
+        if self.class_folders:                 # the image moved; the editor's copy is the new base
+            e.status, e.writes = "fixed", e.writes + 1
+            e.message = summary
+            self.mark_seen(e)
+            try:
+                e.base = _digest_labelme([], load_json(self.work / e.mirror).get("flags") or {})
+            except Exception as _exc:
+                _ignored(_exc)
+            self.save()
+            return
         e.orig_sig = _sig(Path(sample.ann_path))
         e.status, e.writes = "fixed", e.writes + 1
         e.message = summary + (f" · {e.message}" if e.message and e.message not in summary else "")
@@ -581,8 +609,8 @@ class EditSession:
                 hid = set(e.hidden or []) if self.only_labels is not None else set()
                 shapes = [x for i, x in enumerate(d.get("shapes") or []) if i not in hid]
                 e.base = _digest_labelme(shapes, (d.get("flags") or {}) if self.flags_matter else None)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         else:
             e.base = _digest_yolo(self._yolo_new_shapes(e))
         self.save()

@@ -82,9 +82,11 @@ def save_image(img: QImage, path: Path, fmt: str = "png") -> bool:
     """Thread-safe (Qt releases the GIL while encoding). Screenshots are opaque: 3 channels, never alpha."""
     path.parent.mkdir(parents=True, exist_ok=True)
     img = img.convertToFormat(QImage.Format.Format_RGB888)
-    if fmt == "jpg":
-        return img.save(str(path), "JPEG", 92)
-    return img.save(str(path), "PNG", PNG_QUALITY)
+    ok = img.save(str(path), "JPEG", 92) if fmt == "jpg" else img.save(str(path), "PNG", PNG_QUALITY)
+    if ok:                                       # what the picture is: a screenshot of the annotation view
+        from AIO_QC.core import provenance as PV
+        PV.embed_file(path, PV.image_record(PV.make_origin("manual", "Screenshot", detail="the annotation view")))
+    return ok
 
 
 def unique_path(path: Path) -> Path:
@@ -211,6 +213,10 @@ class Screenshots:
         if getattr(getattr(app, "roi", None), "active", False):
             return
         m = QMenu(app)
+        if app.canvas.editable:                       # draw here: a new box / polygon
+            m.addAction(app.a.new_box)
+            m.addAction(app.a.new_polygon)
+            m.addSeparator()
         for act in self.menu_actions():
             if act is None:
                 m.addSeparator()

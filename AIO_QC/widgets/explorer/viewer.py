@@ -179,7 +179,8 @@ class ExplorerViewer(QDialog):
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         self.setWindowTitle("Prediction Explorer · image")
-        self.resize(1400, 860)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
         self.i = None
         self.objs = []
         self.size = (0, 0)

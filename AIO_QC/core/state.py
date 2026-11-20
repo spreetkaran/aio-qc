@@ -243,3 +243,31 @@ def load_ocr_config(root: Path) -> dict:
 
 def save_ocr_config(root: Path, cfg: dict):
     atomic_write_text(state_dir(root) / "ocr.json", json.dumps(cfg, indent=1, ensure_ascii=False))
+
+
+def load_overlap_ignores(root: Path) -> set[tuple[str, str]]:
+    """Class pairs whose overlaps are expected (Duplicate & Overlapping Shapes ▸ “Expected for these classes”), unordered."""
+    pairs = _read(state_dir(root) / "overlap_ignore.json").get("pairs", [])
+    return {tuple(sorted((str(a), str(b)))) for a, b in pairs}
+
+
+def save_overlap_ignores(root: Path, pairs: set[tuple[str, str]]):
+    p = state_dir(root) / "overlap_ignore.json"
+    if not pairs:
+        if p.exists():
+            p.unlink()
+        return
+    atomic_write_text(p, json.dumps({"version": 1, "pairs": sorted([list(x) for x in pairs])}, indent=2,
+                                    ensure_ascii=False))
+
+
+def load_cls_settings(root: Path) -> dict:
+    """Classification datasets: {"mode": "single" | "multi", "order": [class names in the order you set],
+    "min_images": n} — asked / set once per dataset."""
+    return _read(state_dir(root) / "classification.json")
+
+
+def save_cls_settings(root: Path, d: dict):
+    p = state_dir(root) / "classification.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(p, json.dumps(d, indent=2, ensure_ascii=False))

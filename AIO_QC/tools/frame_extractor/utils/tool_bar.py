@@ -13,6 +13,15 @@ class ToolBar(QToolBar):
         layout.setContentsMargins(*m)
         self.setContentsMargins(*m)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        ext = self.findChild(QToolButton, "qt_toolbar_ext_button")
+        if ext is not None:                       # buttons that don't fit a narrow window: a visible "more" chevron
+            from AIO_QC.utils.qt_utils import newIcon
+            from PyQt6.QtCore import QSize
+            ext.setIcon(newIcon("chevron-right"))
+            ext.setIconSize(QSize(12, 12))
+            ext.setStyleSheet("QToolButton{padding:0; margin:0; border:none;}"
+                              "QToolButton::menu-indicator{image:none; width:0;}")
+            ext.setToolTip("More tools")
 
     def addAction(self, action):  # type: ignore[override]
         if isinstance(action, QWidgetAction):

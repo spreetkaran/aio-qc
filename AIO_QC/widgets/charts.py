@@ -168,7 +168,7 @@ class ScatterBrush(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(360, 300)
+        self.setMinimumSize(300, 200)             # small enough for a laptop; it grows with the window
         self.w = self.h = np.zeros(0)
         self.unit = "px"
         self.dom = (0.0, 1.0, 0.0, 1.0)            # log10 domain: x0, x1, y0, y1
@@ -433,7 +433,7 @@ class CoverageMap(QWidget):
         k = self._key_at(e.position().toPoint())
         self.setCursor(Qt.CursorShape.PointingHandCursor if k else Qt.CursorShape.ArrowCursor)
         if k:
-            st = {None: "unreviewed", "ok": "✓ OK", "flag": "⚑ flagged", "fixed": "🔧 fixed"}.get(self.status_of(k), "")
+            st = {None: "unreviewed", "ok": "✓ OK", "flag": "⚑ flagged", "fixed": "fixed"}.get(self.status_of(k), "")
             QToolTip.showText(e.globalPosition().toPoint(), f"{self.name_of(k)}\n{st}\nclick to open", self)
 
     def mouseReleaseEvent(self, e):

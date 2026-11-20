@@ -18,6 +18,7 @@ available, scaled to 384 px in ffmpeg), embedded in batches, stored in ~/.frame_
 small thumbnail per sample. Interrupted builds resume where they stopped. Results are spread in time
 (a moment is not returned 20 times).
 """
+
 import hashlib
 import json
 import os
@@ -26,6 +27,7 @@ import time
 
 import cv2
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 SAMPLE_W = 384
 THUMB_W = 192
@@ -158,7 +160,8 @@ class VideoIndex:
             self.thumbs = [blob[offs[i]:offs[i + 1]] for i in range(len(offs) - 1)]
             self.complete, self.interval = meta["complete"], meta["interval"]
             return True
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return False
 
     def save(self):

@@ -20,7 +20,7 @@ specific to one kind of dataset. One rule per relationship (no overlapping rule 
     tilt      Tilt limit — polygons of a class turned at most N° from the image axes (minimum-area rectangle).
     never     Never together — at most one of these classes per image (shapes or classification tags). Replaces the
               old excludes (two classes) / exclusive (a list).
-    Same-class duplicates are not a rule: Duplicate Shapes finds them (exact or IoU, with delete actions).
+    Same-class duplicates are not a rule: Duplicate & Overlapping Shapes finds them (with delete actions).
 Saved rules of the old types are converted on load (upgrade_rules).
 
 Geometry: shapes are compared by their real outline where it is convex (rectangles, 4-point quads, circles, most
@@ -939,7 +939,7 @@ class Suggestion:
 
 def suggest(st: RuleStats, min_support: int = 20, hold: float = 0.97) -> list[Suggestion]:
     """Rules that already hold for >= `hold` of the data. One Parent / part rule per pair (inside + relative size
-    + parts per parent together); same-class overlaps are left to Duplicate Shapes."""
+    + parts per parent together); same-class overlaps are left to Duplicate & Overlapping Shapes."""
     out = []
     labels = [l for l, n in st.img_with.items() if n >= min_support]
     parts, one_each = set(), set()           # pairs with a part rule · … whose parents hold exactly one part

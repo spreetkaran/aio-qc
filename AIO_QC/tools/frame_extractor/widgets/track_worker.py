@@ -4,10 +4,13 @@
 import threading
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from AIO_QC.widgets.lifecycle import RetainedThread
+
 from AIO_QC.tools.frame_extractor.core.tracker import RoiTracker
+from AIO_QC.core.diag import ignored as _ignored
 
 
-class TrackWorker(QThread):
+class TrackWorker(RetainedThread, QThread):
     """ROI tracking off the GUI thread. init() restarts on a frame; update()
     requests are coalesced (latest wins), so playback never waits on the tracker."""
     result = pyqtSignal(int, object)   # frame idx, (x1, y1, x2, y2) or None when lost
@@ -57,6 +60,7 @@ class TrackWorker(QThread):
         try:
             tracker = RoiTracker(self.kind)
         except Exception as e:
+            _ignored(e)
             self.error.emit(str(e))
             return
         while True:
@@ -78,5 +82,6 @@ class TrackWorker(QThread):
                     r = tracker.update(img)
                     self.result.emit(upd[0], tuple(int(round(v / k)) for v in r) if r else None)
             except Exception as e:
+                _ignored(e)
                 self.error.emit(str(e))
                 return

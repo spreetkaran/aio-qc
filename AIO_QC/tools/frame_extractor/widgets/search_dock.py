@@ -83,6 +83,9 @@ class SearchDock(QDockWidget):
         self.every.setValue(float(self.st.value("search/every", 1.0)))
         self.every.setToolTip("Index one frame every N seconds (finer = more precise, slower to index).\n"
                               "Very long videos are capped at about 6000 frames.")
+        for cb in (self.engine,):
+            cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(4)                # the side panel can be narrow; the list shows in full
         row.addWidget(self.engine, 1)
         row.addWidget(QLabel("every"))
         row.addWidget(self.every)
@@ -100,6 +103,8 @@ class SearchDock(QDockWidget):
         self.manage_menu = QMenu(self)
         self.manage_menu.aboutToShow.connect(self._build_videos_menu)
         self.manage.setMenu(self.manage_menu)
+        self.scope.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.scope.setMinimumContentsLength(4)
         row.addWidget(self.scope, 1)
         row.addWidget(self.manage)
         lay.addLayout(row)

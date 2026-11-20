@@ -16,7 +16,7 @@ from loguru import logger
 from PyQt6.QtCore import QMarginsF, QUrl
 from PyQt6.QtGui import QDesktopServices, QImage, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QSpinBox,
+    QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox,
     QVBoxLayout,
 )
 
@@ -27,6 +27,16 @@ from AIO_QC.core.history import user
 from AIO_QC.core.state import REVIEW_FIXED, REVIEW_FLAG, REVIEW_OK
 from AIO_QC.utils import newButton, newIcon, style as apply_style
 from .inference_service import FuncWorker
+from PyQt6.QtCore import QObject, pyqtSignal
+
+
+class _Stopped(Exception):
+    """Stop pressed while the report was being built."""
+
+
+class _Bus(QObject):
+    step = pyqtSignal(int, int)
+from AIO_QC.core.diag import ignored as _ignored
 
 
 class ReportDialog(QDialog):
@@ -64,10 +74,13 @@ class ReportDialog(QDialog):
                         time.strftime("%Y-%m-%d %H:%M", time.localtime(last["when"])) + ").") if last else
                        "First report for this dataset — the next one will list what changed after it.")
         apply_style(since, "color:@muted;")
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
+        from .jobs import JobBar
+        self.job = JobBar(self, "QC Report")              # progress · time left · Stop · then Open
+        self.status = self.job.text
+        self.progress = self.job.progress
+        self._stop = threading.Event()
+        self._bus = _Bus()
+        self._bus.step.connect(lambda d, t: self.job.step(d, t, f"thumbnail {d:,} / {t:,}"))
         self.go = newButton("Generate", icon="tool-report", slot=self._generate)
         self.go.setDefault(True)
         close = newButton("Close", slot=self.close)
@@ -88,14 +101,13 @@ class ReportDialog(QDialog):
         expl.setWordWrap(True)
         apply_style(expl, "color:@muted;")
         foot = QHBoxLayout()
-        foot.addWidget(self.progress, 1)
+        foot.addWidget(self.job, 1)
         foot.addWidget(self.go)
         foot.addWidget(close)
         lay = QVBoxLayout(self)
         lay.addWidget(expl)
         lay.addLayout(g)
         lay.addWidget(since)
-        lay.addWidget(self.status)
         lay.addLayout(foot)
         self._ext()
 
@@ -157,12 +169,20 @@ class ReportDialog(QDialog):
         by_key = s.by_key
         hist = s.history
 
+        stop, bus = self._stop, self._bus
+        stop.clear()
+
         def job():
             events = hist.since(since) if last else []
             data = R.gather(snap, events, last)
             thumbs = []
             colors: dict = {}
-            for k, risk in snap["issues"]["ranked"]:
+            ranked = snap["issues"]["ranked"]
+            for n, (k, risk) in enumerate(ranked, 1):
+                if stop.is_set():
+                    raise _Stopped()
+                if n % 5 == 0 or n == len(ranked):
+                    bus.step.emit(n, len(ranked))
                 smp = by_key.get(k)
                 if smp is None:
                     continue
@@ -172,7 +192,8 @@ class ReportDialog(QDialog):
                     img = smp.image_path or ann.image_path
                     if img is not None:
                         jpeg = T.render(img, T.shape_boxes(ann, colors), max_side=440)
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     jpeg = None
                 thumbs.append({"key": k, "display": smp.display, "risk": risk,
                                "status": snap["status"].get(k), "issues": snap["issues"]["by_file"].get(k, []),
@@ -181,9 +202,7 @@ class ReportDialog(QDialog):
             return data, html, images
 
         self.go.setEnabled(False)
-        self.progress.setVisible(True)
-        self.progress.setRange(0, 0)
-        self.status.setText("Building the report…")
+        self.job.start("Building the report", 0, stop=stop.set)
         self.worker = FuncWorker(job, self)
         self.worker.done.connect(lambda r: self._write(r, out, fmt))
         self.worker.failed.connect(self._failed)
@@ -191,14 +210,15 @@ class ReportDialog(QDialog):
 
     def _failed(self, msg):
         self.worker = None
-        self.progress.setVisible(False)
         self.go.setEnabled(True)
-        self.status.setText(f"⚠ Report failed: {msg}")
+        if "_Stopped" in str(msg):
+            self.job.stopped("Stopped — no report was written")
+            return
+        self.job.fail(msg)
         logger.error(f"[report] {msg}")
 
     def _write(self, result, out: Path, fmt: str):
         self.worker = None
-        self.progress.setVisible(False)
         self.go.setEnabled(True)
         data, html, images = result
         try:
@@ -209,9 +229,11 @@ class ReportDialog(QDialog):
                 self._pdf(html, images, out)
             R.save_snapshot(self.session.root, data)
         except Exception as exc:
+            _ignored(exc)
             self._failed(f"{type(exc).__name__}: {exc}")
             return
-        self.status.setText(f"✓ Saved {out}")
+        self.job.finish(f"Saved {out}", open_path=out.parent,
+                        extra=[("Open report", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(out))))])
         logger.info(f"[report] {out}")
         if self.open_after.isChecked():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
@@ -233,6 +255,8 @@ class ReportDialog(QDialog):
         doc.print(w)
 
     def closeEvent(self, e):
+        self._stop.set()
+        self.job.close_job()
         if self.worker is not None:
             self.worker.wait(5000)
         if hasattr(self.app, "forget_dialog"):

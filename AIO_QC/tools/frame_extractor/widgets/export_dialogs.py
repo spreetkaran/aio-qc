@@ -24,6 +24,7 @@ from AIO_QC.tools.frame_extractor.core.common import model_hex
 from AIO_QC.widgets import motion as anim
 from AIO_QC.widgets.testing.lab_common import Job, human_time, open_path
 from AIO_QC.utils.fx_settings import fx_settings
+from AIO_QC.core.diag import ignored as _ignored
 
 
 
@@ -81,6 +82,10 @@ class _ExportBase(QDialog):
         self.folder_btn = self.buttons.addButton("Show folder", QDialogButtonBox.ButtonRole.ActionRole)
         self.folder_btn.setVisible(False)
         self.folder_btn.clicked.connect(lambda: self.result_path and open_path(os.path.dirname(self.result_path)))
+        self.undo_btn = self.buttons.addButton("Undo", QDialogButtonBox.ButtonRole.ActionRole)
+        self.undo_btn.setToolTip("Delete the file this export wrote")
+        self.undo_btn.setVisible(False)
+        self.undo_btn.clicked.connect(self._undo)
         self.close_btn = self.buttons.addButton(QDialogButtonBox.StandardButton.Close)
         self.go.clicked.connect(self.start)
         self.close_btn.clicked.connect(self.reject)
@@ -94,12 +99,16 @@ class _ExportBase(QDialog):
                 QMessageBox.StandardButton.Yes:
             return
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+        self._new_file = not os.path.exists(out)              # Undo deletes only a file this export made
+        import time as _t
+        self._t0 = _t.monotonic()
+        self.undo_btn.setVisible(False)
         self.go.setEnabled(False)
         self.bar.setVisible(True)
         self.bar.setValue(0)
         self.open_btn.setVisible(False)
         self.folder_btn.setVisible(False)
-        self.close_btn.setText("Cancel")
+        self.close_btn.setText("Stop")
         self.status.setText("Starting…")
         self.job = Job(fn, self)
         from AIO_QC.widgets import tasks
@@ -115,8 +124,10 @@ class _ExportBase(QDialog):
         if getattr(self, "_task", None) is not None:
             self._task.update(done / total if total else None, text)
         self.bar.setValue(int(1000 * done / total) if total else 0)
-        if text:
-            self.status.setText(text)
+        from AIO_QC.widgets.jobs import eta
+        left = eta(getattr(self, "_t0", 0.0), done, total)
+        if text or left:
+            self.status.setText(" · ".join(x for x in (text, left) if x))
 
     def _on_done(self, r):
         if not r:
@@ -126,7 +137,8 @@ class _ExportBase(QDialog):
         self.bar.setValue(1000)
         self.open_btn.setVisible(True)
         self.folder_btn.setVisible(True)
-        self.status.setText(self.describe(r))
+        self.undo_btn.setVisible(bool(getattr(self, "_new_file", False)))
+        self.status.setText("✓ " + self.describe(r))
 
     def describe(self, r):
         return f"Saved {r['path']}"
@@ -136,7 +148,8 @@ class _ExportBase(QDialog):
             self.status.setText("Cancelled - nothing was written.")
             self.bar.setValue(0)
         else:
-            self.status.setText(f"Failed: {msg}")
+            from AIO_QC.widgets.errors import message
+            self.status.setText(f"⚠ {message(msg)}")
 
     def _finished(self):
         if getattr(self, "_task", None) is not None:
@@ -146,10 +159,20 @@ class _ExportBase(QDialog):
         self.close_btn.setText("Close")
         self.job = None
 
+    def _undo(self):
+        p = self.result_path
+        if p and os.path.isfile(p):
+            os.remove(p)
+        self.undo_btn.setVisible(False)
+        self.open_btn.setVisible(False)
+        self.folder_btn.setVisible(False)
+        self.status.setText(f"↶ Deleted {p}")
+        self.result_path = None
+
     def reject(self):
         if self.job is not None:
             self.job.cancel()
-            self.status.setText("Cancelling…")
+            self.status.setText("Stopping … nothing half-written is left behind.")
             return
         super().reject()
 
@@ -206,8 +229,8 @@ class ClipExportDialog(_ExportBase):
                 k = self.keyframe_of(a)
                 if k is not None and a - k > 0.01:
                     txt += f" · fast mode starts at the keyframe {human_time(k)} ({a - k:.2f} s earlier)"
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         self.len_lbl.setText(txt)
         if hasattr(self, "go"):
             self.go.setEnabled(b > a)
@@ -302,8 +325,8 @@ class AnnotatedExportDialog(_ExportBase):
             from AIO_QC.core.testing.annotate import available_encoders, ENCODER_LABELS
             for e in available_encoders(self.ffmpeg) if self.ffmpeg else []:
                 self.enc.addItem(ENCODER_LABELS.get(e, e), e)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
     def _checked(self):
         return [i for i in range(self.models.count())

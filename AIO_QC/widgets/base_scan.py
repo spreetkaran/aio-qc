@@ -19,19 +19,21 @@ from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
-from PyQt6.QtCore import QRectF, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QRectF, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QMessageBox, QProgressBar, QPushButton, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem,
-    QVBoxLayout,
+    QVBoxLayout, QWidget,
 )
 
 from AIO_QC.utils import theme_color, style as apply_style
 from AIO_QC.core.state import REVIEW_FLAG, REVIEW_OK
 from AIO_QC.utils import newIcon, emphasis_bg, get_color_icon, newButton
 from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.utils.qt_utils import set_shown
+from AIO_QC.core.diag import ignored as _ignored
 
 ROW_ID = Qt.ItemDataRole.UserRole + 10
 BAR_ROLE = Qt.ItemDataRole.UserRole + 20     # (fraction 0..1, "#rrggbb") -> drawn as a data bar
@@ -152,6 +154,7 @@ class ScanWorker(RetainedThread, QThread):
                 if rows:
                     batch.extend(rows)
             except Exception as exc:
+                _ignored(exc)
                 errors.append(f"{s.name}: {type(exc).__name__}: {exc}")
             now = time.monotonic()
             if now - last > 0.15 or i == total:
@@ -172,6 +175,24 @@ class ScanWorker(RetainedThread, QThread):
         self.completed.emit(final, errors, self._stop)
 
 
+class _ParamsFit(QObject):
+    """Keeps the parameters' scroll area as tall as the parameters (no blank space) and shown / hidden with them."""
+
+    def __init__(self, box, scroll):
+        super().__init__(box)
+        self.box, self.scroll = box, scroll
+        box.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        from PyQt6.QtCore import QEvent
+        if ev.type() in (QEvent.Type.LayoutRequest, QEvent.Type.Show, QEvent.Type.Hide):
+            h = self.box.sizeHint().height() + 2
+            self.scroll.setMaximumHeight(h)
+            self.scroll.setMinimumHeight(min(90, h))
+            set_shown(self.scroll, not self.box.isHidden())     # never as a window of its own before it is placed
+        return False
+
+
 class BaseScanDialog(QDialog):
     TITLE = "QC Scan"
     ICON = "🔍"
@@ -185,11 +206,14 @@ class BaseScanDialog(QDialog):
     RESCAN_AFTER_EDIT = True
     SUPPORTED = None          # None = all dataset types, else set of DatasetType
     PUBLISH_ISSUES = None     # findings go to the Issues Inbox (None = same as REVIEW_ACTIONS)
+    scanFinished = pyqtSignal(bool)       # a scan ended (True = it ran to the end; False = stopped or not started)
 
     def __init__(self, app, parent=None):
         super().__init__(parent or app)
         self.app = app
         self.session = app.session
+        self.quiet = False                # run by another window (QC presets): no message boxes, scan_error instead
+        self.scan_error = ""
         self.rows: list[ResultRow] = []
         self.errors: list[str] = []
         self.ctx: dict = {}
@@ -198,33 +222,53 @@ class BaseScanDialog(QDialog):
 
         self.setWindowTitle(self.TITLE)
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(int(app.width() * 0.62), int(app.height() * 0.75))
+        self._size_kind = "medium"              # fit_size() class, applied once the window is built
 
         root = QVBoxLayout(self)
-        if self.HELP:
-            help_lbl = QLabel(self.HELP)
-            help_lbl.setWordWrap(True)
-            apply_style(help_lbl, "color:@muted;")
-            root.addWidget(help_lbl)
+        root.setContentsMargins(16, 14, 16, 12)
+        root.setSpacing(10)
+        root.addWidget(self._build_header())
 
         from .guidelines import GuideCard
         self.guide_card = GuideCard(self, compact=True)      # this tool's rule from Labels ▸ Guidelines, if any
         self.guide_card.editRequested.connect(lambda sc: self.app.open_guidelines(sc))
         root.addWidget(self.guide_card)
 
-        self.actions_layout = QHBoxLayout()   # subclasses add buttons from build_params()
+        from AIO_QC.utils.qt_utils import FlowLayout
+        self.actions_host = QWidget()           # the result actions: one row that wraps on narrow screens
+        self.actions_layout = FlowLayout(self.actions_host, spacing=6, align_right=True)
+        # (subclasses add buttons from build_params())
 
         # parameters -----------------------------------------------------------
         self.params_box = QGroupBox("Parameters")
         self.params_form = QFormLayout(self.params_box)
         self.build_params(self.params_form)
-        self.params_box.setVisible(self.params_form.rowCount() > 0)
-        root.addWidget(self.params_box)
+        set_shown(self.params_box, self.params_form.rowCount() > 0)
+        # in a scroll area: whole on a tall screen; on a short one it gives way (and scrolls), so the results keep
+        # their room and the window fits any screen
+        from PyQt6.QtWidgets import QFrame, QScrollArea, QSizePolicy
+        self.params_scroll = QScrollArea()
+        self.params_scroll.setWidget(self.params_box)
+        self.params_scroll.setWidgetResizable(True)
+        self.params_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.params_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.params_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.params_scroll.setMinimumHeight(min(90, self.params_box.sizeHint().height()))
+        self.params_scroll.setMaximumHeight(self.params_box.sizeHint().height() + 2)
+        root.addWidget(self.params_scroll)
+        has_params = self.params_form.rowCount() > 0
+        self.params_box.setVisible(has_params)        # setWidget() shows it again: no empty "Parameters" box
+        set_shown(self.params_scroll, has_params)
+        self._params_fit = _ParamsFit(self.params_box, self.params_scroll)
 
         # run controls ---------------------------------------------------------
         run = QHBoxLayout()
         self.start_btn = newButton("▶ Scan", slot=self.start_scan)
-        self.start_btn.setDefault(True)
+        self.start_btn.setDefault(True)                     # the window's main action: accent-coloured
+        from AIO_QC.utils import tintedIcon
+        from AIO_QC.widgets.design import tokens
+        self.start_btn.setIcon(tintedIcon("run", tokens()["on_accent"]))
+        self.start_btn.setProperty("aio_icon", None)       # keep it white on theme changes
         self.stop_btn = newButton("⏹ Stop", slot=self.stop_scan)
         self.stop_btn.setEnabled(False)
         self.progress = QProgressBar()
@@ -241,21 +285,21 @@ class BaseScanDialog(QDialog):
         # results toolbar ------------------------------------------------------
         bar = QHBoxLayout()
         self.select_all = QCheckBox("Select all")
-        self.select_all.setVisible(self.CHECKABLE)
+        set_shown(self.select_all, self.CHECKABLE)
         self.select_all.toggled.connect(self._toggle_all)
         bar.addWidget(self.select_all)
         self.filter_box = QComboBox()
-        self.filter_box.setVisible(self.FILTER_COLUMN is not None)
+        set_shown(self.filter_box, self.FILTER_COLUMN is not None)
         self.filter_box.currentIndexChanged.connect(self._apply_filter)
         if self.FILTER_COLUMN is not None:
             bar.addWidget(QLabel(f"{self.COLUMNS[self.FILTER_COLUMN]}:"))
         bar.addWidget(self.filter_box)
-        bar.addStretch(1)
-        bar.addLayout(self.actions_layout)
+        bar.addWidget(self.actions_host, 1)
         self.show_files_btn = newButton("👁 Show in file list", slot=self.show_in_file_list, tip="Restrict the main file list to the files in these results")
         export_btn = newButton("⤓ CSV", slot=self.export_csv, tip="Export visible results to CSV")
-        bar.addWidget(self.show_files_btn)
-        bar.addWidget(export_btn)
+        self.actions_layout.addWidget(self.show_files_btn)
+        self.actions_layout.addWidget(export_btn)
+        self._fixed_actions = 2                 # add_action() puts new buttons before these two
         root.addLayout(bar)
 
         # table ----------------------------------------------------------------
@@ -267,6 +311,7 @@ class BaseScanDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         readable_table(self.table)
         self.table.cellDoubleClicked.connect(lambda r, _c: self.on_row_activated(self._row_at(r)))
+        install_finding_keys(self)
         self.table_host = QVBoxLayout()         # subclasses may wrap the table (e.g. in tabs)
         self.table_host.addWidget(self.table)
         root.addLayout(self.table_host, 1)
@@ -302,6 +347,8 @@ class BaseScanDialog(QDialog):
             self.table.customContextMenuRequested.connect(self._review_menu)
         self.session.reviewChanged.connect(self._on_review_changed)
         self.post_init()
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, self._size_kind)          # by the screen it opens on (subclasses may set _size_kind)
         if self.AUTO_START:
             QTimer.singleShot(0, self.start_scan)
 
@@ -333,13 +380,49 @@ class BaseScanDialog(QDialog):
     def summarize(self) -> str:
         return f"{len(self.rows):,} result(s)"
 
+    # ---- F8 / Shift+F8: step through these findings from the image (app.step_finding)
+    def finding_list(self) -> list:
+        """The findings in the order shown (filters applied): [(key, shape index or None)]."""
+        return [(r.key, r.shape_index) for r in self._file_rows()]
+
+    def finding_count(self) -> int:
+        return len(self._file_rows())
+
+    def finding_at(self, i: int):
+        rows = self._file_rows()
+        return (rows[i].key, rows[i].shape_index) if 0 <= i < len(rows) else None
+
+    def finding_index(self, key, shape, exact: bool = False) -> int:
+        items = self.finding_list()
+        i = next((i for i, it in enumerate(items) if it == (key, shape)), -1)
+        if i < 0 and not exact:
+            i = next((i for i, it in enumerate(items) if it[0] == key), -1)
+        return i
+
+    def _file_rows(self):
+        by_key = self.session.by_key if self.session is not None else {}
+        return [r for r in self.visible_rows() if r.key in by_key]      # (summary rows: labels, splits — skipped)
+
+    def open_finding(self, i: int):
+        rows = self._file_rows()
+        if not 0 <= i < len(rows):
+            return
+        row = rows[i]
+        for r in range(self.table.rowCount()):                 # keep this window's list in step
+            if self._row_at(r) is row:
+                self.table.selectRow(r)
+                self.table.scrollToItem(self.table.item(r, 0))
+                break
+        self.on_row_activated(row)
+
     def on_row_activated(self, row: ResultRow | None):
         if row is not None and row.key:
             self.app.open_sample(row.key, row.shape_index)
 
     def add_action(self, text: str, slot, tip: str = "") -> QPushButton:
         btn = newButton(text, slot=lambda _checked=False: slot(), tip=tip)
-        self.actions_layout.addWidget(btn)
+        n = getattr(self, "_fixed_actions", 0)
+        self.actions_layout.insertWidget(self.actions_layout.count() - n, btn)
         return btn
 
     # =============================================================== scanning
@@ -366,10 +449,15 @@ class BaseScanDialog(QDialog):
         self.select_all.blockSignals(True)
         self.select_all.setChecked(False)
         self.select_all.blockSignals(False)
+        self.scan_error = ""
         try:
             self.ctx = self.make_context()
         except ValueError as exc:
-            QMessageBox.warning(self, self.TITLE, str(exc))
+            self.scan_error = str(exc)
+            if not self.quiet:
+                from .errors import show_error
+                show_error(self, self.TITLE, exc, app=self.app)
+            self.scanFinished.emit(False)
             return
         samples = self.samples_to_scan()
         self._scan_scope = {s.key for s in samples}
@@ -519,6 +607,7 @@ class BaseScanDialog(QDialog):
 
     def showEvent(self, e):
         super().showEvent(e)
+        self._header_tool()
         guides = getattr(self.session, "guides", None)
         if guides is not None:
             guides.reload()
@@ -537,7 +626,93 @@ class BaseScanDialog(QDialog):
             self._task.update(i / total if total else None)
         self.progress.setMaximum(total)
         self.progress.setValue(i)
-        self.status.setText(f"{len(self.rows):,} found")
+        from .jobs import eta
+        left = eta(self._scan_started, i, total)
+        self.status.setText(f"{len(self.rows):,} found" + (f" · {left}" if left else ""))
+
+    # ------------------------------------------------------------------ header (3.0)
+    def _build_header(self) -> QWidget:
+        """Icon + title + shortcut, one line of description and "About this check" for the full text."""
+        from AIO_QC.utils import IconLabel, no_emoji
+        box = QWidget()
+        box.setProperty("windowHeader", True)                 # the title bar: drag to move, controls on the right
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        top = QHBoxLayout()
+        top.setSpacing(12)
+        self.header_icon = IconLabel("tool-validation", 30)
+        self.header_icon.setVisible(False)                     # the tool's icon once tool_key is known (showEvent)
+        top.addWidget(self.header_icon, 0, Qt.AlignmentFlag.AlignTop)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.header_title = QLabel(no_emoji(self.TITLE))
+        f = self.header_title.font()
+        f.setPointSizeF(f.pointSizeF() * 1.35)
+        f.setBold(True)
+        self.header_title.setFont(f)
+        self.header_key = QLabel("")
+        apply_style(self.header_key, "color:@muted;")
+        row.addWidget(self.header_title)
+        row.addWidget(self.header_key)
+        row.addStretch(1)
+        col.addLayout(row)
+        self._header_top = top                                 # window controls go at its right end
+        full = no_emoji(self.HELP or "")
+        first = full
+        cuts = [(full.find(sep), sep) for sep in (". ", " — ", "; ", ": ") if full.find(sep) > 20]
+        if cuts:
+            i, sep = min(cuts)
+            first = full[:i] + ("." if sep == ". " else "")
+        if len(first) > 150:
+            first = first[:147].rsplit(" ", 1)[0] + " …"
+        self.header_desc = QLabel(first)
+        self.header_desc.setWordWrap(True)
+        self.header_desc.setToolTip(full if full != first else "")
+        apply_style(self.header_desc, "color:@muted;")
+        desc_row = QHBoxLayout()
+        desc_row.setSpacing(8)
+        desc_row.addWidget(self.header_desc, 1)
+        self.about_btn = QPushButton("About this check")
+        self.about_btn.setFlat(True)
+        self.about_btn.setCheckable(True)
+        set_shown(self.about_btn, bool(full) and full != first)
+        self.about_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        apply_style(self.about_btn, "QPushButton{color:@accent; border:0; padding:0 2px; background:transparent;}"
+                                    "QPushButton:hover{text-decoration:underline;}")
+        desc_row.addWidget(self.about_btn, 0, Qt.AlignmentFlag.AlignTop)
+        col.addLayout(desc_row)
+        self.header_full = QLabel(full)
+        self.header_full.setWordWrap(True)
+        self.header_full.setVisible(False)
+        self.header_full.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        apply_style(self.header_full, "QLabel{color:@text; background:@surface; border:1px solid @line; "
+                                      "border-radius:6px; padding:8px 10px;}")
+        self.about_btn.toggled.connect(lambda on: (self.header_full.setVisible(on),
+                                                   self.about_btn.setText("Hide details" if on else
+                                                                          "About this check")))
+        col.addWidget(self.header_full)
+        top.addLayout(col, 1)
+        lay.addLayout(top)
+        box.setProperty("controlsLayout", top)
+        return box
+
+    def _header_tool(self):
+        key = getattr(self, "tool_key", None)
+        if key and getattr(self, "_header_for", None) != key:
+            self._header_for = key
+            try:
+                from AIO_QC.app import QC_TOOLS
+                tool = next((t for t in QC_TOOLS if t.key == key), None)
+            except Exception as _exc:
+                _ignored(_exc)
+                tool = None
+            if tool is not None:
+                self.header_icon.set_icon(tool.icon)
+                self.header_icon.setVisible(True)
+                self.header_key.setText(tool.shortcut or "")
 
     def _on_completed(self, final_rows, errors, cancelled):
         if getattr(self, "_task", None) is not None:
@@ -563,7 +738,8 @@ class BaseScanDialog(QDialog):
         if self.FILE_COLUMN:
             self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.on_scan_complete(self.ctx)
-        self.summary.setText(self.summarize())
+        from AIO_QC.utils import no_emoji
+        self.summary.setText(no_emoji(self.summarize()))
         if not cancelled:
             self.publish_issues(getattr(self, "_scan_scope", None), self.rows)
             guide = getattr(self.app, "check_guide", None)
@@ -571,6 +747,7 @@ class BaseScanDialog(QDialog):
                 guide.record(self.tool_key_name(), len(self.rows))
         if errors:
             self.app.log_errors([f"[{self.TITLE}] {e}" for e in errors])
+        self.scanFinished.emit(not cancelled)
 
     # ------------------------------------------------------------------ Issues Inbox
     def issue_of(self, row):
@@ -785,6 +962,7 @@ class BaseScanDialog(QDialog):
                     try:
                         new.extend(self.rescan_sample(self.ctx, s))
                     except Exception as exc:
+                        _ignored(exc)
                         self.errors.append(f"{s.name}: {exc}")
             self._append_rows(new)
             self.publish_issues(ks, [r for r in self.rows if r is not None and r.key in ks])
@@ -862,3 +1040,11 @@ class BaseScanDialog(QDialog):
         changed, errors, removed = self.session.delete_shapes(self, by_key)
         self.after_edit(by_key.keys())
         self.report("Done", [f"Deleted {removed} shape(s) in {len(changed)} file(s)."], errors)
+
+
+def install_finding_keys(dlg):
+    """F8 / Shift+F8 in a check's own window step through its findings on the image as well."""
+    from PyQt6.QtGui import QKeySequence, QShortcut
+    for seq, step in (("F8", 1), ("Shift+F8", -1)):
+        sc = QShortcut(QKeySequence(seq), dlg)
+        sc.activated.connect(lambda s=step: dlg.app.step_finding(s, source=dlg))

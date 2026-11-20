@@ -33,6 +33,7 @@ import zlib
 from pathlib import Path
 
 from .labelme_image import KEY as IMG_KEY, encode_b64, image_file_of
+from AIO_QC.core.diag import ignored as _ignored
 
 DB_NAME = "backups.sqlite"
 EXACT_IMAGE_DATA = False          # app setting: keep embedded images byte-exact even when an image file exists
@@ -62,7 +63,8 @@ class BackupStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             db = sqlite3.connect(str(self.path), timeout=30, check_same_thread=False, isolation_level=None)
             db.execute("PRAGMA auto_vacuum=INCREMENTAL")         # only effective on a new file
-            db.execute("PRAGMA journal_mode=WAL")
+            from .sqlite_util import configure
+            configure(db, self.path)
             db.execute("PRAGMA synchronous=NORMAL")
             db.execute("PRAGMA journal_size_limit=8388608")
             db.executescript("""
@@ -100,6 +102,19 @@ class BackupStore:
 
     def abs(self, rel: str) -> Path:
         return Path(rel) if os.path.isabs(rel) else self.root / rel
+
+    def rename(self, pairs) -> int:
+        """Files renamed in the dataset: their backups follow (History restores to the new name).
+        pairs = [(old path, new path)]."""
+        if not self.exists():
+            return 0
+        n = 0
+        with self._lock:
+            for a, b in pairs:
+                ra, rb = self.rel(a), self.rel(b)
+                if ra != rb:
+                    n += self.db.execute("UPDATE OR IGNORE items SET rel=? WHERE rel=?", (rb, ra)).rowcount
+        return n
 
     # ------------------------------------------------------------------ write
     def begin(self, kind: str, title: str = "") -> int:
@@ -318,7 +333,8 @@ def _unpack(row, target: Path, blob: bytes | None) -> tuple[bytes, str]:
                 else:
                     b64 = encode_b64(img, ver or "5")
                     how = "exact" if _sha(base64.b64decode(b64)) == sha else "regen"
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 b64 = None
     if b64 is None:                               # nothing to rebuild from: imageData becomes null
         return (text[:pos - 1] + "null" + text[pos + 1:]).encode("utf-8"), "no-image"

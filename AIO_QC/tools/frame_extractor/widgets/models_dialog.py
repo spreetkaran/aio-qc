@@ -31,11 +31,12 @@ from AIO_QC.tools.frame_extractor.core import env_manager as envm
 from AIO_QC.tools.frame_extractor.core.detector import HAVE_ORT, model_backend
 from AIO_QC.tools.frame_extractor.utils import newIcon
 from AIO_QC.widgets.testing.lab_common import FuncWorker  # noqa: F401  (re-exported)
+from AIO_QC.core.diag import ignored as _ignored
 
 DEFAULTS = dict(models=[], conf=0.25, iou=0.45, imgsz=0, device="auto", unc_low=0.25, unc_high=0.60,
                 env_python="", half=False, sahi=False, sahi_slice=640, sahi_overlap=0.2,
                 temp_env="", delete_temp_on_exit=True)
-OK, BAD, WARN = "✅", "❌", "⚠️"
+OK, BAD, WARN = "", "", "⚠️"
 from AIO_QC.tools.frame_extractor.core.common import PT_EXTS
 from AIO_QC.utils.fx_settings import fx_settings
 
@@ -75,8 +76,8 @@ def _register(paths):
         for p in paths:
             if p and os.path.isfile(p) and os.path.normcase(os.path.abspath(p)) not in known:
                 R.register(p)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
 
 
 def save_model_cfg(cfg):
@@ -119,8 +120,8 @@ class ModelsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Models & environment")
         self.setWindowIcon(newIcon("models"))
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 880, 680)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")      # by the screen it opens on
         self.cfg = dict(cfg)
         self.frame_getter = frame_getter
         self.show_detections = show_detections
@@ -422,6 +423,7 @@ class ModelsDialog(QDialog):
                                                          f"~{ms:.0f} ms/frame (first run)")
                     note(f"{OK} {out[m][2]}")
                 except Exception as e:
+                    _ignored(e)
                     out[m] = ("", "", f"{os.path.basename(m)}: ERROR {e}")
                     note(f"{BAD} {out[m][2]}")
             return out
@@ -804,9 +806,21 @@ class ModelsDialog(QDialog):
         super().accept()
 
     def reject(self):
-        if self.proc is not None:
-            self.proc.kill()
+        self._kill_proc()
         super().reject()
+
+    def _kill_proc(self):
+        """Stop the running step for good: its finished handler must not run on a closing dialog, and Qt must
+        never destroy a process that is still running."""
+        p, self.proc = self.proc, None
+        if p is None:
+            return
+        try:
+            p.finished.disconnect()
+        except TypeError:
+            pass
+        p.kill()
+        p.waitForFinished(3000)
 
     def closeEvent(self, ev):
         for w in list(self.workers):

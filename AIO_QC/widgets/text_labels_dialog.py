@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🔤 Text Labels — check the text stored in your annotations (LabelMe `description` or another shape field) without
+ Text Labels — check the text stored in your annotations (LabelMe `description` or another shape field) without
 any OCR model and without assuming any kind of text: formats, known texts and confused characters learned from the
 open dataset, the validators you choose (optional), and what the other frames of the same object say — each finding
 with a correction that fits those rules, applied in one click when it is the only sensible one (backed up, undoable).
@@ -26,6 +26,7 @@ from AIO_QC.core.shape_ops import Backup, fingerprint, resolve
 from AIO_QC.core.state import load_ocr_config, save_ocr_config
 from AIO_QC.utils import newButton
 from .base_scan import BaseScanDialog, ResultRow
+from AIO_QC.core.diag import ignored as _ignored
 
 
 
@@ -39,7 +40,8 @@ def classes_with_text(session, max_files: int = 400, share: float = 0.6) -> list
     for s in samples:
         try:
             ann = session.adapter.load(s, light=True)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             continue
         for sh in ann.shapes:
             lab = str(sh.get("label", ""))
@@ -51,7 +53,7 @@ def classes_with_text(session, max_files: int = 400, share: float = 0.6) -> list
 
 class TextLabelsDialog(BaseScanDialog):
     TITLE = "Text Labels"
-    ICON = "🔤"
+    ICON = ""
     HELP = ("Checks the text STORED in your annotations — no OCR model needed, nothing specific to one kind of text. "
             "The rules come from the validators you choose (optional) and from the dataset itself: the formats most "
             "texts of a class share, the texts that occur again and again, and the characters it confuses. Video "
@@ -207,7 +209,8 @@ class TextLabelsDialog(BaseScanDialog):
                 continue
             try:
                 ann = self.session.adapter.load(s, light=True)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 continue
             for sh in ann.shapes:
                 if sh.get("label") == label:

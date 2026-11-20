@@ -102,7 +102,7 @@ def analyze(files, hashes=None, min_images: int = 10, js_warn: float = 0.05, ske
     total = sum(t["images"] for t in table.values()) or 1
     if len(splits) < 2 or "train" not in table:
         F.append(Finding("info", "no splits", "", "", "No train / val / test split found",
-                         "Split health compares splits; Export & Split can build them."))
+                         "Split health compares splits; Convert & Split can build them."))
         return rep
     tr = table["train"]
     classes = sorted(set().union(*(t["cls_img"] for t in table.values())), key=str.lower)

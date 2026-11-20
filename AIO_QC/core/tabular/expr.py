@@ -59,9 +59,12 @@ def columns_used(text: str) -> list[str]:
     def walk(n):
         if isinstance(n, ast.Name):
             out.append(n.id)
-        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "col" and n.args \
-                and isinstance(n.args[0], ast.Constant):
-            out.append(str(n.args[0].value))
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
+            if n.func.id == "col" and n.args and isinstance(n.args[0], ast.Constant):
+                out.append(str(n.args[0].value))
+                return
+            for c in list(n.args) + [k.value for k in n.keywords]:     # a function's name is not a column
+                walk(c)
             return
         for c in ast.iter_child_nodes(n):
             walk(c)

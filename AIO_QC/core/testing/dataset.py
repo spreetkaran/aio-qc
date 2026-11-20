@@ -17,6 +17,7 @@ thousands of images load in seconds.
 An image without a label file is "unlabelled" (excluded from accuracy metrics) - different from an image
 with an empty label file (labelled, no objects: every detection on it is a false detection).
 """
+
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ import numpy as np
 
 from AIO_QC.tools.frame_extractor.core.common import IMG_EXTS
 from AIO_QC.tools.frame_extractor.core.imageio import imread
+from AIO_QC.core.diag import ignored as _ignored
 SKIP_DIRS = {"_rejected", ".fx_resume", "__pycache__", ".git", "cache", "reports", "negatives_blurry"}
 
 
@@ -41,10 +43,11 @@ class ImageItem:
     label_path: str = ""
     reviewed: bool = True               # False: pre-annotations nobody has checked yet
     meta: dict = field(default_factory=dict)   # video, frame, time, source ...
+    tags: list = None                   # a classification test set: the image's class name(s); None = no class
 
     @property
     def labelled(self):
-        return self.boxes is not None
+        return self.boxes is not None or self.tags is not None
 
 
 @dataclass
@@ -54,6 +57,12 @@ class Dataset:
     fmt: str
     root: str = ""
     warnings: list = field(default_factory=list)
+    cls_type: object = None             # a classification test set: its DatasetType (class folders, LabelMe flags...)
+
+    @property
+    def task(self) -> str:
+        """"classify": whole-image classes (class folders, LabelMe flags); "detect": boxes."""
+        return "classify" if self.fmt == "classify" else "detect"
 
     @property
     def n_labelled(self):
@@ -138,8 +147,8 @@ def image_size(path):
         img = imread(path)        # applies EXIF orientation, like YOLO
         if img is not None:
             return img.shape[1], img.shape[0]
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     return 0, 0
 
 
@@ -195,7 +204,8 @@ def read_names_yaml(path):
     """names from a YOLO data.yaml (dict or list form); None if absent."""
     try:
         d = load_yaml(path)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
     names = d.get("names") if isinstance(d, dict) else None
     if isinstance(names, dict):
@@ -357,6 +367,10 @@ def load_folder(root, fmt="auto", names=None, recursive=True, images=None, prela
     (AIO QC's dataset, whose annotations may live in their own folder). Returns a Dataset."""
     if root and root.lower().endswith((".yaml", ".yml")) and images is None:
         return load_data_yaml(root, progress=progress, cancel=cancel)
+    if images is None and label_paths is None and fmt in ("auto", "classify") and root and os.path.isdir(root):
+        ds = load_classification(root, progress=progress, cancel=cancel, force=fmt == "classify")
+        if ds is not None:                                  # class folders / LabelMe flags: a classifier's test set
+            return ds
     images = list(images) if images is not None else list_images(root, recursive)
     warnings = []
     fmt = detect_format(images) if fmt == "auto" else fmt
@@ -369,7 +383,6 @@ def load_folder(root, fmt="auto", names=None, recursive=True, images=None, prela
                     break
         if not names:
             warnings.append("No class names found (data.yaml / classes.txt): models are matched by class id")
-    lm_names = {}
 
     def one(p):
         if cancel is not None and cancel():
@@ -388,6 +401,9 @@ def load_folder(root, fmt="auto", names=None, recursive=True, images=None, prela
                 if b is not None:
                     it.boxes, it.label_path = b, lp
                     it.meta["label_names"] = nm
+                    on = [k for k, v in (flags or {}).items() if v is True]
+                    if on and not len(b):                    # flags, no shapes: the image's class
+                        it.meta["flag_tags"] = on
                     if (not w or not h) and jw and jh:
                         it.w, it.h = jw, jh
         if it.label_path and prelabel_hashes and prelabel_hashes.get(os.path.abspath(it.label_path)):
@@ -416,7 +432,105 @@ def load_folder(root, fmt="auto", names=None, recursive=True, images=None, prela
     bad = sum(1 for it in items if not it.w)
     if bad:
         warnings.append(f"{bad} image(s) could not be read")
+    flagged = [it for it in items if it.meta.get("flag_tags")]
+    if fmt == "labelme" and flagged and not any(it.boxes is not None and len(it.boxes) for it in items):
+        return _as_classification(items, root, warnings)   # LabelMe files that carry classes, no shapes
     return Dataset(items=items, names=dict(names or {}), fmt=fmt, root=root, warnings=warnings)
+
+
+def _as_classification(items, root, warnings, order=None):
+    for it in items:
+        tags = it.meta.pop("flag_tags", None)
+        it.boxes, it.cls = None, None
+        it.tags = list(tags) if tags else ([] if it.label_path else None)
+    names = list(order or [])
+    for it in items:
+        for t in it.tags or []:
+            if t not in names:
+                names.append(t)
+    return Dataset(items=items, names={i: n for i, n in enumerate(names)}, fmt="classify", root=root,
+                   warnings=warnings)
+
+
+def load_classification(root, progress=None, cancel=None, force=False, workers=8):
+    """A classifier's test set — class folders (root/<class>/img, root/<split>/<class>/img) or LabelMe files whose
+    flags name the class — read with AIO QC's own dataset rules. None when the folder is not one (force: raise)."""
+    from AIO_QC.core.dataset import detect_dataset_types, open_dataset
+    try:
+        types = [t for t in detect_dataset_types(root) if t.is_classification]
+    except Exception:                                       # noqa: BLE001  — not a dataset folder
+        types = []
+    if not types:
+        if force:
+            raise ValueError(f"Not a classification dataset (class folders / LabelMe flags): {root}")
+        return None
+    adapter = open_dataset(root, types[0])
+    samples = adapter.discover()
+    cn = getattr(adapter, "class_names", None)
+    try:
+        order = list((cn() if callable(cn) else cn) or [])
+    except Exception:                                       # noqa: BLE001
+        order = []
+
+    def one(s):
+        if cancel is not None and cancel():
+            return None
+        img = str(s.image_path) if s.image_path is not None else ""
+        w, h = image_size(img) if img else (0, 0)
+        try:
+            tags = list(adapter.load(s, light=True).tags or [])
+        except Exception:                                   # noqa: BLE001
+            tags = []
+        it = ImageItem(path=img, w=w, h=h, label_path=str(s.ann_path) if s.ann_path is not None else "",
+                       tags=tags, meta={"split": s.split or ""})
+        return it
+
+    items = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        for i, it in enumerate(ex.map(one, samples)):
+            if it is None:
+                break
+            if it.path:
+                items.append(it)
+            if progress and (i % 500 == 0 or i == len(samples) - 1):
+                progress(i + 1, len(samples))
+    warnings = []
+    bad = sum(1 for it in items if not it.w)
+    if bad:
+        warnings.append(f"{bad} image(s) could not be read")
+    names = list(order)
+    for it in items:
+        for t in it.tags or []:
+            if t not in names:
+                names.append(t)
+    return Dataset(items=items, names={i: n for i, n in enumerate(names)}, fmt="classify", root=str(root),
+                   warnings=warnings, cls_type=types[0])
+
+
+def set_item_class(dataset, item, new_class):
+    """Give one image of a classification test set another class, the way its format stores it: class folders move
+    the image into the other class folder; LabelMe flags are rewritten. Updates the item (path / tags) in place.
+    Raises ValueError when the set cannot be edited (videos, other formats)."""
+    from pathlib import Path
+    from AIO_QC.core.dataset import Sample, open_dataset
+    if dataset is None or dataset.fmt != "classify" or dataset.cls_type is None:
+        raise ValueError("Only classification test sets (class folders, LabelMe flags) can be re-classed here")
+    if item.meta.get("source") == "video":
+        raise ValueError("Sampled video frames have no class to change")
+    adapter = open_dataset(dataset.root, dataset.cls_type)
+    ann = Path(item.label_path) if item.label_path else None
+    s = Sample(key=str(ann or item.path), name=os.path.basename(item.path), ann_path=ann, image_path=Path(item.path),
+               split=item.meta.get("split", ""))
+    try:
+        new = adapter.set_class(s, new_class)
+    except Exception as e:                                  # noqa: BLE001 — AnnotationError, OSError: shown to the user
+        raise ValueError(str(e)) from e
+    if new is not None and new.image_path is not None:
+        item.path = str(new.image_path)
+    item.tags = [new_class]
+    if new_class not in dataset.names.values():
+        dataset.names[max(dataset.names, default=-1) + 1] = new_class
+    return item
 
 
 def load_data_yaml(path, split="val", progress=None, cancel=None):

@@ -3,7 +3,6 @@
 """Phase 6: Frame Extractor -> QC, QC -> Frame Extractor, Testing -> review, one model registry, one task indicator."""
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -146,3 +145,30 @@ def test_one_task_indicator_in_every_mode(shell3, qtbot, tmp_path):  # noqa: F81
     qtbot.waitUntil(lambda: (seen.append(len(tasks.center().tasks)) or not b.is_running()), timeout=120000)
     assert max(seen) >= 1 and not tasks.center().tasks
     b.close()
+
+
+@pytest.mark.parametrize("pre", ["labelme", "yolo"])
+def test_classifier_extraction_opens_as_classification(shell3, qtbot, tmp_path, pre):  # noqa: F811
+    """Frames pre-labelled by a classifier (a real exported ONNX one): LabelMe flags or class folders — Open in
+    Image QC opens them as a classification dataset, every frame with its class."""
+    pytest.importorskip("sklearn")
+    pytest.importorskip("onnx")
+    import cv2
+    from .digits_dataset import build, onnx_classifier
+    meta = build(tmp_path / "digits")
+    imgs = [cv2.imread(p) for p in meta["paths"][:400]]
+    model = onnx_classifier(tmp_path / "digits.onnx", imgs, [meta["truth"][p]["true"] for p in meta["paths"][:400]],
+                            meta["names"])
+    _cli("extract", os.path.join(D, "c.avi"), "-o", str(tmp_path / "out"), "-n", "15", "--model", str(model),
+         "--preannot", pre, "--conf", "0")
+    folder = tmp_path / "out" / "c"
+    n_frames = len(list(folder.rglob("*.jpg")))
+    sh = shell3
+    sh.show("video")
+    assert sh.open_in_qc(str(folder))
+    w = sh.image
+    qtbot.waitUntil(lambda: w.session is not None and w.session.index_complete, timeout=30000)
+    s = w.session
+    assert s.is_classification and s.type.value == ("cls_labelme" if pre == "labelme" else "cls_folders")
+    assert len(s.samples) == n_frames and all(s.tags_of(k) for k in s.by_key)
+    assert set(t for k in s.by_key for t in s.tags_of(k)) <= set(meta["names"])

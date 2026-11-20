@@ -1,58 +1,121 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-Notifications: small, colour-coded, translucent pop-ups in the bottom-right corner of the main window.
+Notifications: cards in the bottom-right corner of the main window, in the app's own look (surface, border, soft
+shadow), light and dark.
 
-    window.toast.show_message("<b>Updated from disk</b> — 3 changed", kind="info", details=fn_returning_text)
+    window.toast.show_message("<b>Updated from disk</b><br>3 changed", kind="info", details=fn_returning_text)
 
-details=…: a "Details" button that grows the notification in place (taller, and wider when the text needs it) into a
-scrollable panel — no extra window. One smooth animation for size and position (the panel is revealed as it grows; no
-second opacity effect — Qt cannot nest them); while open, the
-countdown waits. The text is fetched when it opens (a callable) so it is always current.
+Text: "<b>Title</b> …<br>rest" shows as a title line (semibold) over a muted second line; any other text is one line in
+the normal ink. kind: info · success · warn · error — a tinted badge with the kind's icon, and the countdown line along
+the bottom edge, both in the theme's colour for that kind.
 
-kind: info (blue) · success (green) · warn (amber) · error (red). Fixed saturated colours with white text, so they read
-the same in light and dark themes.
+Actions: [(label, fn)] — the first one is the main action (teal), the others are outlined; a click runs it and closes
+the notification. details=…: a "Details" button that opens a panel inside the notification (no extra window), with
+"Copy". The text is fetched when it opens (a callable), so it is always current.
 
-Motion: they fade in while sliding up, fade out while drifting right, and the others glide into place. The countdown
-bar is a continuous animation at the display's frame rate (sub-pixel width, only the bar's strip is repainted); it
-only runs while AIO QC is the active window and the mouse is not over the notification, so a change noticed while
-you work elsewhere waits for you. key=…: a notification with the same key is updated in place (a short pulse, the bar
-refills smoothly) instead of stacking. Max 4 stacked; sticky=True stays until dismissed.
+Width is fixed (TEXT_W, narrower in a small window): the message never re-wraps while anything animates. Details open
+by HEIGHT only — one smooth movement, anchored at the bottom so the card grows upwards; the panel is laid out once at
+its full size and revealed by a clipping box whose height is the only value that changes per frame.
 
-Painting: the fade is the ONLY graphics effect — Qt does not support an effect inside another one (that produced
-"A paint device can only be painted by one painter at a time" floods and blank notifications).
+Motion: fade in while rising, fade out while drifting right, the others glide into place. The countdown is a
+continuous animation (only the line's strip is repainted); it runs only while AIO QC is the active window, the mouse is
+not over the notification and the details are closed. key=…: a notification with the same key is updated in place (a
+short pulse, the line refills) instead of stacking. Max 4 stacked; sticky=True stays until dismissed.
+
+Painting: the fade is the ONLY graphics effect — Qt does not support an effect inside another one.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPoint, QPropertyAnimation, QRect, QRectF, Qt,
+import re
+
+from PyQt6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPoint, QPropertyAnimation, QRect, QRectF, QSize, Qt,
                           QVariantAnimation, pyqtSignal)
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QTextOption
 from PyQt6.QtWidgets import (QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton,
-                             QTextBrowser, QVBoxLayout, QWidget)
+                             QSizePolicy, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from AIO_QC.utils import tintedIcon
+from AIO_QC.core.diag import ignored as _ignored
 
-KINDS = {  # kind -> (rgb, icon)
-    "info": ((21, 101, 192), "undo"),
-    "success": ((46, 125, 50), "review-ok"),
-    "warn": ((178, 106, 0), "review-flag"),
-    "error": ((198, 40, 40), "review-clear"),
+KINDS = {  # kind -> (theme colour key, icon)
+    "info": ("info", "info"),
+    "success": ("ok", "status-ok"),
+    "warn": ("warn", "status-warning"),
+    "error": ("error", "status-error"),
 }
-ALPHA = 225                      # ~88 % opaque: the window shows through slightly
 MAX_VISIBLE = 4
 MARGIN = 16
 GAP = 2
 SLIDE = 14                       # px the notification rises while appearing
-TEXT_W = 380                     # message width
-DETAILS_W = 600                  # widest a notification grows for its details
-DETAILS_H = 300                  # tallest details panel (it scrolls beyond)
-EXPAND_MS = 340
-BTN_CSS = ("QPushButton{color:white; background: rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.55); "
-           "border-radius:6px; padding:3px 12px;} QPushButton:hover{background: rgba(255,255,255,0.28);}")
+TEXT_W = 400                     # the card's width (fixed; narrower only in a small window)
+DETAILS_H = 220                  # tallest details panel (it scrolls beyond)
+EXPAND_MS = 260
+RADIUS = 10
+PAD = 14
+SHADOW = (8, 6, 8, 10)           # room around the card for its shadow: left, top, right, bottom
+BAR_H = 3
+
+_TITLE = re.compile(r"^\s*(<b>.*?</b>[^<]*(?:<(?!br)[^>]*>[^<]*)*?)\s*<br\s*/?>\s*(.*)$", re.S | re.I)
+
+
+def _tokens():
+    from AIO_QC.widgets import design
+    return design.tokens()
+
+
+def split_message(html: str):
+    """'<b>Title</b> · extra<br>rest' -> (title html, body html); anything else -> ('', html)."""
+    m = _TITLE.match(html or "")
+    if m and m.group(2).strip():
+        return m.group(1).strip(), m.group(2).strip()
+    s = (html or "").strip()
+    if s.lower().startswith("<b>") and s.lower().endswith("</b>") and s.lower().count("<b>") == 1:
+        return s, ""                                        # a title alone
+    return "", s
+
+
+class _Badge(QWidget):
+    """The kind's icon on a tinted rounded square."""
+
+    def __init__(self, kind, parent=None):
+        super().__init__(parent)
+        self.kind = kind
+        self.setFixedSize(32, 32)
+
+    def paintEvent(self, _e):
+        t = _tokens()
+        key, icon = KINDS.get(self.kind, KINDS["info"])
+        col = QColor(t[key])
+        soft = QColor(col)
+        soft.setAlpha(38 if QColor(t["surface"]).lightness() < 80 else 28)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(soft)
+        p.drawRoundedRect(QRectF(self.rect()), 8, 8)
+        tintedIcon(icon, col.name()).paint(p, QRect(7, 7, 18, 18))
+
+
+class _Reveal(QWidget):
+    """Clips the details panel: the panel keeps its full size and position; only this box's height animates."""
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+        self.panel = panel
+        panel.setParent(self)
+        panel.move(0, 0)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(0)
+        self.setVisible(False)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.panel.resize(self.width(), self.panel.height())
 
 
 class _Card(QFrame):
-    """Layout container for the content (the Toast paints body, shadow and bar itself)."""
+    """Layout container for the content (the Toast paints body, border, shadow and countdown itself)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,14 +126,15 @@ class Toast(QWidget):
     closed = pyqtSignal(object)
 
     def __init__(self, parent, html: str, kind: str, actions, sticky: bool, timeout_ms: int, details=None,
-                 on_resize=None):
+                 on_resize=None, width: int = TEXT_W):
         super().__init__(parent)
+        self.kind = kind if kind in KINDS else "info"
         self.details, self.on_resize = details, on_resize
         self._expanded = False
-        self._expand_t = 0.0                   # 0 collapsed … 1 open (animated)
+        self._expand_t = 0.0                   # 0 closed … 1 open (animated)
         self._expand_anim = None
-        self._details_size = (0, 0)
-        self.rgb, icon = KINDS.get(kind, KINDS["info"])
+        self._details_h = 0
+        self._base_h = 0
         self.sticky, self.timeout_ms = sticky, timeout_ms
         self.key = None
         self.progress = None if sticky else 1.0
@@ -78,63 +142,76 @@ class Toast(QWidget):
         self._closing = False
         self._hover = False
         self._placed = False
+        self.card_w = int(width)
         self.card = _Card(self)
+        t = _tokens()
 
-        from AIO_QC.utils import IconLabel
-        ic = IconLabel(tintedIcon(icon, "#ffffff"), 22)          # sharp at any screen scaling
-        self.text = QLabel(html)
-        self.text.setWordWrap(True)
-        self.text.setTextFormat(Qt.TextFormat.RichText)
-        self.text.setMaximumWidth(TEXT_W)
-        self.text.setStyleSheet("color: white; background: transparent;")
-        close = QPushButton("✕")
-        close.setFlat(True)
-        close.setFixedSize(22, 22)
+        self.badge = _Badge(self.kind)
+        self.title = QLabel()
+        self.text = QLabel()                   # the message (kept as .text for callers and tests)
+        for lab in (self.title, self.text):
+            lab.setWordWrap(True)
+            lab.setTextFormat(Qt.TextFormat.RichText)
+            lab.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._style_text(t)
+        close = QToolButton()                                     # a drawn icon: never a missing font glyph
+        close.setIconSize(QSize(12, 12))
+        close.setAutoRaise(True)
+        close.setFixedSize(24, 24)
+        close.setToolTip("Close")
+        close.setAccessibleName("Close notification")
         close.setCursor(Qt.CursorShape.PointingHandCursor)
-        close.setStyleSheet("QPushButton{color: rgba(255,255,255,0.85); border:none; background:transparent;}"
-                            "QPushButton:hover{color:white;}")
         close.clicked.connect(lambda _c=False: self.dismiss())
+        self.close_btn = close
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(3)
+        col.addWidget(self.title)
+        col.addWidget(self.text)
         top = QHBoxLayout()
-        top.setSpacing(10)
-        top.addWidget(ic, 0, Qt.AlignmentFlag.AlignTop)
-        top.addWidget(self.text, 1)
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
+        top.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(col, 1)
         top.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
         lay = QVBoxLayout(self.card)
-        lay.setContentsMargins(14, 10, 10, 12)
+        lay.setContentsMargins(PAD, PAD, PAD - 4, PAD + BAR_H)
+        lay.setSpacing(0)
         lay.addLayout(top)
-        self.panel = None
+
+        self.panel = self.reveal = None
+        self.details_btn = self.copy_btn = None
         if details is not None:
             self.panel = QTextBrowser()
             self.panel.setOpenExternalLinks(False)
             self.panel.setFrameShape(QFrame.Shape.NoFrame)
-            self.panel.setStyleSheet("QTextBrowser{color:white; background: rgba(0,0,0,0.22); border-radius:6px; "
-                                     "padding:6px;} QScrollBar:vertical{width:8px; background:transparent;}"
-                                     "QScrollBar::handle:vertical{background: rgba(255,255,255,0.45); "
-                                     "border-radius:4px; min-height:20px;}"
-                                     "QScrollBar::add-line, QScrollBar::sub-line{height:0;}")
-            self.panel.setFixedHeight(0)
-            self.panel.setVisible(False)
-            lay.addWidget(self.panel)
+            self.panel.setLineWrapMode(QTextBrowser.LineWrapMode.WidgetWidth)
+            self.panel.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+            self.panel.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.reveal = _Reveal(self.panel)
+            lay.addWidget(self.reveal)
+        self.buttons = []
         if actions or details is not None:
             row = QHBoxLayout()
+            row.setContentsMargins(0, 12, 4, 0)
+            row.setSpacing(8)
             row.addStretch(1)
             if details is not None:
-                self.details_btn = QPushButton("Details  ▾")
-                self.details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                self.details_btn.setStyleSheet(BTN_CSS)
-                self.details_btn.clicked.connect(lambda _c=False: self.toggle_details())
+                self.copy_btn = self._button("Copy", lambda: self._copy_details())
+                self.copy_btn.setToolTip("Copy the details")
+                self.copy_btn.setVisible(False)
+                row.addWidget(self.copy_btn)
+                self.details_btn = self._button("Details", self.toggle_details)
                 row.addWidget(self.details_btn)
-            for label, fn in actions or ():
-                b = QPushButton(label)
-                b.setCursor(Qt.CursorShape.PointingHandCursor)
-                b.setStyleSheet(BTN_CSS)
-                b.clicked.connect(lambda _c=False, f=fn: (f(), self.dismiss()))
+            for i, (label, fn) in enumerate(actions or ()):
+                b = self._button(label, lambda f=fn: (f(), self.dismiss()), primary=(i == 0))
                 row.addWidget(b)
             lay.addLayout(row)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 6, 8, 10)          # room for the shadow
+        outer.setContentsMargins(*SHADOW)
         outer.addWidget(self.card)
-        self.adjustSize()
+        self._restyle(t)
+        self.set_message(html)
 
         # ---- fade (the only graphics effect) + motion
         self.fx = QGraphicsOpacityEffect(self)
@@ -157,42 +234,122 @@ class Toast(QWidget):
         app = QApplication.instance()
         app.applicationStateChanged.connect(self._sync_countdown)
 
+    # ------------------------------------------------------------------ content
+    def _button(self, label, slot, primary=False):
+        b = QPushButton(label)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setAutoDefault(False)
+        if primary:
+            b.setProperty("variant", "primary")
+        b.clicked.connect(lambda _c=False: slot())
+        self.buttons.append(b)
+        return b
+
+    def _style_text(self, t):
+        self.title.setStyleSheet(f"QLabel{{color:{t['text']}; background:transparent; font-weight:600;}}")
+        self.text.setStyleSheet(f"QLabel{{color:{t['muted']}; background:transparent;}}")
+
+    def _restyle(self, t):
+        self._style_text(t)
+        self.close_btn.setIcon(tintedIcon("close-x", t["faint"]))
+        self.close_btn.setStyleSheet(f"QToolButton{{border:none; border-radius:6px; background:transparent;}}"
+                                     f"QToolButton:hover{{background:{t['hover']};}}")
+        if self.panel is not None:
+            self.panel.setStyleSheet(
+                f"QTextBrowser{{color:{t['text']}; background:{t['surface2']}; border:1px solid {t['border_soft']};"
+                f" border-radius:7px; padding:6px 4px;}}")
+
+    def _text_width(self) -> int:
+        return max(120, self.card_w - PAD - (PAD - 4) - 32 - 24 - 2 * 12)
+
+    def set_message(self, html: str):
+        self._html = html
+        title, body = split_message(html)
+        if title and not body:
+            title, body = "", f"<span style='font-weight:600'>{title[3:-4]}</span>"
+            self.text.setStyleSheet(f"QLabel{{color:{_tokens()['text']}; background:transparent;}}")
+        elif not title:
+            self.text.setStyleSheet(f"QLabel{{color:{_tokens()['text']}; background:transparent;}}")
+        else:
+            self._style_text(_tokens())
+        self.title.setText(title)
+        self.title.setVisible(bool(title))
+        self.text.setText(body)
+        self.text.setVisible(bool(body))
+        tw = self._text_width()
+        for lab in (self.title, self.text):
+            lab.setFixedWidth(tw)                       # fixed: the text never re-wraps while the card animates
+        self._fit()
+
+    def _fit(self):
+        """Fixed width; height from the content (closed: base height + the revealed part of the details)."""
+        lay = self.card.layout()
+        lay.invalidate()
+        lay.activate()
+        self.layout().invalidate()
+        self.layout().activate()
+        rv = self.reveal.height() if self.reveal is not None else 0
+        h = self.layout().heightForWidth(self.card_w + SHADOW[0] + SHADOW[2]) \
+            if self.layout().hasHeightForWidth() else self.sizeHint().height()
+        self._base_h = h - rv
+        self.setFixedSize(self.card_w + SHADOW[0] + SHADOW[2], h)
+
     # ------------------------------------------------------------------ painting
     def _body(self) -> QRectF:
         return QRectF(self.card.geometry()).adjusted(0.5, 0.5, -0.5, -0.5)
 
     def _bar_rect(self) -> QRect:
         b = self._body()
-        return QRect(int(b.left()) + 6, int(b.bottom()) - 8, int(b.width()) - 10, 9)
+        return QRect(int(b.left()), int(b.bottom()) - BAR_H - 1, int(b.width()) + 1, BAR_H + 2)
 
     def paintEvent(self, _e):
+        t = _tokens()
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         body = self._body()
+        dark = QColor(t["surface"]).lightness() < 80
         p.setPen(Qt.PenStyle.NoPen)
-        for i in range(7, 0, -1):                       # soft shadow: widening, fading rings below the body
-            p.setBrush(QColor(0, 0, 0, int(14 * (1 - i / 8))))
-            p.drawRoundedRect(body.adjusted(-i, -i + 3, i, i + 3), 10 + i, 10 + i)
-        c = QColor(*self.rgb, ALPHA)
-        if self._pulse > 0:                             # updated in place: briefly brighter
-            c = c.lighter(100 + int(28 * self._pulse))
-        p.setPen(QColor(255, 255, 255, 60))
-        p.setBrush(c)
-        p.drawRoundedRect(body, 10, 10)
-        if self.progress is not None:                   # time left: track + sub-pixel bar
-            track = QRectF(body.left() + 10, body.bottom() - 5.5, body.width() - 20, 3.0)
+        for i in range(8, 0, -1):                       # soft shadow: widening, fading rings below the body
+            p.setBrush(QColor(0, 0, 0, int((24 if dark else 11) * (1 - i / 9))))
+            p.drawRoundedRect(body.adjusted(-i, -i + 3, i, i + 3), RADIUS + i, RADIUS + i)
+        path = QPainterPath()
+        path.addRoundedRect(body, RADIUS, RADIUS)
+        fill = QColor(t["surface"])
+        kind = QColor(t[KINDS[self.kind][0]])
+        if self._pulse > 0:                             # updated in place: a brief tint of the kind's colour
+            a = self._pulse * 0.10
+            fill = QColor(int(fill.red() * (1 - a) + kind.red() * a), int(fill.green() * (1 - a) + kind.green() * a),
+                          int(fill.blue() * (1 - a) + kind.blue() * a))
+        p.setPen(QPen(QColor(t["border"]), 1))
+        p.setBrush(fill)
+        p.drawPath(path)
+        if self.progress is not None:                   # time left: a line along the bottom edge, clipped to the body
+            p.save()
+            p.setClipPath(path)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, 45))
-            p.drawRoundedRect(track, 1.5, 1.5)
+            track = QRectF(body.left(), body.bottom() - BAR_H, body.width(), BAR_H + 1)
+            p.setBrush(QColor(t["track"]))
+            p.drawRect(track)
             w = track.width() * max(0.0, min(1.0, self.progress))
             if w > 0.5:
-                p.setBrush(QColor(255, 255, 255, 190))
-                p.drawRoundedRect(QRectF(track.left(), track.top(), w, track.height()), 1.5, 1.5)
+                p.setBrush(kind)
+                p.drawRect(QRectF(track.left(), track.top(), w, track.height()))
+            p.restore()
         p.end()
 
     def _on_progress(self, v):
         self.progress = float(v)
         self.update(self._bar_rect())                   # repaint only the thin strip, every frame
+
+    def changeEvent(self, e):
+        from PyQt6.QtCore import QEvent
+        if e.type() == QEvent.Type.PaletteChange and hasattr(self, "_html") and not self._closing:
+            self._restyle(_tokens())                    # light <-> dark while shown
+            rv = self.reveal.height() if self.reveal is not None else 0
+            self.set_message(self._html)
+            if rv:
+                self.setFixedHeight(self._base_h + rv)
+        super().changeEvent(e)
 
     # ------------------------------------------------------------------ countdown control
     def showEvent(self, e):
@@ -232,11 +389,12 @@ class Toast(QWidget):
         self._sync_countdown()
         super().leaveEvent(e)
 
-    # ------------------------------------------------------------------ details (expand in place)
+    # ------------------------------------------------------------------ details (height only, in place)
     def _details_html(self) -> str:
         try:
             v = self.details() if callable(self.details) else self.details
         except Exception as exc:                                  # never break the notification for it
+            _ignored(exc)
             v = f"Details unavailable: {exc}"
         v = "" if v is None else str(v)
         if "<" in v and ">" in v:
@@ -245,25 +403,30 @@ class Toast(QWidget):
         return ("<pre style='white-space:pre-wrap; margin:0; font-family:monospace; font-size:9pt;'>"
                 f"{escape(v) or 'Nothing to show.'}</pre>")
 
+    def _copy_details(self):
+        if self.panel is not None:
+            QApplication.clipboard().setText(self.panel.toPlainText())
+            if self.copy_btn is not None:
+                self.copy_btn.setText("Copied")
+                from AIO_QC.utils.qt_utils import later
+                later(1200, self, lambda: self.copy_btn.setText("Copy"))
+
     def toggle_details(self):
         if self.panel is None or self._closing:
             return
         self._expanded = not self._expanded
         if self._expanded:
-            if self._expand_t == 0.0:                   # the collapsed message width: grow from it, return to it
-                self._base_w = max(80, self.text.width())
             self.panel.setHtml(self._details_html())
-            fm = self.panel.fontMetrics()
-            doc = self.panel.document()
-            longest = max((fm.horizontalAdvance(l) for l in doc.toPlainText().splitlines()[:400]), default=0)
-            w = int(min(DETAILS_W, max(TEXT_W, longest + 40)))
-            doc.setTextWidth(w - 24)
-            h = int(min(DETAILS_H, doc.size().height() + 16))
-            self._details_size = (w, max(48, h))
-            self.panel.setVisible(True)
-            self.details_btn.setText("Hide details  ▴")
+            pw = self.card_w - PAD - (PAD - 4) - 4
+            self.panel.document().setTextWidth(pw - 22)       # padding + scroll bar
+            need = int(self.panel.document().size().height()) + 16
+            self._details_h = max(48, min(DETAILS_H, need))
+            self.panel.setFixedSize(pw, self._details_h)       # laid out ONCE at full size; revealed by clipping
+            self.reveal.setFixedWidth(pw)
+            self.details_btn.setText("Hide details")
+            self.copy_btn.setVisible(True)
         else:
-            self.details_btn.setText("Details  ▾")
+            self.details_btn.setText("Details")
         self._sync_countdown()
         self._animate_expand(1.0 if self._expanded else 0.0)
 
@@ -282,39 +445,22 @@ class Toast(QWidget):
         a.start()
 
     def _set_expand(self, t):
-        """One frame: panel height + message width, then the whole notification re-anchors."""
+        """One frame: only the revealed height changes (plus the 10 px gap above the panel, revealed with it)."""
         t = float(t)
         self._expand_t = t
-        w, h = self._details_size
-        base = getattr(self, "_base_w", TEXT_W)
-        cur = int(round(base + (max(w, base) - base) * t))
-        self.panel.setFixedHeight(int(round(h * t)))
-        self.panel.setFixedWidth(cur)
-        self.text.setMaximumWidth(max(TEXT_W, cur) if t > 0 else TEXT_W)
-        if t > 0:
-            self.text.setMinimumWidth(max(0, cur - 64))  # beside icon + ✕: as wide as the panel, no jump
-        else:
-            self.text.setMinimumWidth(0)
-        self._fit()
+        full = self._details_h + 10
+        rv = int(round(full * t))
+        self.reveal.setFixedHeight(rv)
+        self.reveal.setVisible(rv > 0)
+        self.panel.move(0, 10)
+        self.setFixedHeight(self._base_h + rv)
         if self.on_resize is not None:
-            self.on_resize(self)                                 # stays bottom-right anchored, every frame
-
-    def _fit(self):
-        """Resize to the content — also narrower again (adjustSize keeps the width of a word-wrapped layout)."""
-        for lay in (self.card.layout(), self.layout()):
-            if lay is not None:
-                lay.invalidate()
-                lay.activate()
-        self.resize(self.sizeHint())
+            self.on_resize(self)                        # stays bottom-right anchored, every frame
 
     def _expand_done(self, to):
         self._expand_anim = None
         if to == 0.0 and self.panel is not None:
-            self.panel.setVisible(False)
-            self.panel.setMinimumWidth(0)
-            self.panel.setMaximumWidth(16777215)
-            self.text.setMinimumWidth(0)
-            self.text.setMaximumWidth(TEXT_W)
+            self.copy_btn.setVisible(False)
             self._fit()
             if self.on_resize is not None:
                 self.on_resize(self)
@@ -330,19 +476,30 @@ class Toast(QWidget):
         fade = QPropertyAnimation(self.fx, b"opacity", self)
         fade.setStartValue(0.0)
         fade.setEndValue(1.0)
-        fade.setDuration(260)
+        fade.setDuration(240)
         fade.setEasingCurve(QEasingCurve.Type.OutCubic)
         rise = QPropertyAnimation(self, b"pos", self)
         rise.setStartValue(self.pos())
         rise.setEndValue(target)
-        rise.setDuration(260)
+        rise.setDuration(240)
         rise.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._rise = rise
         self._run_motion(fade, rise)
         self._sync_countdown()
+
+    def _appearing(self) -> bool:
+        rise = getattr(self, "_rise", None)
+        return (rise is not None and self._motion is not None and not self._closing
+                and self._motion.state() == QParallelAnimationGroup.State.Running)
 
     def glide_to(self, target: QPoint):
         """Another notification left / arrived: move smoothly to the new slot."""
         if not self._placed or self._closing:
+            return
+        if self._appearing():
+            # still rising into place: aim the rise at the new slot. A second animation of `pos` would make Qt stop
+            # the first one — and with it the fade, leaving the notification invisible (several posted at once).
+            self._rise.setEndValue(target)
             return
         if self.pos() == target and self._glide.state() != QPropertyAnimation.State.Running:
             return
@@ -361,12 +518,12 @@ class Toast(QWidget):
         fade = QPropertyAnimation(self.fx, b"opacity", self)
         fade.setStartValue(self.fx.opacity())
         fade.setEndValue(0.0)
-        fade.setDuration(220)
+        fade.setDuration(200)
         fade.setEasingCurve(QEasingCurve.Type.InCubic)
         drift = QPropertyAnimation(self, b"pos", self)
         drift.setStartValue(self.pos())
         drift.setEndValue(self.pos() + QPoint(24, 0))
-        drift.setDuration(220)
+        drift.setDuration(200)
         drift.setEasingCurve(QEasingCurve.Type.InCubic)
         group = self._run_motion(fade, drift)
         group.finished.connect(self._gone)
@@ -391,9 +548,11 @@ class Toast(QWidget):
         self.deleteLater()
 
     def update_message(self, html: str, timeout_ms: int | None = None):
-        """Same notification, new content: a short pulse, the bar refills smoothly, full time again."""
-        self.text.setText(html)
-        self.adjustSize()
+        """Same notification, new content: a short pulse, the line refills smoothly, full time again."""
+        rv = self.reveal.height() if self.reveal is not None else 0
+        self.set_message(html)
+        if rv:
+            self.setFixedHeight(self._base_h + rv)
         self.timeout_ms = timeout_ms or self.timeout_ms
         pulse = QVariantAnimation(self)
         pulse.setStartValue(1.0)
@@ -431,6 +590,9 @@ class ToastManager:
     def find(self, key: str):
         return next((t for t in self.toasts if t.key == key and not t._closing), None)
 
+    def _card_width(self) -> int:
+        return max(240, min(TEXT_W, self.window.width() - 2 * MARGIN - SHADOW[0] - SHADOW[2]))
+
     def show_message(self, html: str, kind: str = "info", actions=(), sticky: bool = False, timeout_ms: int | None = None,
                      icon: str | None = None, key: str | None = None, details=None):
         timeout_ms = timeout_ms or (12000 if kind in ("warn", "error") else 8000)
@@ -447,7 +609,8 @@ class ToastManager:
         live = [t for t in self.toasts if not t._closing]
         while len(live) >= MAX_VISIBLE:
             live.pop(0).dismiss()
-        t = Toast(self.window, html, kind, actions, sticky, timeout_ms, details=details, on_resize=self._resized)
+        t = Toast(self.window, html, kind, actions, sticky, timeout_ms, details=details, on_resize=self._resized,
+                  width=self._card_width())
         t.key = key
         t.closed.connect(self._closed)
         self.toasts.append(t)
@@ -466,12 +629,11 @@ class ToastManager:
     def _targets(self) -> dict:
         w = self.window
         sb = w.statusBar().height() if w.statusBar() and not w.statusBar().isHidden() else 0    # window may be hidden
-        y = w.height() - sb - MARGIN
+        y = w.height() - sb - MARGIN + SHADOW[3]
         out = {}
         for t in reversed([t for t in self.toasts if not t._closing]):     # newest at the bottom
-            t.adjustSize()
             y -= t.height()
-            out[t] = QPoint(max(MARGIN, w.width() - t.width() - MARGIN), max(MARGIN, y))
+            out[t] = QPoint(max(0, w.width() - t.width() - MARGIN + SHADOW[2]), max(0, y))
             y -= GAP
         return out
 
@@ -480,7 +642,9 @@ class ToastManager:
         for t, pos in self._targets().items():
             if t is toast or t.pos().y() < toast.pos().y():
                 t._glide.stop()
-                if t._placed and not t._closing:
+                if t._appearing():
+                    t._rise.setEndValue(pos)
+                elif t._placed and not t._closing:
                     t.move(pos)
             else:
                 t.glide_to(pos)

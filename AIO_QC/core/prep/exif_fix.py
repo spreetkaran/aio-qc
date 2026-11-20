@@ -20,10 +20,13 @@ Every rewritten file is kept (compressed) in the run log first, so a run can be 
 """
 from __future__ import annotations
 
+import json
+
 import os
 import tempfile
 
 from . import common as C
+from AIO_QC.core.diag import ignored as _ignored
 
 ROTATED = {5, 6, 7, 8}
 ORIENT_TEXT = {2: "mirrored", 3: "rotated 180°", 4: "flipped", 5: "transposed", 6: "rotated 90°",
@@ -78,10 +81,12 @@ def exif_info(path):
         with Image.open(path) as im:
             try:
                 o = int(im.getexif().get(0x0112, 1) or 1)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 o = 1
             return im.width, im.height, o
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
@@ -156,7 +161,8 @@ def bake(path: str) -> tuple[int, int]:
             try:
                 from PIL import JpegImagePlugin
                 sub = JpegImagePlugin.get_sampling(im)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 sub = None
         exif = im.getexif()
         out = ImageOps.exif_transpose(im)
@@ -177,6 +183,9 @@ def bake(path: str) -> tuple[int, int]:
     os.close(fd)
     try:
         out.save(tmp, format=fmt, **kw)
+        from .. import provenance as PV
+        PV.embed_file(tmp, PV.image_record(PV.make_origin("rule", "Fix EXIF rotation"),
+                                           detail="pixels turned upright, EXIF orientation set to 1"))
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -245,7 +254,11 @@ def run(P, log_dir, progress=None, cancel=None) -> dict:
                         d = C.read_json(ex["json"])
                         if not isinstance(d, dict):
                             raise ValueError("label file is not a LabelMe JSON")
+                        from .. import provenance as PV
+                        before = json.loads(json.dumps({"shapes": d.get("shapes") or [],
+                                                        PV.KEY: d.get(PV.KEY)}, default=str))
                         rotate_labelme(d, o, W, H)
+                        PV.stamp_labelme(d, o=PV.make_origin("rule", "Fix EXIF rotation"), old=before)
                         new_json = C.dump_json(d)
                     if ex.get("txt"):
                         with open(ex["txt"], encoding="utf-8") as f:

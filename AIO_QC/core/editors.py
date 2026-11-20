@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .io import atomic_write_text
+from AIO_QC.core.diag import ignored as _ignored
 
 LABELME, LABELIMG = "labelme", "labelimg"
 TITLES = {LABELME: "labelme", LABELIMG: "labelImg"}
@@ -276,7 +277,8 @@ def python_version(py: str | Path) -> tuple[int, int] | None:
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
         a, b = out.split(".")
         return int(a), int(b)
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
@@ -288,8 +290,8 @@ def find_base_python(minimum: tuple[int, int]) -> tuple[str, tuple[int, int]] | 
     try:
         from .env_manager import discover_envs
         cands += [py for _name, py in discover_envs()]
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     seen = set()
     for py in cands:
         key = os.path.normcase(os.path.abspath(py))

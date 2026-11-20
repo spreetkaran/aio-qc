@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-📥 Issues Inbox — every tool's findings in one place, one risk score per file, one review queue (worst first).
+ Issues Inbox — every tool's findings in one place, one risk score per file, one review queue (worst first).
 Model/view table (scales to hundreds of thousands of files); refreshes live as tools publish and marks change.
 """
 from __future__ import annotations
@@ -101,7 +101,8 @@ class IssuesDialog(QDialog):
         self.app, self.session = app, app.session
         self.setWindowTitle(self.TITLE)
         self.setWindowIcon(newIcon("tool-inbox"))
-        self.resize(int(app.width() * 0.7), int(app.height() * 0.75))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
         self.tool_filter: set[str] = set()
 
         self.head = QLabel("")
@@ -126,7 +127,7 @@ class IssuesDialog(QDialog):
         self.search.setClearButtonEnabled(True)
         for w in (self.sev, self.rev):
             w.currentIndexChanged.connect(lambda _i: self.refresh())
-        self.search.textChanged.connect(lambda _t: self._debounce.start())
+        self.search.textChanged.connect(self._debounce_soon)
         flt.addWidget(QLabel("Show:"))
         flt.addWidget(self.sev)
         flt.addWidget(self.rev)
@@ -137,6 +138,8 @@ class IssuesDialog(QDialog):
         self.proxy.setSourceModel(self.model)
         self.view = QTableView()
         self.view.setModel(self.proxy)
+        from .base_scan import install_finding_keys
+        install_finding_keys(self)
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -168,7 +171,7 @@ class IssuesDialog(QDialog):
         foot.addWidget(newButton("Fix in editor", icon="tool-editor", slot=self._fix))
         foot.addStretch(1)
         self.clear_btn = QToolButton()
-        self.clear_btn.setText("Clear findings ▾")
+        self.clear_btn.setText("Clear findings")
         self.clear_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.clear_btn.setMenu(QMenu(self.clear_btn))
         self.clear_btn.menu().aboutToShow.connect(self._fill_clear)
@@ -185,8 +188,8 @@ class IssuesDialog(QDialog):
 
         self._debounce = QTimer(self, singleShot=True, interval=250, timeout=self.refresh)
         self.session.issuesChanged.connect(self._debounce.start)
-        self.session.reviewChanged.connect(lambda _k: self._debounce.start())
-        self.session.samplesRemoved.connect(lambda _k: self._debounce.start())
+        self.session.reviewChanged.connect(self._debounce_soon)
+        self.session.samplesRemoved.connect(self._debounce_soon)
         self.refresh()
 
     # ------------------------------------------------------------------ data
@@ -279,6 +282,27 @@ class IssuesDialog(QDialog):
             it.setData(Qt.ItemDataRole.UserRole, (key, x.shape))
             self.details.addItem(it)
 
+    # ---- F8 / Shift+F8 (app.step_finding): the files of the inbox, worst first, as sorted / filtered
+    def finding_list(self) -> list:
+        return [(self.proxy.index(r, 0).data(Qt.ItemDataRole.UserRole), None) for r in range(self.proxy.rowCount())]
+
+    def finding_count(self) -> int:
+        return self.proxy.rowCount()
+
+    def finding_at(self, i: int):
+        return (self.proxy.index(i, 0).data(Qt.ItemDataRole.UserRole), None) if 0 <= i < self.proxy.rowCount() else None
+
+    def finding_index(self, key, shape, exact: bool = False) -> int:
+        return next((r for r in range(self.proxy.rowCount())
+                     if self.proxy.index(r, 0).data(Qt.ItemDataRole.UserRole) == key), -1)
+
+    def open_finding(self, i: int):
+        if 0 <= i < self.proxy.rowCount():
+            idx = self.proxy.index(i, 0)
+            self.view.selectRow(i)
+            self.view.scrollTo(idx)
+            self._open(idx)
+
     def _open(self, idx):
         key = self._key_at(idx)
         if key:
@@ -345,3 +369,7 @@ class IssuesDialog(QDialog):
     def closeEvent(self, e):
         self.app.forget_dialog(self)
         super().closeEvent(e)
+
+    def _debounce_soon(self, *_a):
+        """(a bound slot: disconnected with this window — a lambda would outlive it)"""
+        self._debounce.start()

@@ -19,8 +19,8 @@ class ShortcutsDialog(QDialog):
         """entries: list of (action_id, QAction, category); defaults: id -> default sequence string."""
         super().__init__(parent)
         self.setWindowTitle("Customize keyboard shortcuts")
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 720, 600)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "small")      # by the screen it opens on
         self.entries, self.defaults = entries, defaults
         lay = QVBoxLayout(self)
 

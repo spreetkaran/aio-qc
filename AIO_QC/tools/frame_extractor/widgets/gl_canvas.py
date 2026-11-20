@@ -18,7 +18,7 @@ GPU video canvas (OpenGL via QOpenGLWidget) - the media-player path.
 
 import numpy as np
 from loguru import logger
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPainter, QSurfaceFormat, QVector2D, QVector3D, QVector4D
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtOpenGL import (QOpenGLShaderProgram, QOpenGLShader, QOpenGLBuffer, QOpenGLVersionFunctionsFactory,
@@ -27,6 +27,7 @@ from PyQt6.QtOpenGL import (QOpenGLShaderProgram, QOpenGLShader, QOpenGLBuffer, 
 from AIO_QC.tools.frame_extractor.widgets.video_canvas import CanvasMixin
 from AIO_QC.tools.frame_extractor.widgets.gl_shaders import VERTEX, FRAGMENT, yuv_uniforms, taps_for
 from AIO_QC.utils.qt_utils import later   # owner-bound timer: never fires after `self` is gone
+from AIO_QC.core.diag import ignored as _ignored
 
 GL_TEXTURE_2D, GL_UNSIGNED_BYTE, GL_FLOAT = 0x0DE1, 0x1401, 0x1406
 GL_LUMINANCE, GL_LUMINANCE_ALPHA, GL_RGB = 0x1909, 0x190A, 0x1907
@@ -86,7 +87,31 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
     # ------------------------------------------------------------------ libmpv
     def attach_mpv(self, player):
         self._mpv = player
-        player.on_update = self._mpv_frame.emit        # thread-safe: queued to the GUI thread
+        # mpv calls this from its own threads: it only raises a flag — no Qt call ever runs on those threads (a
+        # signal emitted from there crashed with an access violation on Windows). The UI thread picks the flag up
+        # once per display frame and repaints.
+        self._mpv_dirty = False
+
+        def mark():
+            self._mpv_dirty = True
+        player.on_update = mark
+        if getattr(self, "_mpv_poll", None) is None:
+            from PyQt6.QtCore import QTimer
+            self._mpv_poll = QTimer(self)
+            self._mpv_poll.setTimerType(Qt.TimerType.PreciseTimer)
+            try:
+                from AIO_QC.widgets.mini_session import refresh_hz
+                self._mpv_poll.setInterval(max(2, int(1000 / refresh_hz(self)) // 2))
+            except Exception as _exc:
+                _ignored(_exc)
+                self._mpv_poll.setInterval(4)
+            self._mpv_poll.timeout.connect(self._mpv_check)
+        self._mpv_poll.start()
+
+    def _mpv_check(self):
+        if getattr(self, "_mpv_dirty", False):
+            self._mpv_dirty = False
+            self.update()
 
     def set_mpv_active(self, on, after_restarts=None):
         self._mpv_on = bool(on)
@@ -103,6 +128,10 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
         """Free mpv's render context with our GL context current (must precede MpvPlayer.terminate)."""
         m = self._mpv
         self._mpv, self._mpv_on = None, False
+        if getattr(self, "_mpv_poll", None) is not None:
+            self._mpv_poll.stop()
+        if m is not None:
+            m.on_update = None
         if m is None or m.render_ctx is None:
             return
         try:
@@ -113,8 +142,8 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
         finally:
             try:
                 self.doneCurrent()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
 
     def _mpv_init_render(self, m):
         """mpv's OpenGL render context on our GL context (which must be current)."""
@@ -176,8 +205,8 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
         finally:
             try:
                 self.doneCurrent()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         return True
 
     def verify_mpv(self, ref_bgr):
@@ -215,8 +244,8 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
         finally:
             try:
                 self.doneCurrent()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
         ptr = img.constBits()
         ptr.setsize(img.sizeInBytes())
         got = np.frombuffer(ptr, np.uint8).reshape(h, img.bytesPerLine() // 4, 4)[:, :w, :3].astype(np.float32)
@@ -296,7 +325,8 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
             try:
                 v = self.gl.glGetIntegerv(GL_MAX_TEXTURE_SIZE)
                 self._max_tex = int(v[0] if isinstance(v, (list, tuple)) else v)
-            except Exception:
+            except Exception as _exc:
+                _ignored(_exc)
                 self._max_tex = 8192
             self.context().aboutToBeDestroyed.connect(self.release_mpv)
             self._ok = True
@@ -304,6 +334,7 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
             logger.info(f"GPU canvas: OpenGL {ctx.majorVersion()}.{ctx.minorVersion()}, "
                         f"swap interval {ctx.swapInterval()}")
         except Exception as e:
+            _ignored(e)
             self._ok = False
             self._fail(f"{type(e).__name__}: {e}")
 
@@ -383,8 +414,8 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
                 if g.glGetError() == 0:
                     self._mode, self._tex_size = 2, (w, h)
                     return True
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             self._bgra_ok = False
             logger.info("GPU canvas: BGRA upload unavailable, using RGB")
         g.glBindTexture(GL_TEXTURE_2D, self._texture("rgb", w, h, GL_RGB))
@@ -405,12 +436,14 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
                 try:
                     self._draw_mpv()
                 except Exception as e:           # mpv unusable here: built-in engine takes over
+                    _ignored(e)
                     self._mpv_on = False
                     later(0, self, lambda e=e: self.mpv_failed.emit(f"{type(e).__name__}: {e}"))
                     self._draw_video()
             else:
                 self._draw_video()
         except Exception as e:
+            _ignored(e)
             self._fail(f"{type(e).__name__}: {e}")
         finally:
             self._restore_gl_state()      # before QPainter draws text: see _restore_gl_state
@@ -438,8 +471,8 @@ class GLVideoCanvas(CanvasMixin, QOpenGLWidget):
                 self.prog.release()
             if getattr(self, "vbo", None) is not None:
                 self.vbo.release()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
     def _draw_video(self):
         g = self.gl if self._ok else None

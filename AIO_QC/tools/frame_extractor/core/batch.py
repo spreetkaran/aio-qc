@@ -4,6 +4,7 @@
 """Shared batch planning + a blocking runner (used by the CLI; the GUI polls the
 same messages with a QTimer)."""
 import os
+import queue
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
@@ -12,6 +13,7 @@ import cv2
 
 from AIO_QC.tools.frame_extractor.core.extract import job_process
 from AIO_QC.tools.frame_extractor.core.sources import parse_time
+from AIO_QC.core.diag import ignored as _ignored
 
 
 def _quick_duration(job):
@@ -50,6 +52,23 @@ def plan_tasks(jobs, workers, split=True, min_chunk_sec=60.0, no_split=False):
 
 def worker_threads(workers):
     return max(1, (os.cpu_count() or 2) // max(1, workers))
+
+
+def job_record(job, settings, stats):
+    """The output folder's provenance: frames of which video, with which settings."""
+    try:
+        from dataclasses import asdict, is_dataclass
+        from AIO_QC.core import provenance as PV
+        if not PV.enabled() or not stats or stats.get("cancelled"):
+            return
+        st = asdict(settings) if is_dataclass(settings) else dict(settings or {})
+        PV.record(job.output_dir, "extract", "Frame Extractor", inputs=[job.video_path], settings=st,
+                  counts={k: v for k, v in stats.items() if isinstance(v, (int, float))},
+                  o=PV.make_origin("conversion", "Frame Extractor", detail="frames of a video"),
+                  output_fingerprint=False)
+    except Exception as exc:                            # noqa: BLE001 — a record never fails a job
+        from AIO_QC.core.diag import ignored
+        ignored(exc)
 
 
 def merge_stats(a, b):
@@ -94,7 +113,7 @@ def run_batch(jobs, settings, workers=2, split=True, min_chunk_sec=60.0, on_even
                     cancel_event.set()
                 try:
                     msg = q.get(timeout=0.2)
-                except Exception:
+                except queue.Empty:                     # (a dead manager raises something else: handled below)
                     if all(f.done() for f in futs) and q.empty():
                         break
                     continue
@@ -111,6 +130,8 @@ def run_batch(jobs, settings, workers=2, split=True, min_chunk_sec=60.0, on_even
                     if not isinstance(r, str):          # an earlier chunk error sticks
                         results[ji] = msg[2] if r is None else merge_stats(r, msg[2])
                     pending[ji] -= 1
+                    if pending[ji] == 0 and not isinstance(results[ji], str):
+                        job_record(jobs[ji], settings, results[ji])     # every chunk done: one record
                     if pending[ji] == 0 and on_event:
                         on_event("done", ji, results[ji])
                 elif kind == "error":
@@ -123,8 +144,8 @@ def run_batch(jobs, settings, workers=2, split=True, min_chunk_sec=60.0, on_even
         try:
             if cancel_event is not None:
                 cancel_event.set()             # workers checkpoint and stop at the next frame
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         procs.terminate_pool(ex, grace=3.0)    # Ctrl+C / error: don't wait for whole jobs to finish
         ex = None
         raise
@@ -133,6 +154,6 @@ def run_batch(jobs, settings, workers=2, split=True, min_chunk_sec=60.0, on_even
             ex.shutdown(wait=True)
         try:
             manager.shutdown()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
     return results

@@ -19,19 +19,22 @@ from collections import deque
 import cv2
 import numpy as np
 from PyQt6.QtCore import Qt, QThread, QSize, pyqtSignal
+
+from AIO_QC.widgets.lifecycle import RetainedThread
 from PyQt6.QtGui import QImage, QIcon, QColor
 from PyQt6.QtWidgets import (
-    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView,
+    QDockWidget, QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QLabel, QToolButton, QPushButton, QCheckBox, QComboBox, QSpinBox, QDoubleSpinBox, QMenu,
 )
 
 from AIO_QC.tools.frame_extractor.core.markers import SUGGEST_MODES
 from AIO_QC.tools.frame_extractor.utils import newIcon
+from AIO_QC.core.diag import ignored as _ignored
 
 GREEN, BLUE = QColor("#43A047"), QColor("#1E88E5")
 
 
-class MarkerWorker(QThread):
+class MarkerWorker(RetainedThread, QThread):
     """Saves / snaps markers with its own decoder (never blocks playback)."""
     saved = pyqtSignal(int, str, QImage)
     snapped = pyqtSignal(int, int, float)
@@ -91,6 +94,7 @@ class MarkerWorker(QThread):
                             from AIO_QC.tools.frame_extractor.widgets.models_dialog import detector_kwargs
                             dets = load_detectors(c["models"], c["conf"], **detector_kwargs(c))
                         except Exception as e:
+                            _ignored(e)
                             self.failed.emit(-1, f"models not loaded, saving without pre-annotations: {e}")
                     video, out, backend, ext = self.args
                     oc = self.out_cfg
@@ -105,6 +109,7 @@ class MarkerWorker(QThread):
                         new, sharp = mx.snap(cmd[1], cmd[2], cmd[3])
                         self.snapped.emit(cmd[1], new, sharp)
                 except Exception as e:
+                    _ignored(e)
                     self.failed.emit(cmd[1], str(e))
                 if not self.pending():
                     self.idle.emit()
@@ -140,7 +145,8 @@ class MarkersDock(QDockWidget):
         lay = QVBoxLayout(body)
         lay.setContentsMargins(6, 6, 6, 6)
 
-        row = QHBoxLayout()
+        from AIO_QC.utils.qt_utils import FlowLayout     # rows wrap in a narrow side panel
+        row = FlowLayout(spacing=4)
         b = QToolButton()
         b.setDefaultAction(toggle_action)
         b.setAutoRaise(True)
@@ -198,7 +204,7 @@ class MarkersDock(QDockWidget):
         self.table.cellDoubleClicked.connect(lambda r, c: self.jump_requested.emit(self._frame(r)))
         lay.addWidget(self.table, 1)
 
-        opts = QHBoxLayout()
+        opts = FlowLayout(spacing=8)
         self.auto = QCheckBox("Auto-extract new markers")
         self.auto.setToolTip("Save each marker in the background as soon as it is placed")
         self.crop = QCheckBox("Crop to ROI")
@@ -212,7 +218,7 @@ class MarkersDock(QDockWidget):
         opts.addStretch(1)
         lay.addLayout(opts)
 
-        btns = QHBoxLayout()
+        btns = FlowLayout(spacing=6)
         self.extract_btn = QPushButton("Extract pending")
         self.extract_btn.setToolTip('Save every pending marker (full resolution, ROI crop if set, label files if chosen) - Ctrl+E.')
         self.extract_btn.setIcon(newIcon("extract"))

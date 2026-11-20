@@ -13,6 +13,8 @@ import os
 import time
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+
+from AIO_QC.widgets.lifecycle import RetainedThread
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QSlider, QSpinBox, QLabel, QToolButton, QDialog,
     QLineEdit, QMenu, QDialogButtonBox, QGroupBox, QPushButton, QPlainTextEdit,
@@ -30,6 +32,7 @@ from AIO_QC.tools.frame_extractor.core.naming import (
 )
 from AIO_QC.tools.frame_extractor.utils import newIcon
 from AIO_QC.utils.fx_settings import fx_settings
+from AIO_QC.core.diag import ignored as _ignored
 
 DEFAULTS = dict(ext=iio.DEFAULT_EXT, quality=iio.DEFAULT_QUALITY, template=DEFAULT_TEMPLATE, on_exists="overwrite")
 
@@ -145,7 +148,7 @@ class OutputQuickBar(QWidget):
         self.changed.emit(dict(self.cfg))
 
 
-class _SizeWorker(QThread):
+class _SizeWorker(RetainedThread, QThread):
     done = pyqtSignal(int, int, float)      # token, bytes, ms
 
     def __init__(self, img, ext, quality, token):
@@ -157,7 +160,8 @@ class _SizeWorker(QThread):
             t = time.perf_counter()
             n = iio.encoded_size(self.img, self.ext, self.quality)
             self.done.emit(self.token, n, (time.perf_counter() - t) * 1000)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             self.done.emit(self.token, -1, 0.0)
 
 
@@ -171,8 +175,8 @@ class OutputSettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Output format & file naming")
         self.setWindowIcon(newIcon("save"))
-        from AIO_QC.tools.frame_extractor.utils.qt_utils import preferred_size
-        preferred_size(self, 760, 640)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "small")      # by the screen it opens on
         self.cfg = dict(cfg)
         self.ctx = context or {}
         self._token = 0
@@ -240,7 +244,7 @@ class OutputSettingsDialog(QDialog):
         self.tpl.textChanged.connect(self._changed)
         tok = QToolButton()
         tok.setToolTip('Insert a token at the cursor.')
-        tok.setText("Insert token ▾")
+        tok.setText("Insert token")
         tok.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         m = QMenu(tok)
         for t, desc in TOKENS.items():
@@ -300,8 +304,14 @@ class OutputSettingsDialog(QDialog):
 
     @staticmethod
     def _mono():
-        from PyQt6.QtGui import QFontDatabase
-        return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        """File-name template and preview: the app's file-name font (AIO Geist)."""
+        try:
+            from AIO_QC.widgets.design import mono
+            return mono()
+        except Exception as _exc:
+            _ignored(_exc)
+            from PyQt6.QtGui import QFontDatabase
+            return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
     def _insert(self, text):
         self.tpl.insert(text)

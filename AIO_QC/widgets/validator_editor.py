@@ -31,7 +31,8 @@ class ValidatorEditor(QDialog):
         self.normalize_opts = normalize_opts
         self.setWindowTitle("Validators")
         self.setWindowIcon(newIcon("tool-validation"))
-        self.resize(1020, 700)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
         self.current = None                     # Validator being viewed (None = new draft)
         self.saved_name: str | None = None
 
@@ -336,6 +337,7 @@ class ValidatorEditor(QDialog):
         path = VL.save(title, code, self.where.currentData(), self.root)
         self.saved_name = path.stem
         self._refresh_list(select=path.stem)
+        self._select(self.listw.currentItem())             # the saved one is now the one shown (Delete, Copy work)
 
     def _delete(self):
         v = self.current

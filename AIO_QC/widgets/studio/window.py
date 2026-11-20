@@ -22,8 +22,8 @@ from loguru import logger
 from PyQt6.QtCore import QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDockWidget, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog,
-    QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
-    QStackedWidget, QTableView, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
+    QStackedWidget, QTableView, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from AIO_QC.core.tabular import io as TIO
@@ -38,6 +38,7 @@ from .profile_view import ProfileView
 from .step_form import StepDialog, _mono
 from .table_model import FrameModel
 from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.core.diag import ignored as _ignored
 
 WS_FILTER = "Data Studio workspace (*.aioqc-data.json);;JSON (*.json)"
 GROUPS = ["Columns", "Rows", "Clean", "Reshape", "Features"]
@@ -57,6 +58,11 @@ class Job(RetainedThread, QThread):
         except Exception as exc:                       # reported in the window; never kills the app
             logger.opt(exception=exc).debug("data studio job failed")
             self.failed.emit(f"{type(exc).__name__}: {exc}" if not isinstance(exc, StepError) else str(exc), exc)
+
+
+# left out of the menus by View ▸ Simple Menus (Ctrl+K still finds them, their shortcuts still work)
+STUDIO_ADVANCED = {"Export pandas Code", "Export PySpark Code", "Run on Spark", "Reload Source", "Duplicate Table",
+                   "Move Step Up", "Move Step Down", "Formula Reference", "Save Workspace As"}
 
 
 class StudioWindow(QMainWindow):
@@ -89,6 +95,11 @@ class StudioWindow(QMainWindow):
         if s is not None:
             self.restoreState(s)
         self._show_welcome()
+        from AIO_QC.widgets import ui_level
+        lvl = ui_level.install(self, advanced=STUDIO_ADVANCED, reason=self._disabled_reason)
+        self._view_menu.addSeparator()
+        self._view_menu.addAction(lvl.action)
+        lvl._apply(ui_level.simple())
 
     # ================================================================== UI
     def _build(self):
@@ -157,12 +168,24 @@ class StudioWindow(QMainWindow):
         d.addAction(A("Rename Table…", self.rename_table))
         d.addAction(A("Close Table", self.close_table))
         v = mb.addMenu("&View")
+        self._view_menu = v
         for i, (name, key) in enumerate((("Data", "Ctrl+1"), ("Profile", "Ctrl+2"), ("Chart", "Ctrl+3"),
                                          ("Code", "Ctrl+4"))):
             v.addAction(A(name, lambda n=i: self.tabs.setCurrentIndex(n), key))
         v.addSeparator()
         h = mb.addMenu("&Help")
-        h.addAction(A("Data Studio Guide", self.show_help, "F1"))
+        # Help: one of each, as in the other modes — the tour, the guide, the live shortcuts
+        a.tour = A("Quick Tour", lambda: self.start_tour(force=True, empty_ok=True), None, "get-started",
+                   "A short guided tour of the window")
+        a.guide = A("User Guide", self.show_help, "F1", "info", "How Data Studio works: every step, chart and export")
+        a.keymap = A("Keyboard Shortcuts", self.toggle_keymap, ["?", "Ctrl+F1"], "keyboard",
+                     "Every key over the window — type to filter, click to run")
+        h.addAction(a.tour)
+        h.addAction(a.guide)
+        h.addAction(a.keymap)
+        h.addSeparator()
+        h.addAction(A("Open a Sample Table", self.open_sample_table, None, "folder-line",
+                      "A small table of street images with a few gaps and odd values — to learn with"))
         h.addAction(A("Formula Reference", lambda: QMessageBox.information(self, "Formulas", S.OPS["derive"].help)))
         h.addSeparator()
         from AIO_QC.widgets.about import show_about
@@ -177,26 +200,58 @@ class StudioWindow(QMainWindow):
         self.mode_switch.setVisible(self.shell is not None)
         from AIO_QC.widgets.settings_dialog import install_settings
         install_settings(self)                              # gear in the corner + File ▸ Settings… (Ctrl+,)
+        self._palette = self._keymap = None
+        a.palette = A("Find a Command…", self.open_palette, "Ctrl+K", "search",
+                      "Run any command by typing a few letters of its name")
+        e.addSeparator()
+        e.addAction(a.palette)                              # as in Image QC: a command, not help
+        self.keymap_extra = {"Keyboard": [("Find a command", "Ctrl+K"), ("These shortcuts", "? · Ctrl+F1"),
+                                          ("Add a step", "Ctrl+T"), ("Data · Profile · Chart · Code", "Ctrl+1 … 4")]}
 
-        tb = QToolBar("Main")
+        # toolbar: the new design (as Image QC) — outlined text buttons for the main steps, quiet icon buttons for
+        # the rest, the result actions on the right
+        from AIO_QC.widgets.tool_bar import ToolBar
+        from AIO_QC.widgets.status_button import StatusButton
+        from AIO_QC.widgets.chrome import action_button
+        tb = ToolBar("Main")
         tb.setObjectName("studioToolbar")
-        tb.setIconSize(QSize(20, 20))
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        for x in (a.open, a.save):
-            tb.addAction(x)
-        tb.addSeparator()
+        tb.setMovable(False)
+        tb.setIconSize(QSize(18, 18))
+        self.open_btn = StatusButton("Open", icon="folder-line", slot=self.open_data_dialog, hint="Ctrl+O",
+                                     dot_on_success=False)
+        self.open_btn.set_base_tooltip("Open a table: CSV, Excel, Parquet, JSON or SQLite (Ctrl+O)")
+        a.add.setIconText("Add step")
         self.add_btn = QToolButton()
         self.add_btn.setDefaultAction(a.add)
         self.add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.add_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.add_btn.setMenu(self._steps_menu())
-        tb.addWidget(self.add_btn)
-        for x in (a.undo, a.redo):
-            tb.addAction(x)
+        self.add_btn.setObjectName("studioAddStep")
+        self.add_btn.setMinimumHeight(32)
+        apply_style(self.add_btn, "QToolButton#studioAddStep{border:1px solid @line; border-radius:6px; "
+                                  "padding:3px 10px; background:@base;} QToolButton#studioAddStep:hover{"
+                                  "border-color:@accent;} QToolButton#studioAddStep::menu-indicator{image:none;}")
+        self._tint_toolbar()
+        self._tb_btns = {k: action_button(getattr(a, k)) for k in ("save", "undo", "redo", "report", "spark")}
+        for b in self._tb_btns.values():
+            b.setProperty("chrome", True)
+        tb.addWidget(self.open_btn)
+        tb.addWidget(self._tb_btns["save"])
         tb.addSeparator()
-        for x in (a.export, a.report, a.spark):
-            tb.addAction(x)
+        tb.addWidget(self.add_btn)
+        tb.addWidget(self._tb_btns["undo"])
+        tb.addWidget(self._tb_btns["redo"])
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        tb.addWidget(self._tb_btns["report"])
+        tb.addWidget(self._tb_btns["spark"])
+        self.export_btn = StatusButton("Export", icon="export", slot=self.export_data, hint="Ctrl+E",
+                                       dot_on_success=False)
+        self.export_btn.set_base_tooltip("Write the result as CSV / Parquet / Excel / JSON (Ctrl+E)")
+        tb.addWidget(self.export_btn)
         self.addToolBar(tb)
+        self.toolbar = tb
 
         # docks
         self.tables = QListWidget()
@@ -206,6 +261,8 @@ class StudioWindow(QMainWindow):
         dk = QDockWidget("Tables", self)
         dk.setObjectName("studioTables")
         dk.setWidget(self.tables)
+        from AIO_QC.widgets.panels import titled
+        self.tables_title = titled(dk, "Tables")
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dk)
         rec = QWidget()
         rl = QVBoxLayout(rec)
@@ -224,6 +281,7 @@ class StudioWindow(QMainWindow):
         dr = QDockWidget("Recipe", self)
         dr.setObjectName("studioRecipe")
         dr.setWidget(rec)
+        self.recipe_title = titled(dr, "Recipe")
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dr)
         self.docks = (dk, dr)
 
@@ -301,73 +359,110 @@ class StudioWindow(QMainWindow):
         self._steps_menu().exec(self.cursor().pos())
 
     def _build_welcome(self):
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.addStretch(1)
-        t = QLabel("Data Studio")
-        apply_style(t, "font-size:26pt; font-weight:600;")
-        t.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub = QLabel("Open a table — CSV, Excel, Parquet, JSON or SQLite — then clean it, reshape it, build features "
-                     "and chart it step by step. Every step is undoable, shown as code, and runs at full scale on "
-                     "Spark when you need it.")
-        sub.setWordWrap(True)
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setMaximumWidth(640)
-        apply_style(sub, "color:@muted; font-size:11pt;")
-        lay.addWidget(t)
-        h = QHBoxLayout()
-        h.addStretch(1)
-        h.addWidget(sub)
-        h.addStretch(1)
-        lay.addLayout(h)
-        btns = QHBoxLayout()
-        btns.addStretch(1)
-        for text, icon, slot in (("Open Data…", "open", self.open_data_dialog),
-                                 ("Open Workspace…", "open", self.open_workspace_dialog)):
-            b = newButton(text, icon=icon, slot=slot)
-            b.setMinimumHeight(36)
-            btns.addWidget(b)
-        self.ann_btn = newButton("Annotations of the image dataset", icon="mode-image",
-                                 slot=lambda: self.shell and self.shell.annotations_to_studio())
-        self.ann_btn.setMinimumHeight(36)
-        self.ann_btn.setToolTip("One row per annotation shape of the dataset open in Image QC")
-        btns.addWidget(self.ann_btn)
-        btns.addStretch(1)
-        lay.addSpacing(18)
-        lay.addLayout(btns)
-        lay.addSpacing(14)
-        self.recent_list = QListWidget()
-        self.recent_list.setMaximumWidth(640)
-        self.recent_list.setMaximumHeight(220)
-        self.recent_list.itemActivated.connect(lambda it: self._open_path(it.data(Qt.ItemDataRole.UserRole)))
-        self.recent_list.itemClicked.connect(lambda it: self._open_path(it.data(Qt.ItemDataRole.UserRole)))
-        rh = QHBoxLayout()
-        rh.addStretch(1)
-        rh.addWidget(self.recent_list)
-        rh.addStretch(1)
-        self.recent_caption = QLabel("Recent")
-        self.recent_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        apply_style(self.recent_caption, "color:@muted;")
-        lay.addWidget(self.recent_caption)
-        lay.addLayout(rh)
-        hint = QLabel("…or drop files here")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        apply_style(hint, "color:@faint;")
-        lay.addWidget(hint)
-        lay.addStretch(2)
-        return w
+        from AIO_QC.widgets import start_page as SP
+        self.ann_action = SP.Action("Annotations of the image dataset", lambda: self.shell and
+                                    self.shell.annotations_to_studio(), icon="mode-image",
+                                    tip="One row per annotation shape of the dataset open in Image QC")
+        page = SP.StartPage(
+            "Clean and explore a table",
+            "Open a CSV, Excel, Parquet, JSON or SQLite file, then clean it, reshape it and chart it step by step. "
+            "Every step can be undone, is shown as code, and runs at full scale on Spark when you need it.",
+            actions=[SP.Action("Open data…", self.open_data_dialog, primary=True, icon="folder-line", hint="Ctrl+O"),
+                     SP.Action("Open workspace…", self.open_workspace_dialog, icon="folder-line"), self.ann_action],
+            links=[SP.Action("Try a sample table", self.open_sample_table),
+                   SP.Action("Take the tour", lambda: self.start_tour(force=True, empty_ok=True))],
+            recents=lambda: SP.all_recents(self.shell, first="data"),
+            drop_hint="…or drop files anywhere on this window.")
+        self._ann_btn = next((b for b in page.findChildren(QPushButton)
+                              if b.text().startswith("Annotations of the image dataset")), None)
+        self.ann_btn = self._ann_btn
+        return page
 
     def _show_welcome(self):
-        self.recent_list.clear()
-        for p in self._recent():
-            it = QListWidgetItem(newIcon("mode-data" if not p.endswith(".json") else "open"),
-                                 f"{os.path.basename(p)}   —   {os.path.dirname(p)}")
-            it.setData(Qt.ItemDataRole.UserRole, p)
-            self.recent_list.addItem(it)
-        self.recent_caption.setVisible(self.recent_list.count() > 0)
-        self.recent_list.setVisible(self.recent_list.count() > 0)
-        self.ann_btn.setVisible(bool(self.shell and self.shell.image_session() is not None))
+        if self._ann_btn is not None:
+            self._ann_btn.setVisible(bool(self.shell and self.shell.image_session() is not None))
+        self.welcome.refresh()
         self.stack.setCurrentIndex(0 if not self.ws.tables else 1)
+
+    # ------------------------------------------------------------------ first steps (3.0)
+    def _tint_toolbar(self):
+        """The toolbar's icons in the ink colour (as in the other modes), again when the theme changes."""
+        from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+        from AIO_QC.utils import hexc
+        ink = QColor(hexc("text"))
+
+        def inked(name):                         # the (two-tone) icon's shape in one colour, its tones kept as alpha
+            icon = QIcon()
+            for px in (16, 20, 24, 32, 40):
+                pm = newIcon(name).pixmap(QSize(px, px))
+                out = QPixmap(pm.size())
+                out.setDevicePixelRatio(pm.devicePixelRatio())   # a 2x screen: the whole icon, not its top-left quarter
+                out.fill(Qt.GlobalColor.transparent)
+                p = QPainter(out)
+                p.drawPixmap(0, 0, pm)
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                p.fillRect(out.rect(), ink)
+                p.end()
+                icon.addPixmap(out)
+            return icon
+        for k, icon in (("save", "save"), ("undo", "undo"), ("redo", "redo"), ("report", "tool-report"),
+                        ("spark", "data-spark"), ("export", "export"), ("add", "data-add-step")):
+            getattr(self.a, k).setIcon(inked(icon))
+
+    def changeEvent(self, e):
+        from PyQt6.QtCore import QEvent
+        if e.type() == QEvent.Type.PaletteChange and hasattr(self, "a"):
+            self._tint_toolbar()
+        super().changeEvent(e)
+
+    def open_palette(self):
+        from AIO_QC.widgets.command_palette import CommandPalette
+        if self._palette is None:
+            self._palette = CommandPalette(self, self.st)
+        self._palette.popup()
+
+    def toggle_keymap(self):
+        from AIO_QC.widgets.keymap import KeyMapOverlay
+        if self._keymap is None:
+            self._keymap = KeyMapOverlay(self)
+        self._keymap.toggle()
+
+    def _disabled_reason(self, act) -> str:
+        if act is self.a.undo:
+            return "nothing to undo yet."
+        if act is self.a.redo:
+            return "nothing to redo."
+        if self.current is None:
+            return "open a table first (Ctrl+O) — or try the sample table (Help ▸ Open a Sample Table)."
+        return ""
+
+    def open_sample_table(self):
+        from AIO_QC.core.sample_data import sample_table
+        self.open_data(str(sample_table()))
+
+    def tour_steps(self):
+        from AIO_QC.widgets.coach import Step
+        return [
+            Step(lambda: self.open_btn, "Open a table", "CSV, Excel, Parquet, JSON or SQLite (Ctrl+O) — or drop "
+                 "the file on the window. Each one becomes a table on the left."),
+            Step(lambda: self.tabs, "See it four ways", "<b>Data</b> the rows · <b>Profile</b> every column's health "
+                 "(gaps, odd values — with a one-click fix) · <b>Chart</b> · <b>Code</b> the steps as pandas / "
+                 "PySpark."),
+            Step(lambda: self.add_btn, "Clean it step by step", "<b>Add step</b> filters, fixes, reshapes or adds "
+                 "columns. Right-click a column header for the steps that fit that column."),
+            Step(lambda: self.docks[1], "Your recipe", "Every step in order. Click one to see the table at that "
+                 "point, untick it to skip it, drag to reorder. <b>Ctrl+Z</b> undoes."),
+            Step(lambda: self.export_btn, "Take the result with you", "<b>Export</b> writes the cleaned table; "
+                 "<b>Save Workspace</b> keeps the tables and their recipes to continue later."),
+        ]
+
+    def start_tour(self, force: bool = False, empty_ok: bool = False):
+        from AIO_QC.widgets import coach
+        if not self.ws.tables and not empty_ok:
+            return None
+        if not self.ws.tables:                 # from the start page: open the sample so there is something to show
+            self.open_sample_table()
+        return coach.run(self, self.tour_steps(), "data", force=force)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -424,6 +519,7 @@ class StudioWindow(QMainWindow):
         try:
             src = TIO.detect(path)
         except Exception as exc:
+            _ignored(exc)
             QMessageBox.warning(self, "Open data", f"{os.path.basename(path)}: {exc}")
             return
         miss = TIO.missing_engine_for(src["format"])
@@ -467,6 +563,7 @@ class StudioWindow(QMainWindow):
         try:
             ws = Workspace.open(path)
         except Exception as exc:
+            _ignored(exc)
             QMessageBox.warning(self, "Open workspace", f"{exc}")
             return
         mem = [n for n, t in ws.tables.items() if t.source.get("format") == "memory"]
@@ -667,6 +764,7 @@ class StudioWindow(QMainWindow):
         try:
             df = self._data_for_step(pos)
         except Exception as exc:
+            _ignored(exc)
             QMessageBox.warning(self, "Add step", f"The data before this step cannot be computed: {exc}")
             return
         p = dict(preset or {})
@@ -690,6 +788,7 @@ class StudioWindow(QMainWindow):
         try:
             df = self._data_for_step(i)
         except Exception as exc:
+            _ignored(exc)
             QMessageBox.warning(self, "Edit step", str(exc))
             return
         dlg = StepDialog(self, st["op"], df, [n for n in self.ws.tables if n != self.current], st["p"])
@@ -854,8 +953,8 @@ class StudioWindow(QMainWindow):
         info = {}
         try:
             info = self.ws.info(name)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         t = self.ws.tables[name]
         nsteps = len(t.steps) if at is None else at
         self.status_lbl.setText(f"{name}: {len(df):,} rows × {df.shape[1]} columns · after {nsteps} of "
@@ -916,6 +1015,7 @@ class StudioWindow(QMainWindow):
         try:
             self.code.setPlainText(self.ws.code(self.current, self.code_engine.currentData()))
         except Exception as exc:
+            _ignored(exc)
             self.code.setPlainText(f"# cannot write the code: {exc}")
 
     # ================================================================== column menu (grid header)
@@ -966,8 +1066,8 @@ class StudioWindow(QMainWindow):
         info = {}
         try:
             info = self.ws.info(self.current)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         from AIO_QC.utils.save_dirs import ask_save
         p, flt = ask_save(self, "Export data", f"{self.current}.csv",
                           "CSV (*.csv);;Parquet (*.parquet);;Excel (*.xlsx);;JSON (*.json);;JSON lines (*.jsonl)",
@@ -1067,6 +1167,8 @@ class StudioWindow(QMainWindow):
             x.setEnabled(has)
         self.a.undo.setEnabled(bool(self._undo))
         self.a.redo.setEnabled(bool(self._redo))
+        if hasattr(self, "export_btn"):
+            self.export_btn.setEnabled(has)
         self._update_title()
 
     def _update_title(self):
@@ -1104,6 +1206,6 @@ class StudioWindow(QMainWindow):
     def shutdown(self):
         self.st.setValue("studio/geometry", self.saveGeometry())
         self.st.setValue("studio/state", self.saveState())
-        for j in list(self.jobs):
-            j.wait(5000)
+        from AIO_QC.widgets.lifecycle import stop_threads   # asks each job to cancel, then waits
+        stop_threads(self, "Data Studio closing", 5000)   # a job still running is detached, never destroyed
 

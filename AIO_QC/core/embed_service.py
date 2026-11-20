@@ -6,6 +6,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from AIO_QC.core.diag import ignored as _ignored
+
 from .inference import InferenceClient
 
 EMBED_SERVER = Path(__file__).resolve().with_name("embed_server.py")
@@ -58,6 +60,9 @@ class EmbedService:
         return self.client.request("embed", timeout=None, cancel=cancel, items=items, out=str(out), batch=int(batch),
                                    pad=float(pad))
 
+    def embed_text(self, texts: list[str], out, cancel=None) -> dict:
+        return self.client.request("embed_text", timeout=None, cancel=cancel, texts=list(texts), out=str(out))
+
     def knn(self, inp, k, out, cancel=None) -> dict:
         return self.client.request("knn", timeout=None, cancel=cancel, inp=str(inp), k=int(k), out=str(out))
 
@@ -72,6 +77,6 @@ class EmbedService:
             if self.client is not None:
                 try:
                     self.client.close()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _ignored(_exc)
             self.client, self.loaded = None, None

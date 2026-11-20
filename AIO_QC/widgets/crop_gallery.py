@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-🧩 Crop gallery: every instance of one label as a grid of crops.
+ Crop gallery: every instance of one label as a grid of crops.
 
 Wrong labels, junk boxes and duplicates jump out when you see 500 crops of "hsrp_white" side by side.
 
@@ -38,6 +38,7 @@ from AIO_QC.core.instances import SORTS, Instance, InstanceStore, collect_file, 
 from AIO_QC.core.state import REVIEW_FLAG
 from AIO_QC.utils import LRUCache, newButton, style as apply_style, theme_color
 from AIO_QC.widgets.lifecycle import RetainedThread
+from AIO_QC.core.diag import ignored as _ignored
 
 __all__ = ["CropGalleryDialog", "Instance", "SORTS", "crop_geometry"]
 LOOK_SORTS = ["Least typical first", "Grouped by look"]
@@ -143,8 +144,8 @@ class ImageBatchTask(QRunnable):
                 done.add(ck)
             else:
                 self._batch(done)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         for ck, _inst, _c in self.jobs:                 # anything that failed: show the "no image" tile
             if ck not in done:
                 self.signals.loaded.emit(ck, self.generation, QImage())
@@ -190,7 +191,8 @@ class CropTask(QRunnable):
         img = QImage()
         try:
             img = self._crop()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.signals.loaded.emit(self.ckey, self.generation, img)
 
@@ -287,10 +289,10 @@ class InstanceModel(QAbstractListModel):
             s = g.session.by_key.get(key)
             rv = g.session.review.status(key)
             if role == Qt.ItemDataRole.ToolTipRole:
-                mark = {"ok": "\n✓ file reviewed OK", "flag": "\n⚑ file flagged", "fixed": "\n🔧 file fixed"}.get(rv, "")
+                mark = {"ok": "\n✓ file reviewed OK", "flag": "\n⚑ file flagged", "fixed": "\n file fixed"}.get(rv, "")
                 return f"{s.display if s else key}\nshape #{st.idx[iid]} · {st.label_of(iid)}{mark}"
             name = s.name if s else "?"
-            flag = {"flag": "⚑ ", "fixed": "🔧 "}.get(rv, "")
+            flag = {"flag": "⚑ ", "fixed": ""}.get(rv, "")
             return flag + (name if len(name) <= 14 else name[:6] + "…" + name[-6:]) + f" #{st.idx[iid]}"
         return None
 
@@ -342,14 +344,15 @@ class TileDelegate(QStyledItemDelegate):
 # =============================================================================
 class CropGalleryDialog(QDialog):
     TITLE, ICON = "Crop Gallery", "🧩"
-    SUPPORTED = None                     # every type with shapes; classification datasets simply have none
+    SUPPORTED = None                     # classification datasets: open_tool opens the Class Gallery instead
 
     def __init__(self, app):
         super().__init__(app)
         self.app, self.session = app, app.session
         self.setWindowTitle(self.TITLE)
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(int(app.width() * 0.8), int(app.height() * 0.85))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "large")
         self.cache = LRUCache(capacity=2500, max_bytes=400 * 2 ** 20)
         self.signals = CropSignals()
         self.signals.loaded.connect(self._on_crop)
@@ -369,9 +372,7 @@ class CropGalleryDialog(QDialog):
 
         # controls ---------------------------------------------------------------
         self.label_box = QComboBox()
-        totals = self.session.label_totals()
-        for label, n in totals.most_common():
-            self.label_box.addItem(f"{label}  ({n:,})", label)
+        self._fill_labels()
         self.split_box = QComboBox()
         self.split_box.addItem("All splits", "")
         for sp in self.session.splits:
@@ -418,6 +419,8 @@ class CropGalleryDialog(QDialog):
         self.view.setItemDelegate(TileDelegate(self))
         self.view.setModel(self.model)
         self.view.doubleClicked.connect(self._open)
+        from .base_scan import install_finding_keys
+        install_finding_keys(self)
         self.view.selectionModel().selectionChanged.connect(lambda *_: self._update_status())
         self._apply_tile_size()
 
@@ -434,9 +437,9 @@ class CropGalleryDialog(QDialog):
             ("🗑 Delete", self.delete, "Delete the selected shapes (Del)"),
             ("⚑ Flag files", self.flag_files, "Flag the files of the selected crops for review"),
             ("👁 Show files", self.show_files, "Restrict the main file list to the selected crops' files"),
-            ("📘 ✓ Example", lambda: self.add_example("good"),
+            ("✓ Example", lambda: self.add_example("good"),
              "Add the selected crops as ✓ good examples to their class's guideline (Labels ▸ Guidelines)"),
-            ("📘 ✗ Example", lambda: self.add_example("bad"),
+            ("✗ Example", lambda: self.add_example("bad"),
              "Add the selected crops as ✗ bad examples to their class's guideline"),
         ):
             b = newButton(text, slot=slot, tip=tip)
@@ -487,6 +490,7 @@ class CropGalleryDialog(QDialog):
             try:
                 store.add_rows(collect_file(self.session.adapter, s, indices=idxs))
             except Exception as exc:
+                _ignored(exc)
                 errors.append(f"{s.name}: {exc}")
         if errors:
             self.app.log_errors([f"[crop gallery] {e}" for e in errors])
@@ -703,6 +707,34 @@ class CropGalleryDialog(QDialog):
         iid = self.model.iid(index.row())
         self.app.open_sample(self.store.key_of(iid), int(self.store.idx[iid]))
 
+    # ---- F8 / Shift+F8 (app.step_finding): the crops in the order shown
+    def finding_list(self) -> list:
+        return [(self.store.key_of(int(i)), int(self.store.idx[int(i)])) for i in self.model.ids()]
+
+    def finding_count(self) -> int:
+        return self.model.rowCount()
+
+    def finding_at(self, i: int):
+        if not 0 <= i < self.model.rowCount():
+            return None
+        iid = int(self.model.iid(i))
+        return self.store.key_of(iid), int(self.store.idx[iid])
+
+    def finding_index(self, key, shape, exact: bool = False) -> int:
+        ids = self.model.ids()
+        for r, iid in enumerate(ids):                   # vectorised would need the key array; stops at the hit
+            iid = int(iid)
+            if int(self.store.idx[iid]) == shape and self.store.key_of(iid) == key:
+                return r
+        return -1
+
+    def open_finding(self, i: int):
+        if 0 <= i < self.model.rowCount():
+            idx = self.model.index(i, 0)
+            self.view.setCurrentIndex(idx)
+            self.view.scrollTo(idx)
+            self._open(idx)
+
     def _need_selection(self) -> np.ndarray:
         ids = self.selected_ids()
         if not len(ids):
@@ -780,7 +812,7 @@ class CropGalleryDialog(QDialog):
             if g.add_example(it.label, kind, it.image, (min(xs), min(ys), max(xs), max(ys)), note,
                              src=self.session.history.rel(it.key)):
                 n += 1
-        self._say_status(f"📘 Added {n} {'✓ good' if kind == 'good' else '✗ bad'} example(s) to the guidelines")
+        self._say_status(f"Added {n} {'✓ good' if kind == 'good' else '✗ bad'} example(s) to the guidelines")
 
     def flag_files(self):
         ids = self._need_selection()
@@ -816,8 +848,20 @@ class CropGalleryDialog(QDialog):
         if keys:
             self._refresh_keys(keys)
 
+    def _fill_labels(self):
+        """The label list with current counts (again after a relabel / delete: a new label is offered at once)."""
+        want = self.label_box.currentData()
+        self.label_box.blockSignals(True)
+        self.label_box.clear()
+        for label, n in self.session.label_totals().most_common():
+            self.label_box.addItem(f"{label}  ({n:,})", label)
+        i = self.label_box.findData(want) if want is not None else 0
+        self.label_box.setCurrentIndex(max(0, i))
+        self.label_box.blockSignals(False)
+
     def _refresh_keys(self, touched: set):
         """Re-collect just the touched files and put their instances where the file's crops were."""
+        self._fill_labels()
         self._changed_keys -= touched
         st = self.store
         touched = {k for k in touched if k in st.key_id}
@@ -842,7 +886,8 @@ class CropGalleryDialog(QDialog):
                         rows = self._reidentify(s, [st.get(i) for i in old_ids])
                     else:
                         rows = collect_file(self.session.adapter, s, self.label)
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     rows = []
             fresh[st.key_id[k]] = rows
         st.kill_keys(touched)

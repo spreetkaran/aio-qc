@@ -9,7 +9,8 @@ and talks JSON over stdin/stdout, one request per line:
     {"rid": 1, "cmd": "probe"}
     {"rid": 2, "cmd": "load", "models": [{"id", "path", "imgsz", "device", "half", "sahi": null | {...}}]}
     {"rid": 3, "cmd": "predict", "images": [...], "ids": [...], "conf": 0.05, "batch": 8, "classes": {id: [..]}}
-    {"rid": 4, "cmd": "shutdown"}
+    {"rid": 4, "cmd": "segment", "model": "sam2.1_b.pt", "image": path, "boxes": [[x1, y1, x2, y2]]}   (SAM outlines)
+    {"rid": 5, "cmd": "shutdown"}
 Responses are single lines prefixed with RESP_PREFIX on the ORIGINAL stdout. Everything libraries print
 goes to stderr (sys.stdout is redirected), which the app shows in its console.
 """
@@ -199,6 +200,16 @@ def _boxes_from_result(r, keep, geo=None):
 
 
 def _store(res_p, mid, r, keep):
+    probs = getattr(r, "probs", None)
+    if probs is not None:                          # a classifier: the top classes of the whole image
+        try:
+            top = [int(k) for k in list(probs.top5)]
+            conf = [round(float(c), 4) for c in probs.top5conf.cpu().numpy().tolist()]
+            res_p.setdefault("probs", {})[mid] = [[k, c] for k, c in zip(top, conf)]
+        except Exception as exc:
+            log(f"probs skipped ({type(exc).__name__}: {exc})")
+        res_p["by_model"][mid] = []
+        return
     geo = []
     res_p["by_model"][mid] = _boxes_from_result(r, keep, geo)
     if any(g is not None for g in geo):
@@ -236,9 +247,10 @@ def predict(images, ids, conf, batch, classes):
                 except Exception as exc:
                     results[p]["error"] = f"{mid}: {type(exc).__name__}: {exc}"
             continue
-        kw = dict(imgsz=spec.get("imgsz") or 640, conf=conf, device=spec.get("device") or None,
+        classify = entry["info"].get("task") == "classify"
+        kw = dict(imgsz=spec.get("imgsz") or (224 if classify else 640), conf=conf, device=spec.get("device") or None,
                   half=bool(spec.get("half")), verbose=False)
-        if keep is not None:
+        if keep is not None and not classify:
             kw["classes"] = sorted(keep)           # skip unused classes inside NMS
         for i in range(0, len(images), max(1, batch)):
             chunk = images[i:i + max(1, batch)]
@@ -262,6 +274,37 @@ def predict(images, ids, conf, batch, classes):
                         results[p]["error"] = f"{mid}: {type(exc2).__name__}: {exc2}"
                 log(f"batch fallback ({type(exc).__name__}: {exc})")
     return results
+
+
+SAMS = {}                          # weights path -> ultralytics SAM model (Model Assist outlines)
+
+
+def segment(model, image, boxes):
+    """SAM / SAM2 outlines for boxes on one image -> {"polygons": [[[x, y], …] or None per box]}."""
+    import numpy as np
+    sam = SAMS.get(model)
+    if sam is None:
+        from ultralytics import SAM
+        sam = SAMS[model] = SAM(model)
+    res = sam(image, bboxes=[[float(v) for v in b[:4]] for b in boxes], verbose=False)[0]
+    polys = []
+    masks = res.masks.data.cpu().numpy() if getattr(res, "masks", None) is not None else []
+    for mk in masks:
+        polys.append(_mask_polygon(np.asarray(mk) > 0.5))
+    return {"polygons": polys + [None] * (len(boxes) - len(polys))}
+
+
+def _mask_polygon(mask):
+    try:
+        import cv2
+    except ImportError:
+        return None
+    cs, _ = cv2.findContours(mask.astype("uint8"), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cs:
+        return None
+    c = max(cs, key=cv2.contourArea)
+    c = cv2.approxPolyDP(c, 0.002 * cv2.arcLength(c, True), True).reshape(-1, 2)
+    return [[round(float(x), 2), round(float(y), 2)] for x, y in c] if len(c) >= 3 else None
 
 
 def export(spec):
@@ -299,6 +342,8 @@ def main():
             elif cmd == "predict":
                 reply(rid, ok=True, results=predict(req["images"], req["ids"], float(req.get("conf", 0.05)),
                                                     int(req.get("batch", 8)), req.get("classes") or {}))
+            elif cmd == "segment":
+                reply(rid, ok=True, **segment(req["model"], req["image"], req.get("boxes") or []))
             elif cmd == "export":
                 reply(rid, ok=True, **export(req["spec"]))
             elif cmd == "shutdown":

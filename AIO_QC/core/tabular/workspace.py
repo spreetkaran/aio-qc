@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from . import io as TIO
 from . import steps as S
+from AIO_QC.core.diag import ignored as _ignored
 
 CACHE_BUDGET = 1_500 * 1024 ** 2          # intermediate results kept in memory (bytes); older ones are recomputed
 
@@ -172,7 +173,8 @@ class Workspace:
             for k, df in c.items():
                 try:
                     b = int(df.memory_usage(deep=False).sum())
-                except Exception:
+                except Exception as _exc:
+                    _ignored(_exc)
                     b = 0
                 entries.append((name, k, b))
                 total += b

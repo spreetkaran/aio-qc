@@ -9,6 +9,7 @@ Command line interface (no Qt needed).
   aio-qc testset OUT --add VIDEO|FOLDER ... [--every 1s] [--unique balanced]
   aio-qc eval DATA --model A.pt --model B.onnx [--report summary|detailed|comparison|video]
   aio-qc clip VIDEO START END -o OUT.mp4 [--exact]
+  aio-qc autoannotate RUN --videos DIR [--setup FILE] [--only frames,annotate,...]   (aio-qc autoannotate -h)
 
 INPUT may be video files or folders (use -r to recurse). Settings can come
 from a JSON preset (saved from the GUI's batch dialog or with --save-preset);
@@ -32,6 +33,7 @@ from AIO_QC.tools.frame_extractor.core.batch import run_batch
 from AIO_QC.tools.frame_extractor.core.sources import open_source, format_time, HAVE_PYAV
 
 from AIO_QC.tools.frame_extractor.core.common import VIDEO_EXTS
+from AIO_QC.core.diag import ignored as _ignored
 
 
 def _collect(inputs, recursive):
@@ -163,6 +165,8 @@ Examples
     ev.add_argument("--title", default=None)
     ev.add_argument("--no-exports", action="store_true", help="skip metrics.json / CSV files")
 
+    from AIO_QC.tools.frame_extractor.core.autoannotate.cli import add_parser as _aa_parser
+    _aa_parser(sub)
     cl = sub.add_parser("clip", help="cut a clip: fast (no re-encode, starts on a keyframe) or exact")
     cl.add_argument("video")
     cl.add_argument("start", help="seconds or h:mm:ss.ms")
@@ -407,6 +411,7 @@ def cmd_probe(a):
         try:
             s = open_source(v, a.backend, True)
         except Exception as e:
+            _ignored(e)
             print(f"{v}: ERROR {e}")
             continue
         print(f"{v}\n  backend {s.backend}{' +GPU' if s.hw_accel else ''} | {s.width}x{s.height} | "
@@ -502,6 +507,9 @@ def main(argv=None):
     from AIO_QC.core.fx_storage import migrate_files
     migrate_files()                    # once: the standalone app's data -> AIO QC's data folder
     a = build_parser().parse_args(argv)
+    if a.cmd == "autoannotate":
+        from AIO_QC.tools.frame_extractor.core.autoannotate.cli import cmd_autoannotate
+        return cmd_autoannotate(a)
     return dict(probe=cmd_probe, extract=cmd_extract, testset=cmd_testset, eval=cmd_eval, clip=cmd_clip)[a.cmd](a)
 
 

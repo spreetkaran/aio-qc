@@ -24,10 +24,12 @@ import threading
 from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
-                             QPlainTextEdit, QProgressBar, QPushButton, QToolButton, QVBoxLayout)
+                             QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout)
 
 from AIO_QC.tools.frame_extractor.core import mpv_fetch, mpv_lib
 from AIO_QC.utils.qt_utils import fit_to_screen
+from AIO_QC.utils.qt_utils import set_shown
+from AIO_QC.core.diag import ignored as _ignored
 
 WIN_URL = "https://github.com/zhongfly/mpv-winbuild/releases"
 MAC_URL = "https://formulae.brew.sh/formula/mpv"
@@ -121,6 +123,7 @@ class MpvFetchJob(QObject):
         except mpv_fetch.Cancelled:
             q.put(("fail", "cancelled"))
         except Exception as e:
+            _ignored(e)
             q.put(("fail", f"{e}"))
 
     def _drain(self):
@@ -214,20 +217,17 @@ class LibmpvDialog(QDialog):
             b = QPushButton(text)
             b.setObjectName(name)
             b.clicked.connect(slot)
-            b.setVisible(bool(show))
             row.addWidget(b)
+            set_shown(b, bool(show))
         row.addStretch(1)
         v.addLayout(row)
-        self.more = QToolButton()
-        self.more.setText("Places searched ▸")
-        self.more.setCheckable(True)
-        self.more.toggled.connect(self._toggle_details)
-        v.addWidget(self.more)
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
-        self.details.setVisible(False)
         self.details.setMinimumHeight(140)
-        v.addWidget(self.details)
+        from AIO_QC.widgets.drawer import OptionsDrawer
+        self.details_drawer = OptionsDrawer(self.details, "Places searched", "Hide places searched")
+        self.more = self.details_drawer.button
+        v.addWidget(self.details_drawer)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
         v.addWidget(bb)
@@ -264,10 +264,6 @@ class LibmpvDialog(QDialog):
         lines = [f"{'✓ ' + s if s else '·  not there':<14} {p}" for p, s in rows]
         lines.append("then the system's library search path (" + ", ".join(mpv_lib._NAMES) + ")")
         self.details.setPlainText("\n".join(lines))
-
-    def _toggle_details(self, on):
-        self.details.setVisible(bool(on))
-        self.more.setText("Places searched ▾" if on else "Places searched ▸")
 
     def _apply(self, path):
         mpv_lib.reset()

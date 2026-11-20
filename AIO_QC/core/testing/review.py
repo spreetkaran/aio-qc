@@ -16,6 +16,7 @@ import os
 from dataclasses import asdict, dataclass, field
 
 from AIO_QC.core.testing.stream import MODES
+from AIO_QC.core.diag import ignored as _ignored
 
 
 @dataclass
@@ -104,7 +105,8 @@ def in_registry(path):
     try:
         from AIO_QC.core import model_registry as R
         return R.find(path) is not None
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return False
 
 
@@ -123,8 +125,8 @@ def describe(spec, load=True) -> dict:
         return info
     try:
         info["key"] = spec.key
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     if ext == ".onnx":
         try:
             import onnxruntime as ort
@@ -150,6 +152,7 @@ def describe(spec, load=True) -> dict:
         except ImportError:
             info["warnings"].append("onnxruntime is not installed: pip install \"aio-qc[models]\"")
         except Exception as e:
+            _ignored(e)
             info["error"] = f"{type(e).__name__}: {e}"
     else:
         if ext == ".pt":
@@ -167,6 +170,7 @@ def describe(spec, load=True) -> dict:
                     info["imgsz"] = v[0] if isinstance(v, (list, tuple)) else v
                 info["backend"] = getattr(d, "provider", "")
             except Exception as e:
+                _ignored(e)
                 info["error"] = f"{type(e).__name__}: {e}"
     if not info["names"] and not info["error"]:
         info["warnings"].append("no class names in the file - classes show as numbers (add a .names / data.yaml "

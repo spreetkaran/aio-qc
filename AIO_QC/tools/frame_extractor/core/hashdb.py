@@ -19,6 +19,7 @@ import time
 
 import cv2
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 _POP = np.array([bin(i).count("1") for i in range(256)], np.uint8)
 
@@ -48,7 +49,8 @@ class HashDB:
         self.refresh_every = refresh_every
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.con = sqlite3.connect(path, timeout=60)
-        self.con.execute("PRAGMA journal_mode=WAL")
+        from AIO_QC.core.sqlite_util import configure
+        configure(self.con, path)
         self.con.execute("CREATE TABLE IF NOT EXISTS hashes (id INTEGER PRIMARY KEY, h INTEGER NOT NULL, "
                          "video TEXT, frame INTEGER, file TEXT, added REAL)")
         cols = {r[1] for r in self.con.execute("PRAGMA table_info(hashes)")}
@@ -120,8 +122,8 @@ class HashDB:
     def close(self):
         try:
             self.con.close()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
 
 def default_db_path(output_root):

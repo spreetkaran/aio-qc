@@ -344,16 +344,45 @@ class MiniSessionWindow(QWidget):
 
 
 class Ghost(QWidget):
-    """In-app snapshot used for the shrink / grow transition (no per-frame relayout of the real window)."""
+    """In-app snapshot used for the shrink / grow transition. It covers the host once and only PAINTS the picture at
+    the moving rectangle (no widget resize per frame), from a copy scaled down once — each frame is one small blit
+    of the area that changed."""
+
+    MAX_SIDE = 1100
 
     def __init__(self, host: QWidget, pixmap):
         super().__init__(host)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.pix, self.opacity = pixmap, 1.0
+        self.host = host
+        self.opacity = 1.0
+        self.r = QRect()
+        self.set_pixmap(pixmap)
 
-    def paintEvent(self, _e):
+    def set_pixmap(self, pixmap):
+        from PyQt6.QtGui import QPixmap
+        pm = pixmap if isinstance(pixmap, QPixmap) else QPixmap.fromImage(pixmap)
+        dpr = pm.devicePixelRatio() or 1.0
+        if max(pm.width(), pm.height()) > self.MAX_SIDE * dpr:
+            pm = pm.scaled(int(self.MAX_SIDE * dpr), int(self.MAX_SIDE * dpr), Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+            pm.setDevicePixelRatio(dpr)
+        self.pix = pm
+
+    def setGeometry(self, *a):                     # callers give the picture's rectangle (host coordinates)
+        r = QRect(*a) if len(a) == 4 else QRect(a[0])
+        super().setGeometry(self.host.rect())
+        old, self.r = self.r, r
+        self.update(old.united(r).adjusted(-2, -2, 2, 2))
+
+    def update_rect(self):
+        self.update(self.r.adjusted(-2, -2, 2, 2))
+
+    def paintEvent(self, e):
+        if self.r.isEmpty():
+            return
         p = QPainter(self)
+        p.setClipRect(e.rect())
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.setOpacity(max(0.0, min(1.0, self.opacity)))
-        p.drawPixmap(self.rect(), self.pix)
+        p.drawPixmap(self.r, self.pix)
         p.end()

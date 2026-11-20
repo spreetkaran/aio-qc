@@ -15,6 +15,7 @@ from PyQt6.QtCore import QObject, QPointF, QRect, QRectF, QRunnable, QSize, Qt, 
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QImage, QImageIOHandler, QImageReader, QPainter, QPen, QPolygonF
 
 from AIO_QC.core.explorer import CLASS, DUPE, EXTRA, FIT, MISSED, NA, OK, TAG_NAMES
+from AIO_QC.core.diag import ignored as _ignored
 
 TAG_COLORS = {OK: "#22c55e", CLASS: "#a855f7", FIT: "#f59e0b", DUPE: "#94a3b8", EXTRA: "#ef4444",
               MISSED: "#f97316", NA: "#9ca3af"}
@@ -176,7 +177,8 @@ class ThumbTask(QRunnable):
                                          Qt.TransformationMode.SmoothTransformation)
                     img = img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
                     info = (full.width(), full.height())
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.sig.done.emit(self.ckey, self.gen, img, info)
 
@@ -194,7 +196,8 @@ class CropTask(QRunnable):
         try:
             if self.path is not None:
                 img, info = self._render()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img, info = QImage(), None
         self.sig.done.emit(self.ckey, self.gen, img, info)
 
@@ -249,7 +252,8 @@ class FullTask(QRunnable):
                 img = r.read()
                 if not img.isNull():
                     img = img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.sig.done.emit(self.ckey, self.gen, img, (img.width(), img.height()) if not img.isNull() else None)
 
@@ -262,5 +266,6 @@ def image_path(session, key):
         return s.image_path
     try:
         return session.adapter.load(s, light=True).image_path
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None

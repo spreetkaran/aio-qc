@@ -6,11 +6,37 @@ The highlight clears after a checkbox is toggled, on a click in the empty part o
 under the mouse still becomes the current row while it is clicked (keyboard navigation, Space to toggle)."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QModelIndex, Qt
+from PyQt6.QtCore import QEvent, QModelIndex, QObject, Qt
+from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QAbstractItemView, QListWidget
 
 
-class LabelsList(QListWidget):
+class PinnedRowList(QListWidget):
+    """A list whose rows keep something pinned to the right edge (counts, #n) while long text scrolls sideways."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+    def visualRect(self, index):
+        """A row is the panel's full width: hover / selection / data changes repaint the whole row, never just the
+        part where the text is (that left stale or cut pixels)."""
+        r = super().visualRect(index)
+        if r.isValid():
+            vp = self.viewport().rect()
+            r.setLeft(min(r.left(), vp.left()))
+            r.setRight(max(r.right(), vp.right()))
+        return r
+
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        if dx:
+            self.viewport().update()          # the pinned parts and the fades follow the view, not the content
+
+
+class LabelsList(PinnedRowList):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -46,3 +72,18 @@ class LabelsList(QListWidget):
             e.accept()
             return
         super().keyPressEvent(e)
+
+
+class GuardSelectAll(QObject):
+    """Ctrl+A in a list only while `allowed()` (the Annotations panel: once a shape is selected, as in LabelMe) —
+    otherwise the key is swallowed instead of selecting every row."""
+
+    def __init__(self, view, allowed):
+        super().__init__(view)
+        self.allowed = allowed
+        view.installEventFilter(self)
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.Type.KeyPress and e.matches(QKeySequence.StandardKey.SelectAll) and not self.allowed():
+            return True
+        return False

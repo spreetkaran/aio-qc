@@ -36,6 +36,7 @@ import tarfile
 import time
 import urllib.request
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 WIN_REPO = "zhongfly/mpv-winbuild"
 CONDA = "https://conda.anaconda.org/conda-forge"
@@ -173,7 +174,8 @@ def windows_release(repo=WIN_REPO, token=None) -> dict:
         rel = json.loads(body)
         if rel.get("assets"):
             return rel
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         pass                                    # rate limit / blocked API: read the release page instead
     _, final = get_text(f"https://github.com/{repo}/releases/latest")
     tag = final.rstrip("/").rsplit("/", 1)[-1]
@@ -195,6 +197,7 @@ def extract_dll(archive: Path, out: Path, name="libmpv-2.dll") -> Path:
     except ImportError:
         errors.append("py7zr not installed")
     except Exception as e:
+        _ignored(e)
         errors.append(f"py7zr: {e}")
     for exe in ([os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "tar.exe")]
                 if sys.platform == "win32" else []) + [shutil.which("bsdtar"), shutil.which("7z"),
@@ -272,6 +275,7 @@ def ensure_micromamba(dest: Path, subdir: str, progress=_noop, cancel=_noop) -> 
     except Cancelled:
         raise
     except Exception as e:
+        _ignored(e)
         errors.append(f"micro.mamba.pm: {e}")
     try:                                                    # 2) anaconda.org's file list (with checksums)
         body, _ = get_text("https://api.anaconda.org/package/conda-forge/micromamba/files")
@@ -285,6 +289,7 @@ def ensure_micromamba(dest: Path, subdir: str, progress=_noop, cancel=_noop) -> 
     except Cancelled:
         raise
     except Exception as e:
+        _ignored(e)
         errors.append(f"anaconda.org: {e}")
     try:                                                    # 3) conda-forge's index (large, but always there)
         progress(None, "Reading the conda-forge index…")
@@ -298,6 +303,7 @@ def ensure_micromamba(dest: Path, subdir: str, progress=_noop, cancel=_noop) -> 
     except Cancelled:
         raise
     except Exception as e:
+        _ignored(e)
         errors.append(f"conda-forge: {e}")
     raise RuntimeError("could not get micromamba - " + "; ".join(errors))
 

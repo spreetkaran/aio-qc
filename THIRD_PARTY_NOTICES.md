@@ -1,7 +1,8 @@
 # Third-party components bundled with AIO QC
 
-AIO QC's own code is Copyright (c) 2026 Preetkaran Singh, under the **GNU General Public License v3.0** (GPL-3.0-only) in [`LICENSE`](LICENSE). The files below are **bundled** with it (in the
-`AIO_QC/` package) and keep **their own licenses**; every full license text is in [`licenses/`](licenses/).
+AIO QC's own code is Copyright (c) 2026 Preetkaran Singh, under the **GNU General Public License v3.0** (GPL-3.0-only) in [`LICENSE`](LICENSE).
+The files below are **bundled** with it (in the `AIO_QC/` package) and keep **their own licenses**; every full
+license text is in [`licenses/`](licenses/).
 
 | Component | Where | License | Notes |
 |---|---|---|---|
@@ -9,10 +10,10 @@ AIO QC's own code is Copyright (c) 2026 Preetkaran Singh, under the **GNU Genera
 | **labelImg** 1.8.6 (Tzutalin and contributors), <https://github.com/HumanSignal/labelImg> | `AIO_QC/editors/sources/labelimg-1.8.6` | **MIT**, in its `LICENSE` | Modified copy, see `MODIFICATIONS.md`. Run as a separate program. |
 | **Phosphor Icons** (Phosphor Icons), <https://phosphoricons.com> | basis of several app icons (`AIO_QC/icons`, `AIO_QC/tools/frame_extractor/icons`) | **MIT**, `licenses/Phosphor-Icons-MIT.txt` | |
 | **Fluent UI System Icons** (Microsoft Corporation), <https://github.com/microsoft/fluentui-system-icons> | `AIO_QC/icons/status-*.svg`, `fluent-zoom-*.svg` (status bar, zoom) | **MIT**, `licenses/Fluent-UI-System-Icons-MIT.txt` | colours set to `currentColor` |
-| **Inter** (The Inter Project Authors) | `AIO_QC/fonts/Inter_24pt-SemiBold.ttf`, `Inter-*.otf`, `inter-*-web.woff` | **SIL OFL 1.1**, full text in `licenses/Inter-OFL-1.1.txt` and `AIO_QC/fonts/Inter-OFL.txt` | Used only for chart and plotted-image labels and HTML reports (Testing, Frame Extractor); the UI uses the system font. |
-| **JetBrains Mono** (The JetBrains Mono Project Authors) | `AIO_QC/fonts/JetBrainsMono-Regular.ttf` | **SIL OFL 1.1** | `licenses/JetBrainsMono-OFL-1.1.txt` |
-| **Source Code Pro** (Adobe; Reserved Font Name “Source”) | `AIO_QC/fonts/SourceCodePro-Regular.ttf` | **SIL OFL 1.1** | `licenses/SourceCodePro-OFL-1.1.txt`; unmodified, so the Reserved Font Name is kept |
-| **AV Hershey Simplex** (Stewart C. Russell, from A. V. Hershey's stroke data) | `AIO_QC/fonts/AVHersheySimplexMedium.ttf` | **CC0 / WTFPL** (dual) | `licenses/AVHersheySimplex-CC0-WTFPL.txt` |
+| **Inter** (The Inter Project Authors) | `AIO_QC/fonts/Inter_24pt-SemiBold.ttf`, `Inter-*.otf`, `inter-*-web.woff` | **SIL OFL 1.1**, `licenses/Inter-OFL-1.1.txt` (also `AIO_QC/fonts/Inter-OFL.txt`) | The interface font, and chart / report labels. |
+| **AIO Geist** — modified from **Geist** (Copyright (c) 2023 Vercel, in collaboration with basement.studio), <https://vercel.com/font> | `AIO_QC/fonts/AIOGeist-{Regular,Medium,Bold}.ttf` | **SIL OFL 1.1**, `licenses/Geist-OFL-1.1.txt` (also `AIO_QC/fonts/AIOGeist-OFL.txt`) | numbers, file names, timecodes and key hints. Modified (renamed, as the OFL asks): tabular figures by default and a slashed zero — `packaging/build_aio_geist.py` |
+| **Source Code Pro** (Adobe; Reserved Font Name “Source”) | `AIO_QC/fonts/SourceCodePro-Regular.ttf` | **SIL OFL 1.1**, `licenses/SourceCodePro-OFL-1.1.txt` | unmodified, so the Reserved Font Name is kept |
+| **AV Hershey Simplex** (Stewart C. Russell, from A. V. Hershey's stroke data) | `AIO_QC/fonts/AVHersheySimplexMedium.ttf` | **CC0 / WTFPL** (dual), `licenses/AVHersheySimplex-CC0-WTFPL.txt` | |
 
 ## Runtime dependencies (installed by pip, not bundled)
 

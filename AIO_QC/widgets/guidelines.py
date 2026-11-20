@@ -99,12 +99,13 @@ class GuideCard(QFrame):
         edit.setAutoRaise(True)
         edit.clicked.connect(lambda: self.editRequested.emit(self.scope or ""))
         close = QToolButton()
-        close.setText("✕")
+        from AIO_QC.utils import set_icon as _si
+        _si(close, "close-x")
         close.setAutoRaise(True)
         close.setToolTip("Hide (Settings ▸ Interface ▸ Guideline cards turns them off)")
         close.clicked.connect(lambda: anim.fade(self, False))
         head = QHBoxLayout()
-        head.addWidget(QLabel("📘"))
+        head.addWidget(QLabel(""))
         head.addWidget(self.title, 1)
         head.addWidget(edit)
         if compact:
@@ -228,7 +229,7 @@ def add_selected(app, kind: str):
     if eid is None:
         app.statusBar().showMessage("✋ Could not read the image", 5000)
         return
-    app.statusBar().showMessage(f"📘 Added a {'✓ good' if kind == 'good' else '✗ bad'} example of '{label}' "
+    app.statusBar().showMessage(f"Added a {'✓ good' if kind == 'good' else '✗ bad'} example of '{label}' "
                                 "(Labels ▸ Guidelines)", 5000)
     if getattr(app, "canvas_guide", None) is not None:
         app.canvas_guide._update()
@@ -245,7 +246,8 @@ class GuidelinesDialog(QDialog):
         self.store = self.session.guides
         self.setWindowTitle(self.TITLE)
         self.setWindowIcon(newIcon("tool-guidelines"))
-        self.resize(940, 620)
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
         self.scopes = QListWidget()
         self.scopes.currentItemChanged.connect(lambda *_: self._show())
         self.text = QPlainTextEdit()

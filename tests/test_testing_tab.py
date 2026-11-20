@@ -20,7 +20,12 @@ from .test_modes import shell3  # noqa: F401  (fixture)
 def _no_browser(monkeypatch):
     from AIO_QC.widgets.testing import lab_common, model_lab
     monkeypatch.setattr(lab_common, "open_path", lambda *a, **k: None)
-    monkeypatch.setattr(model_lab, "open_path", lambda *a, **k: None)
+    from AIO_QC.widgets.testing import model_lab_parts as _parts
+    import importlib, pkgutil
+    for _m in [model_lab] + [importlib.import_module(f"{_parts.__name__}.{i.name}")
+                             for i in pkgutil.iter_modules(_parts.__path__)]:   # (the Lab is split by area)
+        if hasattr(_m, "open_path"):
+            monkeypatch.setattr(_m, "open_path", lambda *a, **k: None)
 
 
 def _idle(lab, qtbot, t=120000):

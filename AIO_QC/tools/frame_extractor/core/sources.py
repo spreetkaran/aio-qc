@@ -24,6 +24,7 @@ import os
 
 import cv2
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     import av  # optional
@@ -33,13 +34,14 @@ try:
     # Hand logging back to FFmpeg's own C callback and keep it quiet.
     try:
         av.logging.restore_default_callback()
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)
     try:
         av.logging.set_level(av.logging.ERROR)
-    except Exception:
-        pass
-except Exception:  # pragma: no cover
+    except Exception as _exc:
+        _ignored(_exc)
+except Exception as _exc:  # pragma: no cover
+    _ignored(_exc)
     av = None
     HAVE_PYAV = False
 
@@ -307,8 +309,8 @@ class PyAVSource(_Timebase):
     def release(self):
         try:
             self.container.close()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
 
 
 def _looks_vfr(ts, tol=0.02):
@@ -341,8 +343,8 @@ def _quick_probe(path, n=300):
                 c.seek(0)
                 f = next(c.decode(s))
                 rotated = bool(getattr(f, "rotation", 0))
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
     return vfr, rotated
 
 
@@ -355,7 +357,8 @@ def open_source(path, backend="auto", hw_accel=True):
             vfr, rotated = _quick_probe(path)
             if vfr or rotated:
                 return PyAVSource(path)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             pass  # fall through to OpenCV
     return OpenCVSource(path, hw_accel=hw_accel)
 
@@ -441,8 +444,8 @@ class KeyframeReader:
         self.stream.thread_type = "AUTO"
         try:
             self.stream.codec_context.skip_frame = "NONKEY"
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         self._frame_rot = None
 
     def read(self, kidx):
@@ -463,5 +466,5 @@ class KeyframeReader:
     def release(self):
         try:
             self.container.close()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)

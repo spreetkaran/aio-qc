@@ -47,7 +47,7 @@ def yolo(root, n=8):
         for i in range(n):
             _img(os.path.join(root, split, "images", f"{split}_{i}.jpg"), seed=i + (100 if split == "val" else 0))
             with open(os.path.join(root, split, "labels", f"{split}_{i}.txt"), "w") as f:
-                f.write(f"0 0.3 0.33 0.3 0.33\n1 0.6 0.6 0.1 0.08\n")
+                f.write("0 0.3 0.33 0.3 0.33\n1 0.6 0.6 0.1 0.08\n")
     with open(os.path.join(root, "data.yaml"), "w") as f:
         f.write("path: .\ntrain: train/images\nval: val/images\nnames:\n  0: car\n  1: plate\n")
     return root
@@ -69,3 +69,16 @@ def table(path, n=500):
                        "when": pd.date_range("2024-01-01", periods=n, freq="h").astype(str)})
     df.to_csv(path, index=False)
     return path
+
+
+def coco(root, n=8):
+    """A COCO dataset (annotations/instances_train.json + train/images/…), made from the LabelMe fixture."""
+    from pathlib import Path
+    from AIO_QC.core import dataset as D, export as EX
+    root = Path(root)
+    lm = Path(labelme(str(root) + "_src", n=n))
+    a = D.open_dataset(lm, D.DatasetType.LABELME)
+    smp = a.discover()
+    labels = sorted({x["label"] for s in smp for x in a.load(s).shapes})
+    EX.export({"train": smp}, a, lm, root, "coco", labels)
+    return str(root)

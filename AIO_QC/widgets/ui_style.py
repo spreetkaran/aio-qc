@@ -16,7 +16,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QApplication, QProxyStyle, QPushButton, QStyle, QStyleOptionButton, \
     QStyleOptionToolButton, QToolButton
 
-ARROWS = ("▾", "▼", "⏷")
+ARROWS = ("▾", "▼", "")
 
 
 def _says_arrow(w) -> bool:
@@ -27,7 +27,14 @@ class AppStyle(QProxyStyle):
     def pixelMetric(self, m, opt=None, w=None):
         if m in (QStyle.PixelMetric.PM_ButtonShiftHorizontal, QStyle.PixelMetric.PM_ButtonShiftVertical):
             return 0
-        return super().pixelMetric(m, opt, w)
+        try:
+            return super().pixelMetric(m, opt, w)
+        except TypeError:                     # a metric value outside PyQt's enum (style-sheet internals)
+            base = self.baseStyle()
+            try:
+                return base.pixelMetric(m, opt, w) if base is not None else 0
+            except TypeError:
+                return 0
 
     # ---- one menu arrow
     @staticmethod
@@ -108,11 +115,15 @@ def release_after_exec():
 def install(app: QApplication | None = None):
     app = app or QApplication.instance()
     release_after_exec()
-    if app is None or isinstance(app.style(), AppStyle):
+    # with an app style sheet app.style() is Qt's style-sheet wrapper, not ours: remember the install on the app
+    if app is None or isinstance(getattr(app, "_aio_app_style", None), AppStyle):
         return
-    base = app.style().name()
     from PyQt6.QtWidgets import QStyleFactory
-    inner = QStyleFactory.create(base)
-    # the proxy hands standardPalette() and everything else to the same platform style: colours (and following the
-    # system's light / dark scheme) are unchanged
-    app.setStyle(AppStyle(inner) if inner is not None else AppStyle())
+    # 3.0: Fusion everywhere — the same look on Windows, macOS and Linux, drawn from the design system's palette
+    inner = QStyleFactory.create("Fusion") or QStyleFactory.create(app.style().name())
+    st = AppStyle(inner) if inner is not None else AppStyle()
+    app.setStyle(st)
+    app._aio_app_style = st
+    from AIO_QC.widgets import design
+    design.apply(app)
+    design.watch(app)

@@ -32,20 +32,23 @@ from AIO_QC.tools.frame_extractor.core.timecode import (
     nominal_rate,
 )
 from AIO_QC.utils.fx_settings import fx_settings
+from AIO_QC.core.diag import ignored as _ignored
 
 GREEN, BLUE, ORANGE, RED, PURPLE = (QColor(c) for c in ("#43A047", "#1E88E5", "#FB8C00", "#E53935", "#8E24AA"))
 HINT = "1:23.5 · 00:01:23:12 · 1234f · 42% · +5s · -30f · in · out · end"
 
 
 def _mono(size, bold=False):
-    f = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    for fam in ("Cascadia Mono", "JetBrains Mono", "Consolas", "SF Mono", "Menlo", "DejaVu Sans Mono"):
-        if fam in QFontDatabase.families():
-            f = QFont(fam)
-            break
+    """The app's number font (AIO Geist: tabular digits, slashed zero — a recording timer's look)."""
+    try:
+        from AIO_QC.widgets.design import mono
+        f = mono()
+    except Exception as _exc:                                  # standalone: the system's fixed-width font
+        _ignored(_exc)
+        f = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        f.setStyleHint(QFont.StyleHint.Monospace)
     f.setPointSizeF(size)
     f.setBold(bold)
-    f.setStyleHint(QFont.StyleHint.Monospace)
     return f
 
 

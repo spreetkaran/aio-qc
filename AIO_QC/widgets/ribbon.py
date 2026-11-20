@@ -3,13 +3,13 @@
 """
 Ribbon — the QC Panel as a slim tab row that gives the image its space back.
 
-    collapsed (default)  only the tab row (~30 px). Clicking a tab — or resting the mouse on the tab row for a moment
+    collapsed (default) only the tab row (~30 px). Clicking a tab — or resting the mouse on the tab row for a moment
                          — slides the tools down OVER the image (the canvas does not resize). The drawer has ONE
                          height for every tab, so switching tabs (click, or rest on another tab) just swaps the
                          tools in place, no new animation. It slides back up when a tool is launched, on Esc, on a
                          click elsewhere, on a second click on the open tab, or when the mouse stays away from the
                          tabs and the drawer for a moment.
-    pinned (📌)           the tools stay open under the tabs, like a classic tool panel.
+    pinned () the tools stay open under the tabs, like a classic tool panel.
 Double-clicking a tab toggles the pin too. The choice is remembered (QSettings "ribbon/pinned").
 
 Animation: the drawer is an overlay INSIDE the main window (no OS popup window to resize every frame). For the slide
@@ -25,8 +25,8 @@ from __future__ import annotations
 from PyQt6.QtCore import QEasingCurve, QEvent, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QLinearGradient, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QAbstractButton, QApplication, QFrame, QHBoxLayout, QSizePolicy, QStackedWidget, QTabBar, QToolButton,
-    QVBoxLayout, QWidget,
+    QAbstractButton, QApplication, QFrame, QHBoxLayout, QScrollArea, QSizePolicy, QStackedWidget, QTabBar,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from AIO_QC.utils import style as apply_style
@@ -102,21 +102,60 @@ class _TabBar(QTabBar):
         super().__init__()
         self.ribbon = ribbon
 
+    PAD, GAP = 16, 8
+
+    def _hint(self, i) -> str:
+        return str(self.tabData(i) or "")
+
+    def tabSizeHint(self, i):
+        from PyQt6.QtCore import QSize
+        from PyQt6.QtGui import QFontMetrics
+        from AIO_QC.widgets.design import mono
+        f = self.font()
+        f.setWeight(f.Weight.DemiBold)
+        w = QFontMetrics(f).horizontalAdvance(self.tabText(i))
+        h = self._hint(i)
+        if h:
+            w += self.GAP + QFontMetrics(mono(11)).horizontalAdvance(h)
+        return QSize(w + 2 * self.PAD, 40)
+
+    def minimumTabSizeHint(self, i):
+        return self.tabSizeHint(i)
+
     def paintEvent(self, _e):
-        from PyQt6.QtWidgets import QStyle, QStyleOptionTab, QStylePainter
-        p = QStylePainter(self)
-        active = self.ribbon.pinned or self.ribbon._open
+        """3.0 (mock-up): name + its key ("Dataset  Alt 1"), the current tab teal with a 2 px underline, no icons."""
+        from PyQt6.QtGui import QFontMetrics, QPainter
+        from AIO_QC.widgets.design import mono, tokens
+        t = tokens()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         under = self.tabAt(self.mapFromGlobal(QCursor.pos())) if self.underMouse() else -1
+        rb = self.ribbon
+        shown = bool(getattr(rb, "_open", False) or getattr(rb, "_pinned", False))
+        cur = self.currentIndex() if shown else -1          # no tab looks selected while the drawer is closed
+        hf = mono(11)
         for i in range(self.count()):
-            opt = QStyleOptionTab()
-            self.initStyleOption(opt, i)
-            if not active:
-                opt.state &= ~QStyle.StateFlag.State_Selected
-            if i == under:
-                opt.state |= QStyle.StateFlag.State_MouseOver
-            else:
-                opt.state &= ~QStyle.StateFlag.State_MouseOver
-            p.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+            if not self.isTabVisible(i):                      # e.g. Shapes for a classification dataset
+                continue
+            r = self.tabRect(i)
+            on = i == cur
+            f = self.font()
+            f.setWeight(f.Weight.DemiBold if on else f.Weight.Medium)
+            p.setFont(f)
+            col = t["accent_text"] if on else (t["text"] if i == under else t["muted"])
+            p.setPen(QColor(col))
+            x = r.left() + self.PAD
+            tw = QFontMetrics(f).horizontalAdvance(self.tabText(i))
+            p.drawText(x, r.top(), tw + 6, r.height(), int(Qt.AlignmentFlag.AlignVCenter), self.tabText(i))
+            h = self._hint(i)
+            if h:
+                p.setFont(hf)
+                p.setPen(QColor(t["faint"]))
+                p.drawText(x + tw + self.GAP, r.top(), QFontMetrics(hf).horizontalAdvance(h) + 6, r.height(),
+                           int(Qt.AlignmentFlag.AlignVCenter), h)
+            if on:
+                p.fillRect(r.left() + 4, r.bottom() - 1, r.width() - 8, 2, QColor(t["accent"]))
+        p.end()
 
     def leaveEvent(self, e):
         super().leaveEvent(e)
@@ -140,18 +179,35 @@ class Ribbon(QWidget):
         self.pin = QToolButton()
         self.pin.setCheckable(True)
         self.pin.setAutoRaise(True)
-        self.pin.setText("📌")
+        self.pin.setText("")
         self.pin.toggled.connect(self.set_pinned)
-        top = QHBoxLayout()
+        self.pin.setVisible(False)          # 3.0: pin with a double-click on a tab or View ▸ Pin QC Panel
+        self.row = QWidget()                                  # the tab row; a mode's toolbar can take its place
+        top = QHBoxLayout(self.row)
         top.setContentsMargins(4, 0, 4, 0)
         top.setSpacing(2)
         top.addWidget(self.bar)
         top.addStretch(1)
+        self.corner = QHBoxLayout()                           # e.g. the "Search tools & actions" field
+        self.corner.setContentsMargins(0, 0, 0, 0)
+        top.addLayout(self.corner)
         top.addWidget(self.pin)
+        self.mode_holder = QScrollArea()                      # Sketch / ROI tools, in the tab row's place
+        self.mode_holder.setFrameShape(QFrame.Shape.NoFrame)
+        self.mode_holder.setWidgetResizable(False)
+        self.mode_holder.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.mode_holder.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # the wheel scrolls it
+        self.mode_holder.viewport().installEventFilter(self)
+        self.mode_holder.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        apply_style(self.mode_holder, "QScrollArea{background:transparent;} "
+                                      "QScrollArea > QWidget > QWidget{background:transparent;}")
+        self.mode_holder.hide()
+        self.mode_bar = None
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(0)
-        self.lay.addLayout(top)
+        self.lay.addWidget(self.row)
+        self.lay.addWidget(self.mode_holder)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self.drawer: _Drawer | None = None
         self._anim: FrameAnimator | None = None
@@ -159,6 +215,10 @@ class Ribbon(QWidget):
         self.bar.setMouseTracking(True)
         self.bar.installEventFilter(self)
         self._hover_timer = QTimer(self, singleShot=True, timeout=self._hover_fire)
+        # the cursor itself decides (Enter / Leave and mouseButtons() go stale on Windows after a native dialog or a
+        # drag and drop — the tabs did not open on hover until clicked)
+        from .hover_watch import watch
+        watch(self.bar, on_move=self._bar_hover, on_leave=lambda: self._hover_timer.stop())
         self._leave_timer = QTimer(self, singleShot=True, interval=LEAVE_CLOSE_MS, timeout=self._leave_fire)
         self.bar.tabBarClicked.connect(self._on_tab_clicked)
         self.bar.tabBarDoubleClicked.connect(lambda _i: self.pin.toggle())
@@ -167,6 +227,41 @@ class Ribbon(QWidget):
         self._pinned = None
         self.pin.setChecked(pinned)
         self.set_pinned(pinned)
+
+    # ------------------------------------------------------------------ a mode's toolbar in the tab row
+    def can_host_mode_bar(self) -> bool:
+        return self.isVisible() and self.row.isVisible() or self.mode_bar is not None
+
+    def set_mode_bar(self, bar):
+        """Show `bar` (Sketch / ROI tools) where the tab row is — same place, same height: it covers no part of the
+        image and the image does not move. None: the tabs come back."""
+        if bar is self.mode_bar:
+            return
+        old = self.mode_bar
+        if old is not None:
+            self.mode_holder.takeWidget()
+            old.hide()
+        self.mode_bar = bar
+        if old is not None:
+            old.setMinimumHeight(0)
+            old.setMaximumHeight(16777215)
+        if bar is None:
+            self.mode_holder.hide()
+            self.row.show()
+            self.bar.update()
+            self._fit_height()
+            return
+        self.close_drop(animate=False)
+        h = self.row.height() if self.row.isVisible() and self.row.height() > 0 else self.row.sizeHint().height()
+        self.row.hide()
+        bar.setFixedHeight(h)                                  # exactly the tab row's height: the image never moves
+        bar.adjustSize()
+        bar.resize(bar.sizeHint().width(), h)
+        self.mode_holder.setWidget(bar)
+        self.mode_holder.setFixedHeight(h)
+        bar.show()
+        self.mode_holder.show()
+        self._fit_height()
 
     # ------------------------------------------------------------------ QTabWidget-compatible API
     def addTab(self, widget, icon, title: str) -> int:
@@ -177,6 +272,22 @@ class Ribbon(QWidget):
         i = self.bar.addTab(icon, title)
         self._fit_height()
         return i
+
+    def set_tab_hint(self, i: int, hint: str):
+        """A muted key hint beside a tab's title ("Alt 1"), painted by the tab bar in the mono font."""
+        self.bar.setTabData(i, hint)
+        self.bar.update()
+
+    def set_tab_shown(self, i: int, on: bool):
+        """Show / hide a tab (its Alt+N key stays the same for the others)."""
+        if not 0 <= i < self.count() or self.bar.isTabVisible(i) == bool(on):
+            return
+        if not on and self.bar.currentIndex() == i:
+            j = next((k for k in range(self.count()) if k != i and self.bar.isTabVisible(k)), 0)
+            self.bar.setCurrentIndex(j)
+            self.stack.setCurrentIndex(j)
+        self.bar.setTabVisible(i, bool(on))
+        self.bar.update()
 
     def setTabText(self, i, text):
         self.bar.setTabText(i, text)
@@ -240,6 +351,8 @@ class Ribbon(QWidget):
     def _fit_height(self):
         """Never taller than needed — a window layout saved with the old, taller panel cannot stretch it."""
         row = max(self.bar.sizeHint().height(), self.pin.sizeHint().height())
+        if self.mode_bar is not None:
+            row = self.mode_holder.height()
         if self.pinned:
             pages = max((self.stack.widget(i).sizeHint().height() for i in range(self.stack.count())), default=0)
             self.setMaximumHeight(row + pages + 2)
@@ -264,7 +377,7 @@ class Ribbon(QWidget):
         d = self.drawer
         # one height for every tab: switching tabs never changes the drawer's size
         h = max((self.stack.widget(i).sizeHint().height() for i in range(self.stack.count())), default=60) + 10
-        top_left = self.mapTo(self.window(), QPoint(0, self.bar.geometry().bottom() + 1))
+        top_left = self.mapTo(self.window(), QPoint(0, self.row.geometry().bottom() + 1))
         w = max(self.width(), 320)
         d.frame.setGeometry(0, 0, w, h)
         d.curtain.setGeometry(0, 0, w, h + SHADOW)
@@ -304,7 +417,7 @@ class Ribbon(QWidget):
 
     # ---- keyboard: Alt+1… opens a tab with the focus on its first tool; arrows move, Enter runs, Esc closes
     def open_tab_keyboard(self, i: int):
-        if not 0 <= i < self.count():
+        if not 0 <= i < self.count() or not self.bar.isTabVisible(i):
             return
         if self.pinned:
             self.setCurrentIndex(i)
@@ -357,11 +470,26 @@ class Ribbon(QWidget):
         return True
 
     # ---- hover: rest on the tab row to open, on another tab to switch; stay away to close
+    def _bar_hover(self, gp: QPoint):
+        if not self.pinned:
+            self._tab_hover(self.bar.mapFromGlobal(gp))
+
+    def _tab_hover(self, pos: QPoint):
+        """The cursor is at `pos` on the tab row: (re)start the timer for the tab under it."""
+        i = self.bar.tabAt(pos)
+        if i >= 0 and (not self._open or i != self.bar.currentIndex()):
+            if not self._hover_timer.isActive() or getattr(self, "_hover_tab", None) != i:
+                self._hover_tab = i
+                self._hover_timer.start(HOVER_SWITCH_MS if self._open else HOVER_OPEN_MS)
+        elif i < 0 or i == self.bar.currentIndex():
+            self._hover_timer.stop()
+
     def _hover_fire(self):
         if self.pinned or not self.isVisible():
             return
+        from .hover_watch import buttons
         i = self.bar.tabAt(self.bar.mapFromGlobal(QCursor.pos()))
-        if i < 0 or QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+        if i < 0 or buttons() != Qt.MouseButton.NoButton:
             return
         if self._open:
             self._switch(i)
@@ -380,7 +508,8 @@ class Ribbon(QWidget):
     def _leave_fire(self):
         if not self._open:
             return
-        busy = QApplication.activePopupWidget() is not None or QApplication.mouseButtons() != Qt.MouseButton.NoButton
+        from .hover_watch import buttons
+        busy = QApplication.activePopupWidget() is not None or buttons() != Qt.MouseButton.NoButton
         if busy or self._in_zone(QCursor.pos()):
             if busy:
                 self._leave_timer.start()                     # a combo list / a drag in progress: ask again later
@@ -388,6 +517,8 @@ class Ribbon(QWidget):
         self.close_drop()
 
     def open_drop(self, switching: bool = False):
+        if self.mode_bar is not None:                          # Sketch / ROI tools in the tab row: no drawer
+            return
         d = self._ensure_drawer()
         self._stop_anim()
         d.setGeometry(self._geometry())
@@ -461,6 +592,11 @@ class Ribbon(QWidget):
     # ------------------------------------------------------------------ close on outside click / Esc, follow moves
     def eventFilter(self, obj, e):
         t = e.type()
+        if t == QEvent.Type.Wheel and obj is self.mode_holder.viewport():      # a long toolbar: scroll sideways
+            sb = self.mode_holder.horizontalScrollBar()
+            d = e.angleDelta()
+            sb.setValue(sb.value() - (d.y() or d.x()) // 2)
+            return True
         if t == QEvent.Type.KeyPress and obj is not self.bar and obj.property("_kbnav"):
             k = e.key()
             if k in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down) and self._nav(obj, k):
@@ -471,13 +607,7 @@ class Ribbon(QWidget):
         if obj is self.bar and not self.pinned:                # hover on the tab row
             if t in (QEvent.Type.MouseMove, QEvent.Type.HoverMove, QEvent.Type.Enter):
                 pos = e.position().toPoint() if hasattr(e, "position") else self.bar.mapFromGlobal(QCursor.pos())
-                i = self.bar.tabAt(pos)
-                if i >= 0 and (not self._open or i != self.bar.currentIndex()):
-                    if not self._hover_timer.isActive() or getattr(self, "_hover_tab", None) != i:
-                        self._hover_tab = i
-                        self._hover_timer.start(HOVER_SWITCH_MS if self._open else HOVER_OPEN_MS)
-                elif i < 0 or i == self.bar.currentIndex():
-                    self._hover_timer.stop()
+                self._tab_hover(pos)
             elif t == QEvent.Type.Leave:
                 self._hover_timer.stop()
         if self._open and t == QEvent.Type.MouseMove and hasattr(e, "globalPosition"):

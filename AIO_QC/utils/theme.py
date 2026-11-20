@@ -21,7 +21,9 @@ _PAIRS = {  # role: (light theme, dark theme)
     "warn": ("#b26a00", "#ffb74d"),
     "error": ("#c62828", "#ef5350"),
     "info": ("#1565c0", "#64b5f6"),
-    "accent": ("#00838f", "#4dd0e1"),
+    "accent": ("#0B6E77", "#5FC9D2"),              # the design system's accent (text-safe shade)
+    "pill": ("#EEF1F4", "#262930"),                 # count badges, tracks (design system "hover")
+    "accent_soft": ("#E6F4F5", "#163437"),
     "banner_bg": ("#fff3cd", "#3d3214"),
     "banner_fg": ("#5c4a00", "#ffe08a"),
     "banner_line": ("#e0c36a", "#7a6220"),
@@ -57,6 +59,8 @@ def theme_color(role: str) -> QColor:
         return _blend(text, window, 0.55)
     if role == "line":                        # borders, separators
         return _blend(text, window, 0.78)
+    if role == "base":                        # the panels' own background (white in light, the design surface)
+        return QColor(pal.color(QPalette.ColorRole.Base))
     if role == "surface":                     # subtle panel background
         return _blend(window, text, 0.05)
     if role == "placeholder":                 # empty thumbnail tiles
@@ -72,7 +76,8 @@ def hexc(role: str) -> str:
 
 def _render(template: str) -> str:
     out = template
-    for role in sorted(("text", "muted", "faint", "line", "surface", "placeholder", *_PAIRS), key=len, reverse=True):
+    for role in sorted(("text", "muted", "faint", "line", "surface", "base", "placeholder", *_PAIRS), key=len,
+                       reverse=True):
         out = out.replace("@" + role, hexc(role))
     return out
 

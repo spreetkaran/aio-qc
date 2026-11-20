@@ -47,29 +47,29 @@ def test_sharp_icons_not_emoji(shell, qtbot, tmp_path):  # noqa: F811
 
 def test_one_menu_arrow_and_centred_press(qapp, shell):  # noqa: F811
     from AIO_QC.widgets.ui_style import AppStyle
-    st = qapp.style()
+    st = qapp._aio_app_style                 # qapp.style() is Qt's style-sheet wrapper around it
     assert isinstance(st, AppStyle)
     assert st.pixelMetric(QStyle.PixelMetric.PM_ButtonShiftHorizontal) == 0
     assert st.pixelMetric(QStyle.PixelMetric.PM_ButtonShiftVertical) == 0
-    a, b = QToolButton(), QToolButton()           # "Add rule ▾" with a menu draws like the same text without one
-    for x in (a, b):
-        x.setText("Add rule ▾")
-        x.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        x.resize(110, 26)
-    a.setMenu(QMenu(a))
-    assert a.grab().toImage() == b.grab().toImage()
-    c, d = QToolButton(), QToolButton()           # without ▾ in the text Qt's own arrow stays (one arrow)
+    # menu buttons no longer write their own ▾ (the drawn chevron is the one arrow)
+    import pathlib
+    import re
+    src = "\n".join(p.read_text(encoding="utf-8") for p in pathlib.Path("AIO_QC").rglob("*.py")
+                    if "editors" not in p.parts)
+    assert not re.search(r'setText\("[^"]*▾"\)\s*\n\s*\w+\.setPopupMode', src)
+    assert "self.more.setText(\"\")" in src
+    c, d = QToolButton(), QToolButton()           # without ▾ in the text the drawn chevron shows (one arrow)
     for x in (c, d):
         x.setText("Add rule")
         x.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         x.resize(110, 26)
     c.setMenu(QMenu(c))
     assert c.grab().toImage() != d.grab().toImage()
-    p, q = QPushButton("More ▾"), QPushButton("More ▾")         # with / without a menu: drawn the same
+    p, q = QPushButton("More"), QPushButton("More")             # a push button with a menu shows the chevron
     p.setMenu(QMenu(p))
     for x in (p, q):
         x.resize(120, 30)
-    assert p.grab().toImage() == q.grab().toImage()
+    assert p.grab().toImage() != q.grab().toImage()
 
 
 def test_tasks_ring_tick_and_viewer(shell, qtbot):  # noqa: F811
@@ -113,16 +113,47 @@ def test_settings_reset_icon(shell, qtbot):  # noqa: F811
     d.close()
 
 
-def test_toast_shrinks_back_after_details(shell, qtbot):  # noqa: F811
+def test_toast_details_open_by_height_only(shell, qtbot):  # noqa: F811
+    """Details open by height only (fixed width: the message never re-wraps), and close back to the same size."""
     w = shell.window("image")
     w.resize(1400, 900)
     t = w.toast.show_message("Short note", "warn", details="long line " * 40, sticky=True)
     qtbot.wait(350)
-    w0 = t.width()
+    w0, h0 = t.width(), t.height()
+    sizes = []
     t.toggle_details()
-    qtbot.wait(600)
-    assert t.width() > w0 + 100
+    a = t._expand_anim
+    a.valueChanged.connect(lambda _v: sizes.append((t.width(), t.height())))
+    qtbot.waitUntil(lambda: t._expand_anim is None, timeout=3000)
+    assert t.width() == w0 and t.height() > h0 + 40
+    assert all(sw == w0 for sw, _ in sizes)                                 # never wider: no "step"
+    hs = [sh for _, sh in sizes]
+    assert hs == sorted(hs)                                                   # one steady movement
+    assert t.copy_btn.isVisible() and t.details_btn.text() == "Hide details"
     t.toggle_details()
-    qtbot.wait(600)
-    assert abs(t.width() - w0) <= 2
+    qtbot.waitUntil(lambda: t._expand_anim is None, timeout=3000)
+    assert (t.width(), t.height()) == (w0, h0) and not t.copy_btn.isVisible()
     t.dismiss()
+
+
+def test_toasts_posted_together_all_show(shell, qtbot):  # noqa: F811
+    """Several notifications at once: each one still fades in (moving the rising ones used to stop their fade)."""
+    w = shell.window("image")
+    w.resize(1400, 900)
+    ts = [w.toast.show_message(f"<b>Note {i}</b><br>body", "info", sticky=True) for i in range(3)]
+    qtbot.waitUntil(lambda: all(t.fx.opacity() > 0.99 for t in ts), timeout=3000)
+    ys = [t.y() for t in ts]
+    assert ys == sorted(ys) and len({t.width() for t in ts}) == 1             # stacked, one width
+    assert ts[0].title.text() == "<b>Note 0</b>" and ts[0].text.text() == "body"
+    for t in ts:
+        t.dismiss()
+
+
+def test_info_chip_separates_the_details(shell, qtbot, tmp_path):  # noqa: F811
+    from AIO_QC.widgets.canvas_hud import _Dot
+    from .test_aio_image import _open
+    w = _open(shell, qtbot, FX.labelme(tmp_path / "ds"))
+    chip = w.hud.file
+    assert chip.extra.text().count(" · ") == 2                                # dimensions · type · file size
+    dots = [d for d in chip.body.findChildren(_Dot) if not d.isHidden()]
+    assert len(dots) == 3 and all(d.width() >= 16 for d in dots)               # name · and two between the details

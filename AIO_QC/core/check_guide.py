@@ -40,6 +40,7 @@ class Signals:
     flagged: int = 0
     reviewed: float = 0.0                   # share of files with a review mark
     classification: bool = False
+    unpaired: int = 0                       # estimated files without their partner (no label file / no image)
 
 
 @dataclass
@@ -89,8 +90,14 @@ def recommend(s: Signals, done: dict | None = None) -> list[Rec]:
     if s.unreadable:
         add("validation", 100, f"{_n(s.unreadable)} annotation file(s) could not be read — fix these first")
     else:
-        add("validation", 72, "file & geometry integrity: pairing, schema, points, image size — the base for "
-                              "every other check")
+        add("validation", 72, "file & geometry integrity: is every file really LabelMe / YOLO, schema, points, "
+                              "image size — the base for every other check")
+    if not s.classification:
+        if s.unpaired:
+            add("pairs", 88, f"about {_n(s.unpaired)} file(s) without their partner (no label file, or the image "
+                             "is missing)")
+        else:
+            add("pairs", 60, "every image with its label file — strays, wrong folders, files in another format")
     if s.broken_images > 0:
         add("image_quality", 96, f"{_n(s.broken_images)} image(s) are broken (corrupt / truncated)")
     else:
@@ -100,7 +107,7 @@ def recommend(s: Signals, done: dict | None = None) -> list[Rec]:
     unknown = sorted(l for l in s.labels if s.class_list and l not in s.class_list)
     if variants:
         g = variants[0]
-        add("ambiguity", 92, f"{' / '.join(repr(x) for x in g[:3])} look like one class"
+        add("ambiguity", 92, f"{' and '.join('“' + x + '”' for x in g[:3])} look like one class"
                              + (f" (+{len(variants) - 1} more)" if len(variants) > 1 else ""))
     if unknown:
         add("ambiguity", 90, f"{len(unknown)} label(s) not in the class list: {', '.join(unknown[:3])}"
@@ -125,7 +132,8 @@ def recommend(s: Signals, done: dict | None = None) -> list[Rec]:
     else:
         add("image_dups", 36, "exact / near-duplicate images")
     if not s.classification:
-        add("duplicates", 46, "the same object annotated twice")
+        add("duplicates", 57, "duplicate & overlapping shapes: one object marked twice, copies, boxes overlapping "
+                              "each other")
         add("outliers", 38, "shapes whose size is unusual for their class")
         # ---- relationships
         if s.parts and not s.rules:
@@ -141,7 +149,8 @@ def recommend(s: Signals, done: dict | None = None) -> list[Rec]:
     if s.texts:
         add("text_labels", 55, f"{_n(s.texts)}+ shapes carry a text — check formats without OCR")
     if s.models:
-        add("model_check", 64, f"{s.models} model(s) set up — where models and labels disagree")
+        add("model_check", 64, f"{s.models} model(s) set up — where models and labels disagree, and boxes "
+                               "that are loose or cut off")
     # ---- finishing
     if s.flagged:
         add("fix_editor", 30 + min(25, s.flagged / 10), f"{_n(s.flagged)} flagged file(s) — fix them in an editor")

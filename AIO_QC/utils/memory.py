@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """How much memory the computer has left (psutil when installed; otherwise unknown and every check passes)."""
 from __future__ import annotations
+from AIO_QC.core.diag import ignored as _ignored
 
 LOW_BYTES = 700 * 1024 * 1024          # below this much free memory the app stops caching / preloading images
 
@@ -10,7 +11,8 @@ def _vm():
     try:
         import psutil
         return psutil.virtual_memory()
-    except Exception:
+    except Exception as _exc:
+        _ignored(_exc)
         return None
 
 
@@ -72,5 +74,5 @@ def release_everywhere():
                 rel()
         from .io import BUDGET
         BUDGET.trim(0.5)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _ignored(_exc)

@@ -33,6 +33,7 @@ import threading
 import time
 
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 MODES = ("balanced", "best", "fixed")
 MAX_STRIDE = 8
@@ -271,8 +272,8 @@ class StreamAnalyser:
             try:
                 if src is not None:
                     src.release()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             if own and cache is not None:
                 cache.close()
 

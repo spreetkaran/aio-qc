@@ -13,6 +13,9 @@ The app never imports torch. Protocol: one JSON request per line on stdin, repli
     {"cmd": "embed", "items": [{"image": path, "boxes": [[x1,y1,x2,y2] | null, …]}], "out": "x.npy",
                      "batch": 32, "pad": 0.1}           -> float16 [n, dim], L2-normalised, in item / box order
     {"cmd": "knn", "inp": "x.npy", "k": 10, "out": "nn"} -> nn_idx.npy (int32), nn_sim.npy (float16)
+    {"cmd": "embed_text", "texts": ["a truck at night", …], "out": "t.npy"}
+                                                         -> float32 [n, dim], L2-normalised, in the image space
+                                                            (text-aware models only: CLIP / SigLIP / SigLIP2)
 Large arrays travel as .npy files, never through the pipe.
 """
 import os as _os
@@ -113,7 +116,7 @@ def load(path, device="auto", half=True):
     kind, root = detect(path)
     dev = _device(device)
     half = bool(half) and dev.startswith("cuda")
-    model = pre = None
+    model = pre = name = None
     size, mean, std = 224, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
     if kind == "transformers":
         from transformers import AutoImageProcessor, AutoModel
@@ -121,8 +124,14 @@ def load(path, device="auto", half=True):
         try:
             pre = AutoImageProcessor.from_pretrained(root)
             s = getattr(pre, "size", None) or {}
-            size = int(s.get("height") or s.get("shortest_edge") or s.get("width") or 224) if isinstance(s, dict) \
-                else int(s)
+            if isinstance(s, (int, float)):
+                size = int(s)
+            else:                                     # a dict, or transformers 5's SizeDict
+
+                def _g(k):
+                    v = s.get(k) if hasattr(s, "get") else None
+                    return v if v is not None else getattr(s, k, None)
+                size = int(_g("height") or _g("shortest_edge") or _g("width") or 224)
             mean = tuple(getattr(pre, "image_mean", None) or mean)
             std = tuple(getattr(pre, "image_std", None) or std)
         except Exception as exc:
@@ -162,12 +171,14 @@ def load(path, device="auto", half=True):
     model.eval().to(dev)
     if half and kind != "transformers":
         model.half()
-    STATE.update(model=model, kind=kind, pre=pre, device=dev, half=half, path=path, size=size, mean=mean, std=std)
+    STATE.update(model=model, kind=kind, pre=pre, device=dev, half=half, path=path, size=size, mean=mean, std=std,
+                 root=root, tok=None, oc_name=name if kind == "open_clip" else None)
     with torch.no_grad():
         import numpy as np
         dummy = _forward([np.zeros((size, size, 3), np.uint8)])
     STATE["dim"] = int(dummy.shape[1])
-    return {"kind": kind, "root": root, "device": dev, "half": half, "dim": STATE["dim"], "size": size}
+    text = kind == "open_clip" or (kind == "transformers" and hasattr(model, "get_text_features"))
+    return {"kind": kind, "root": root, "device": dev, "half": half, "dim": STATE["dim"], "size": size, "text": text}
 
 
 def _to_tensor(arrs):
@@ -319,6 +330,43 @@ def knn(inp, k, out):
     return {"n": n, "k": k}
 
 
+def embed_text(texts, out):
+    """Texts -> L2-normalised vectors in the same space as the images (CLIP / SigLIP / SigLIP2 / open_clip)."""
+    import numpy as np
+    import torch
+    model, kind = STATE["model"], STATE["kind"]
+    if model is None:
+        raise ValueError("no model loaded")
+    texts = [str(t) for t in texts] or [""]
+    with torch.no_grad():
+        if kind == "open_clip":
+            import open_clip
+            if STATE.get("tok") is None:
+                STATE["tok"] = open_clip.get_tokenizer(STATE.get("oc_name") or "ViT-B-32")
+            feats = model.encode_text(STATE["tok"](texts).to(STATE["device"]))
+        elif kind == "transformers" and hasattr(model, "get_text_features"):
+            if STATE.get("tok") is None:
+                from transformers import AutoTokenizer
+                STATE["tok"] = AutoTokenizer.from_pretrained(STATE.get("root") or STATE["path"])
+            mt = str(getattr(model.config, "model_type", "")).lower()
+            if mt.startswith("siglip"):                    # SigLIP was trained on max-length padded text
+                enc = STATE["tok"](texts, padding="max_length", max_length=64, truncation=True, return_tensors="pt")
+            else:
+                enc = STATE["tok"](texts, padding=True, truncation=True, return_tensors="pt")
+            enc = {k: v.to(STATE["device"]) for k, v in enc.items()}
+            feats = model.get_text_features(**enc)
+        else:
+            raise ValueError("this model only understands images — choose a text-aware one (SigLIP / SigLIP2 / CLIP)")
+        if isinstance(feats, (tuple, list)):
+            feats = feats[0]
+        if hasattr(feats, "pooler_output"):
+            feats = feats.pooler_output
+        feats = torch.nn.functional.normalize(feats.float(), dim=-1)
+    arr = feats.cpu().numpy().astype(np.float32)
+    np.save(out, arr)
+    return {"n": int(arr.shape[0]), "dim": int(arr.shape[1])}
+
+
 def download(repo, dest, token=None):
     from huggingface_hub import snapshot_download
     path = snapshot_download(repo_id=repo, local_dir=dest, token=token or None,
@@ -346,6 +394,8 @@ def main():
                                             float(req.get("pad", 0.1))))
             elif cmd == "knn":
                 reply(rid, ok=True, **knn(req["inp"], int(req.get("k", 10)), req["out"]))
+            elif cmd == "embed_text":
+                reply(rid, ok=True, **embed_text(req.get("texts") or [], req["out"]))
             elif cmd == "download":
                 reply(rid, ok=True, **download(req["repo"], req["dest"], req.get("token")))
             elif cmd == "shutdown":

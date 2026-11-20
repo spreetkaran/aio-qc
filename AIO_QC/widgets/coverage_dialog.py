@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Preetkaran Singh
 # SPDX-License-Identifier: GPL-3.0-only
 """
-✅ Review coverage map: every file as a cell coloured by review state, grouped by split / folder.
+ Review coverage map: every file as a cell coloured by review state, grouped by split / folder.
 Answers "which parts of the dataset have been QC'ed?" at a glance; click any cell to open that file.
 """
 from __future__ import annotations
@@ -15,14 +15,15 @@ from .charts import CoverageMap
 
 
 class CoverageDialog(QDialog):
-    TITLE, ICON = "Coverage Map", "✅"
+    TITLE, ICON = "Coverage Map", ""
     SUPPORTED = None
 
     def __init__(self, app):
         super().__init__(app)
         self.app, self.session = app, app.session
         self.setWindowTitle(self.TITLE)
-        self.resize(int(app.width() * 0.6), int(app.height() * 0.75))
+        from AIO_QC.utils.qt_utils import fit_size
+        fit_size(self, "medium")
 
         self.scope = QComboBox()
         self.scope.addItems(["All files", "Files in current list"])
@@ -76,8 +77,8 @@ class CoverageDialog(QDialog):
         self.session.reviewChanged.connect(self._on_review)
         from PyQt6.QtCore import QTimer
         self._rebuild_soon = QTimer(self, singleShot=True, interval=400, timeout=self.rebuild)   # bursts -> one rebuild
-        self.session.samplesRemoved.connect(lambda _k: self._rebuild_soon.start())
-        self.session.samplesAdded.connect(lambda _k: self._rebuild_soon.start())
+        self.session.samplesRemoved.connect(self._queue_rebuild)
+        self.session.samplesAdded.connect(self._queue_rebuild)
         self.app.file_dock.currentKeyChanged.connect(self.map.set_current)
         self.rebuild()
 
@@ -132,3 +133,7 @@ class CoverageDialog(QDialog):
                 pass
         self.app.forget_dialog(self)
         super().closeEvent(event)
+
+    def _queue_rebuild(self, *_a):
+        """(a bound slot: disconnected with this window — a lambda would outlive it)"""
+        self._rebuild_soon.start()

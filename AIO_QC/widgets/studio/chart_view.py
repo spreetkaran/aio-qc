@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from AIO_QC.utils import theme_color
+from AIO_QC.core.diag import ignored as _ignored
 
 SERIES = ["#1E88E5", "#FB8C00", "#43A047", "#E53935", "#8E24AA", "#00ACC1", "#C0CA33", "#6D4C41"]
 TYPES = ["Histogram", "Bar", "Line", "Scatter", "Box"]
@@ -319,6 +320,7 @@ class ChartPanel(QWidget):
         try:
             spec = self._spec()
         except Exception as exc:
+            _ignored(exc)
             spec = {"error": f"Cannot draw this: {exc}"}
         self.canvas.set_spec(spec)
         self.note.setText((spec or {}).get("note", "") if spec else "")

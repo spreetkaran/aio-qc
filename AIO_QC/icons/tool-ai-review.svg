@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- AI agent review: an agent (robot head) and a magnifier with a check — one colour: ink on light, white on dark -->
+  <path fill-rule="evenodd" d="M84 8 A12 12 0 1 1 83.9 8 Z M78 28 H90 V46 H78 Z M44 44 H124 A32 32 0 0 1 156 76 V124 A32 32 0 0 1 124 156 H44 A32 32 0 0 1 12 124 V76 A32 32 0 0 1 44 44 Z M56 78 A16 16 0 1 0 56.1 78 Z M112 78 A16 16 0 1 0 112.1 78 Z M58 122 H110 A7 7 0 0 1 110 136 H58 A7 7 0 0 1 58 122 Z"/>
+  <path fill-rule="evenodd" d="M190 140 A50 50 0 1 1 189.9 140 Z M190 159 A31 31 0 1 0 190.1 159 Z"/>
+  <path d="M218 232 L232 218 L252 238 L238 252 Z"/>
+  <path d="M171 190 L180 181 L187 188 L201 174 L210 183 L187 206 Z"/>
+</svg>

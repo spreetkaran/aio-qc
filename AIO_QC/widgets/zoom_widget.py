@@ -96,11 +96,13 @@ class ZoomWidget(QWidget):
         apply_style(self.value, "QLineEdit{background:transparent; color:@text; padding:0; border:none;}")
 
         self.more = QToolButton()
-        self.more.setText("▾")
+        self.more.setText("")                     # the drawn chevron (design style sheet) is the arrow
         self.more.setAutoRaise(True)
         self.more.setToolTip("Zoom presets")
         self.more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.more.setFixedSize(QSize(14, 20))
+        self.more.setFixedSize(QSize(18, 20))
+        self.more.setStyleSheet("QToolButton{padding:0;} QToolButton::menu-indicator{subcontrol-position:center center;"
+                                " right:0;}")
         self.menu = QMenu(self)
         self.menu.aboutToShow.connect(self._fill_menu)
         self.more.setMenu(self.menu)

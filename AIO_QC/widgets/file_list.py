@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from PyQt6.QtCore import QAbstractListModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon
 from AIO_QC.utils import newIcon, style as apply_style, theme_color
+from AIO_QC.utils.qt_utils import later
 from PyQt6.QtWidgets import (
     QSizePolicy,
     QAbstractItemView, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListView, QToolButton,
@@ -18,8 +19,8 @@ from PyQt6.QtWidgets import (
 )
 
 KEY_ROLE = Qt.ItemDataRole.UserRole + 1
-REVIEW_FILTERS = [("All files", None), ("Unreviewed", "none"), ("✓ OK", "ok"), ("⚑ Flagged", "flag"),
-                  ("🔧 Fixed", "fixed")]
+REVIEW_FILTERS = [("All", None), ("Unreviewed", "none"), ("✓ OK", "ok"), ("⚑ Flagged", "flag"),
+                  ("Fixed", "fixed")]
 
 
 def _badge(color: str, glyph: str) -> QIcon:
@@ -53,7 +54,19 @@ class SampleListModel(QAbstractListModel):
         self.beginResetModel()
         self.samples = list(samples)
         self._rows = None
+        self._firsts = None
         self.endResetModel()
+
+    def first_keys(self) -> set:
+        """The first file of each split (dataset order): it carries the split's header, also when collapsed."""
+        if getattr(self, "_firsts", None) is None:
+            seen, out = set(), set()
+            for smp in self.samples:
+                if smp.split and smp.split not in seen:
+                    seen.add(smp.split)
+                    out.add(smp.key)
+            self._firsts = out
+        return self._firsts
 
     # ---- key -> row (rebuilt lazily after inserts / removals: one O(n) pass instead of one per lookup)
     def row_of(self, key: str) -> int:
@@ -74,6 +87,7 @@ class SampleListModel(QAbstractListModel):
             self.samples.insert(row, s)
             self.endInsertRows()
         self._rows = None
+        self._firsts = None
 
     def remove_keys(self, keys):
         rows = sorted((r for r in (self.row_of(k) for k in set(keys)) if r >= 0), reverse=True)
@@ -88,6 +102,7 @@ class SampleListModel(QAbstractListModel):
             self.endRemoveRows()
             i += 1
         self._rows = None
+        self._firsts = None
 
     def rows_changed(self, keys, roles):
         """Signal only the rows that changed (a dynamic proxy re-filters just those)."""
@@ -98,12 +113,27 @@ class SampleListModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, roles)
 
     def set_flags(self, updates: dict[str, str | None]):
+        """Error / empty marks from the label index. Only rows whose mark really changes are signalled (indexing a big
+        clean dataset changes none: every per-row signal re-filters the proxy on the UI thread, and thousands per
+        batch froze the window and starved the indexer); many at once: one range signal."""
+        changed = []
         for k, v in updates.items():
+            if (v or None) == self.flags.get(k):
+                continue
             if v:
                 self.flags[k] = v
             else:
                 self.flags.pop(k, None)
-        self.rows_changed(updates.keys(), [Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.ToolTipRole])
+            changed.append(k)
+        if not changed:
+            return
+        roles = [Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.ToolTipRole]
+        if len(changed) <= 64:
+            self.rows_changed(changed, roles)
+            return
+        rows = [r for r in (self.row_of(k) for k in changed) if r >= 0]
+        if rows:
+            self.dataChanged.emit(self.index(min(rows)), self.index(max(rows)), roles)
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.samples)
@@ -122,10 +152,10 @@ class SampleListModel(QAbstractListModel):
                      "corrupt": "\n⚠ broken image (corrupt / truncated / inconsistent) — see Image Quality"}.get(flag, "")
             rv = self.review.get(s.key) if self.review else None
             if rv:
-                extra += "\n" + {"ok": "✓ Reviewed OK", "flag": "⚑ Flagged", "fixed": "🔧 Fixed (check, then S = OK)"}.get(
+                extra += "\n" + {"ok": "✓ Reviewed OK", "flag": "⚑ Flagged", "fixed": "Fixed (check, then S = OK)"}.get(
                     rv["status"], rv["status"]) + f" · {rv.get('ts', '')}"
                 if rv.get("note"):
-                    extra += f"\n📝 {rv['note']}"
+                    extra += f"\n {rv['note']}"
             where = " · ".join(x for x in (s.split and f"split: {s.split}", s.folder and f"folder: {s.folder}") if x)
             return f"{s.ann_path or s.image_path}" + (f"\n{where}" if where else "") + extra
         if role == Qt.ItemDataRole.SizeHintRole:
@@ -153,6 +183,7 @@ class SampleFilterProxy(QSortFilterProxyModel):
         self.folder = ""
         self.allowed: set[str] | None = None
         self.review_filter: str | None = None     # None | "none" | "ok" | "flag"
+        self.collapsed: set[str] = set()          # splits folded to their header (File List groups)
         self.rank: dict[str, int] | None = None   # key -> position (Issues Inbox: worst first); None = dataset order
 
     def lessThan(self, left, right):
@@ -170,9 +201,11 @@ class SampleFilterProxy(QSortFilterProxyModel):
 
     def filtering(self) -> bool:
         return bool(self.text or self.split or self.folder or self.allowed is not None
-                    or self.review_filter is not None)
+                    or self.review_filter is not None or self.collapsed)
 
     def accepts(self, s) -> bool:
+        if self.collapsed and s.split in self.collapsed and s.key not in self.sourceModel().first_keys():
+            return False
         if self.split and s.split != self.split:
             return False
         if self.folder and s.folder != self.folder:
@@ -213,8 +246,11 @@ class FileDock(QWidget):
         self.proxy.layoutChanged.connect(self._parked_relayout)
         self.proxy.modelReset.connect(self._parked_relayout)
 
-        self.search = QLineEdit(placeholderText="Search files…  (Ctrl+F)")
+        self.search = QLineEdit(placeholderText="Search files")
+        self.search.setToolTip("Search files (Ctrl+P)")
         self.search.setClearButtonEnabled(True)
+        from AIO_QC.utils import newIcon
+        self.search.addAction(newIcon("search"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(self._on_text)
         self._search_timer = QTimer(self, singleShot=True, interval=250, timeout=self._apply_text)
         self.split_box = QComboBox()
@@ -252,8 +288,9 @@ class FileDock(QWidget):
         self.view.setUniformItemSizes(True)
         # long names scroll sideways instead of widening the dock or being cut
         self.view.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # names elide (3.0)
         self.view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.view.setMouseTracking(True)
         # Ctrl / Shift-click selects several files (right-click: flag / mark / fix them); navigation follows the
         # current file as before
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -265,7 +302,7 @@ class FileDock(QWidget):
         self.count_label.setVisible(False)          # the status bar already shows position / count (2.4.0)
 
         # search gets its own full-width row; filters share the second row and never force the dock wider
-        for box in (self.split_box, self.folder_box, self.review_box):
+        for box in (self.split_box, self.folder_box):
             box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             box.setMinimumContentsLength(6)
             box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -274,12 +311,22 @@ class FileDock(QWidget):
         filters.setSpacing(4)
         filters.addWidget(self.split_box, 1)
         filters.addWidget(self.folder_box, 1)
-        filters.addWidget(self.review_box, 1)
+        top = QHBoxLayout()                             # 3.0 mock-up: [search files] [All ▾]
+        top.setSpacing(6)
+        top.addWidget(self.search, 1)
+        top.addWidget(self.review_box)
+        self.review_box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.review_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(2, 2, 2, 2)
-        lay.addWidget(self.search)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        top.setContentsMargins(12, 2, 12, 2)
+        filters.setContentsMargins(12, 0, 12, 0)
+        lay.addLayout(top)
         lay.addLayout(filters)
+        self.banner.setContentsMargins(12, 0, 12, 0)
         lay.addWidget(self.banner)
+        self.view.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.view, 1)
         lay.addWidget(self.count_label)
 
@@ -295,8 +342,10 @@ class FileDock(QWidget):
         for sp in splits:
             self.split_box.addItem(sp, sp)
         self.split_box.blockSignals(False)
-        self.split_box.setVisible(bool(splits))
+        self.split_box.setVisible(False)              # 3.0: the list is grouped by split (headers fold / open)
         self.proxy.split = ""
+        self.proxy.collapsed = set()
+        self.view.setUniformItemSizes(not splits)     # group headers make some rows taller
         self.folder_box.blockSignals(True)
         self.folder_box.clear()
         self.folder_box.addItem("All folders", "")
@@ -382,7 +431,7 @@ class FileDock(QWidget):
     def set_key_filter(self, keys, title: str):
         self.proxy.allowed = set(keys)
         self.proxy.refresh()
-        self.banner_label.setText(f"🔎 {title} — {self.proxy.rowCount():,} file(s)")
+        self.banner_label.setText(f"{title} — {self.proxy.rowCount():,} file(s)")
         self.banner.setVisible(True)
         self._update_count()
         if self.proxy.rowCount():
@@ -550,7 +599,29 @@ class FileDock(QWidget):
             self.countChanged.emit(shown, total)
 
     # ------------------------------------------------------------ navigation
+    # --------------------------------------------------------------- split groups
+    def set_collapsed(self, split: str, on: bool):
+        """Fold a split to its header (or open it again); the open file stays open."""
+        if not split or (split in self.proxy.collapsed) == bool(on):
+            return
+        cur = self.current_key()
+        (self.proxy.collapsed.add if on else self.proxy.collapsed.discard)(split)
+        with self.hold():
+            self.proxy.refresh()
+        self.view.doItemsLayout()
+        self._update_count()
+        if cur and self.proxy_row_of(cur) >= 0:
+            self.select_key(cur, emit=False)
+
+    def toggle_split(self, split: str):
+        self.set_collapsed(split, split not in self.proxy.collapsed)
+
     def _on_current(self, current, _previous):
+        if current.isValid() and not self._silent:
+            src = self.proxy.mapToSource(current)          # O(1): no key -> row table rebuilt after a removal
+            row = src.row() if src.isValid() else -1
+            if row >= 0 and self.model.samples[row].split in self.proxy.collapsed:
+                later(0, self, lambda sp=self.model.samples[row].split: self.set_collapsed(sp, False))
         if current.isValid():
             self._unpark()
             if not self._silent:
@@ -580,6 +651,9 @@ class FileDock(QWidget):
         if row < 0:
             return False
         pidx = self.proxy.mapFromSource(self.model.index(row, 0))
+        if not pidx.isValid() and self.model.samples[row].split in self.proxy.collapsed:
+            self.set_collapsed(self.model.samples[row].split, False)     # going to a file opens its group
+            pidx = self.proxy.mapFromSource(self.model.index(row, 0))
         if not pidx.isValid():
             return False
         self.select_row(pidx.row(), emit)

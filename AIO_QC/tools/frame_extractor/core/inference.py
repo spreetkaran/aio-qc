@@ -14,9 +14,9 @@ import itertools
 import json
 import os
 import subprocess
-import sys
 import threading
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 SERVER = Path(__file__).with_name("infer_server.py")
 RESP_PREFIX = "@@FXINFER@@ "
@@ -46,35 +46,42 @@ class InferenceClient:
         env["PYTHONUNBUFFERED"] = "1"
         env.pop("PYTHONHOME", None)            # never leak the GUI's interpreter settings into the env
         env.pop("PYTHONPATH", None)
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         from AIO_QC.core import procs
         self.proc = procs.popen([self.python, "-u", str(SERVER)], stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                 errors="replace", bufsize=1, env=env)
         self._dead = None
-        threading.Thread(target=self._read_stdout, daemon=True).start()
-        threading.Thread(target=self._read_stderr, daemon=True).start()
+        # the readers get this process, not self.proc: close() clears self.proc while they may still be reading
+        threading.Thread(target=self._read_stdout, args=(self.proc,), daemon=True).start()
+        threading.Thread(target=self._read_stderr, args=(self.proc,), daemon=True).start()
 
-    def _read_stdout(self):
-        for line in self.proc.stdout:
-            if line.startswith(RESP_PREFIX):
-                try:
-                    msg = json.loads(line[len(RESP_PREFIX):])
-                except ValueError:
-                    continue
-                with self._cond:
-                    self._responses[msg.get("rid")] = msg
-                    self._cond.notify_all()
-            elif line.strip():
-                self.log(line.rstrip())        # stray C-level prints
+    def _read_stdout(self, proc):
+        try:
+            for line in proc.stdout:
+                if line.startswith(RESP_PREFIX):
+                    try:
+                        msg = json.loads(line[len(RESP_PREFIX):])
+                    except ValueError:
+                        continue
+                    with self._cond:
+                        self._responses[msg.get("rid")] = msg
+                        self._cond.notify_all()
+                elif line.strip():
+                    self.log(line.rstrip())        # stray C-level prints
+        except (ValueError, OSError):              # the pipe was closed under us (app exit)
+            pass
         with self._cond:
-            self._dead = f"inference process exited (code {self.proc.poll()})"
+            if self.proc is proc or self.proc is None:  # a newer process (restart) is not marked dead
+                self._dead = f"inference process exited (code {proc.poll()})"
             self._cond.notify_all()
 
-    def _read_stderr(self):
-        for line in self.proc.stderr:
-            if line.strip():
-                self.log(line.rstrip())
+    def _read_stderr(self, proc):
+        try:
+            for line in proc.stderr:
+                if line.strip():
+                    self.log(line.rstrip())
+        except (ValueError, OSError):
+            pass
 
     @property
     def alive(self) -> bool:
@@ -87,11 +94,12 @@ class InferenceClient:
         try:
             if self.alive:
                 self.request("shutdown", timeout=timeout)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _ignored(_exc)
         try:
             self.proc.wait(timeout=timeout)
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             self.proc.kill()
         self.proc = None
 
@@ -137,8 +145,8 @@ class InferenceClient:
             try:
                 self._shm.close()
                 self._shm.unlink()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _ignored(_exc)
             self._shm = None
 
     def _frames_to_shm(self, frames):

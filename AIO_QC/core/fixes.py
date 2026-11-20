@@ -11,7 +11,7 @@ FIX_DESCRIPTIONS = {
     "dedupe_vertices": "Remove repeated vertices",
     "set_image_path": "Point imagePath to the found image",
     "set_image_size": "Update imageWidth / imageHeight",
-    "delete_shape": "Delete the shape (entirely outside the image)",
+    "delete_shape": "Delete the shape",
 }
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from AIO_QC.core.diag import ignored as _ignored
 
 try:
     import yaml  # type: ignore
@@ -93,6 +94,7 @@ def parse_yaml_class_map(path: Path) -> ClassMap:
             if isinstance(ks, list):
                 cm.kpt_shape = ks
         except Exception as exc:
+            _ignored(exc)
             cm.problems.append(f"YAML parse error: {exc}")
     if names is None:
         names, nc2 = _parse_yaml_fallback(text)

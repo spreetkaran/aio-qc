@@ -25,6 +25,7 @@ from PyQt6.QtGui import (QColor, QFontMetrics, QImage, QImageIOHandler, QImageRe
 from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyledItemDelegate, QToolTip
 
 from AIO_QC.utils import LRUCache, theme_color
+from AIO_QC.core.diag import ignored as _ignored
 
 PANEL_W, PANEL_H = 176, 132
 PAD = 8
@@ -40,6 +41,8 @@ class Shape:
     dashed: bool = False
     width: float = 2.5
     text: str = ""                # tag at the shape's top-left: class and what was measured ("wheel #1 · IoU 0.82")
+    badge: str = ""               # a letter in a disc at the start of the tag ("A", "B") — pairs
+    fill: float = 0.0             # translucent fill of the shape's inside (0 … 1)
 
 
 @dataclass
@@ -49,6 +52,8 @@ class Panel:
     shapes: list = field(default_factory=list)
     normalized: bool = False      # coordinates are 0..1 (YOLO) -> scaled by the image size
     caption: str = ""
+    spotlight: bool = False       # dim the picture around the shapes, so the eye goes to them
+    overlap: tuple | None = None  # (i, j): hatch where shapes i and j overlap
 
 
 @dataclass
@@ -107,7 +112,8 @@ class PanelTask(QRunnable):
     def run(self):
         try:
             img = self._render()
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             img = QImage()
         self.signals.done.emit(self.ckey, self.gen, img)
 
@@ -155,57 +161,139 @@ class PanelTask(QRunnable):
         crop = crop.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
         painter = QPainter(crop)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        for s in p.shapes:
-            pen = QPen(QColor(s.color), s.width * self.scale)
+        polys = [QPolygonF([QPointF((x * sx - rect.x()) * k, (y * sy - rect.y()) * k) for x, y in s.points])
+                 for s in p.shapes]
+        if p.spotlight and polys:
+            self._spotlight(painter, crop, polys)
+        for s, poly in zip(p.shapes, polys):
+            if s.fill > 0 and len(s.points) > 2:
+                c = QColor(s.color)
+                c.setAlphaF(min(1.0, s.fill))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(c)
+                painter.drawPolygon(poly)
+        if p.overlap and max(p.overlap) < len(polys):
+            self._hatch(painter, polys[p.overlap[0]], polys[p.overlap[1]])
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for s, poly in zip(p.shapes, polys):
+            lw = s.width * self.scale
+            halo = QPen(QColor(0, 0, 0, 120), lw + 2 * self.scale)      # thin dark rim: visible on any background
+            halo.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+            pen = QPen(QColor(s.color), lw)
+            pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
             if s.dashed:
-                pen.setStyle(Qt.PenStyle.DashLine)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(QColor(0, 0, 0, 150))          # thin dark halo: visible on any background
-            halo = QPen(QColor(0, 0, 0, 140), (s.width + 2) * self.scale)
-            halo.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            poly = QPolygonF([QPointF((x * sx - rect.x()) * k, (y * sy - rect.y()) * k) for x, y in s.points])
-            painter.setPen(halo)
-            painter.drawPolygon(poly) if len(s.points) > 2 else painter.drawPolyline(poly)
-            painter.setPen(pen)
-            painter.drawPolygon(poly) if len(s.points) > 2 else painter.drawPolyline(poly)
-        self._tags(painter, crop, p.shapes, sx, sy, rect, k)
+                pen.setDashPattern([3.5, 2.5])
+                halo.setDashPattern([3.5 * lw / (lw + 2 * self.scale), 2.5 * lw / (lw + 2 * self.scale)])
+            for pn in (halo, pen):
+                painter.setPen(pn)
+                painter.drawPolygon(poly) if len(s.points) > 2 else painter.drawPolyline(poly)
+        self._tags(painter, crop, p.shapes, polys)
         painter.end()
         return crop
 
-    def _tags(self, painter, crop, shapes, sx, sy, rect, k):
-        """Class + measurements as small pills in the shape's colour, at its top-left corner (above it when there
-        is room), kept inside the crop and never on top of another tag."""
+    def _spotlight(self, painter, crop, polys):
+        """The picture outside the shapes (plus a margin) dimmed, so the pair stands out from busy images."""
+        from PyQt6.QtGui import QPainterPath
+        m = 6 * self.scale
+        around = QPainterPath()
+        around.setFillRule(Qt.FillRule.WindingFill)           # overlapping cut-outs stay cut out
+        for poly in polys:
+            r = poly.boundingRect().adjusted(-m, -m, m, m)
+            around.addRoundedRect(r, 4 * self.scale, 4 * self.scale)
+        whole = QPainterPath()
+        whole.addRect(QRectF(crop.rect()))
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 105))
+        painter.drawPath(whole.subtracted(around.simplified()))
+        painter.restore()
+
+    def _hatch(self, painter, pa, pb):
+        """Where two shapes overlap: a light fill and fine diagonal lines, edged — how much they share at a glance."""
+        from PyQt6.QtGui import QPainterPath
+        a, b = QPainterPath(), QPainterPath()
+        a.addPolygon(pa)
+        a.closeSubpath()
+        b.addPolygon(pb)
+        b.closeSubpath()
+        inter = a.intersected(b)
+        if inter.isEmpty():
+            return
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 214, 10, 46))
+        painter.drawPath(inter)
+        painter.setClipPath(inter)
+        pen = QPen(QColor(255, 214, 10, 150), max(1.0, 1.1 * self.scale))
+        painter.setPen(pen)
+        r = inter.boundingRect()
+        step = 7 * self.scale
+        x = r.left() - r.height()
+        while x < r.right():
+            painter.drawLine(QPointF(x, r.bottom()), QPointF(x + r.height(), r.top()))
+            x += step
+        painter.restore()
+
+    def _tags(self, painter, crop, shapes, polys):
+        """Class (+ what was measured) as a pill in the shape's colour, with an optional letter badge ("A", "B"):
+        sitting on the shape's top-left corner — above it, else below it, else at the top-right, else just inside —
+        whichever stays in the crop and clear of the other tags; a soft shadow keeps it readable on any picture."""
         from PyQt6.QtGui import QFont, QFontMetrics
         f = QFont()
         f.setPixelSize(max(9, round(10.5 * self.scale)))
-        f.setBold(True)
+        f.setWeight(QFont.Weight.DemiBold)
         fm = QFontMetrics(f)
         painter.setFont(f)
         placed = []
         W, H = crop.width(), crop.height()
-        for s in shapes:
-            if not s.text or not s.points:
+        pad = 5 * self.scale
+        for s, poly in zip(shapes, polys):
+            if not (s.text or s.badge) or not s.points:
                 continue
-            xs = [(x * sx - rect.x()) * k for x, _y in s.points]
-            ys = [(y * sy - rect.y()) * k for _x, y in s.points]
-            text = fm.elidedText(s.text, Qt.TextElideMode.ElideRight, max(40, W - 4))
-            tw, th = fm.horizontalAdvance(text) + 8, fm.height() + 2
-            x = min(max(0.0, min(xs)), W - tw)
-            y = min(ys) - th - 1 if min(ys) - th - 1 >= 0 else max(0.0, min(ys) + 1)
-            r = QRectF(x, y, tw, th)
-            for _ in range(8):                               # step past tags already placed
-                hit = next((q for q in placed if q.intersects(r)), None)
-                if hit is None:
-                    break
-                r.moveTop(hit.bottom() + 1 if hit.bottom() + 1 + th <= H else max(0.0, hit.top() - th - 1))
+            br = poly.boundingRect()
+            th = fm.height() + 3 * self.scale
+            bw = th if s.badge else 0.0                       # badge disc as wide as the pill is high
+            text = fm.elidedText(s.text, Qt.TextElideMode.ElideRight, int(max(40, W - bw - 2 * pad - 4)))
+            tw = (fm.horizontalAdvance(text) + 2 * pad if text else 0) + bw
+            lw = s.width * self.scale / 2
+            cands = [QRectF(br.left() - lw, br.top() - lw - th, tw, th),           # above, flush on the corner
+                     QRectF(br.left() - lw, br.bottom() + lw, tw, th),             # below
+                     QRectF(br.right() + lw - tw, br.top() - lw - th, tw, th),     # above, right end
+                     QRectF(br.right() + lw - tw, br.bottom() + lw, tw, th),       # below, right end
+                     QRectF(br.left() + lw + 1, br.top() + lw + 1, tw, th)]        # just inside
+            others = [q.boundingRect() for q in polys if q is not poly]
+
+            def cost(c):                                      # out of the crop ≫ on a tag ≫ across another outline
+                out = not (c.left() >= 0 and c.top() >= 0 and c.right() <= W and c.bottom() <= H)
+                on_tag = any(c.intersects(q) for q in placed)
+                across = sum(1 for o in others if c.intersects(o) and not o.contains(c))
+                return 1000 * out + 100 * on_tag + across
+            costs = [cost(c) for c in cands]
+            r = QRectF(cands[costs.index(min(costs))])
+            if min(costs) >= 1000:                            # nowhere fits: the first spot, clamped into the crop
+                r = QRectF(cands[0])
+                r.moveLeft(min(max(0.0, r.left()), W - tw))
+                r.moveTop(min(max(0.0, r.top()), H - th))
             placed.append(r)
             col = QColor(s.color)
+            rad = th / 2 if not text else 3.5 * self.scale
             painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 70))             # shadow
+            painter.drawRoundedRect(r.translated(0, 1.2 * self.scale), rad, rad)
             painter.setBrush(col)
-            painter.drawRoundedRect(r, 3, 3)
+            painter.drawRoundedRect(r, rad, rad)
             lum = 0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()
-            painter.setPen(QColor(0, 0, 0) if lum > 150 else QColor(255, 255, 255))
-            painter.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
+            ink = QColor(17, 17, 17) if lum > 150 else QColor(255, 255, 255)
+            if s.badge:
+                d = QRectF(r.left(), r.top(), bw, th).adjusted(2 * self.scale, 2 * self.scale, -2 * self.scale,
+                                                                -2 * self.scale)
+                painter.setBrush(QColor(0, 0, 0, 70) if ink.red() > 128 else QColor(255, 255, 255, 150))
+                painter.drawEllipse(d)
+                painter.setPen(ink)
+                painter.drawText(d, Qt.AlignmentFlag.AlignCenter, s.badge)
+            if text:
+                painter.setPen(ink)
+                painter.drawText(QRectF(r.left() + bw, r.top(), tw - bw, th), Qt.AlignmentFlag.AlignCenter, text)
 
 
 # =============================================================================
@@ -399,7 +487,8 @@ class CardView(QListView):
             return s.image_path
         try:
             return self.dialog.session.adapter.load(s).image_path
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             return None
 
     def panel_pixmap(self, card: Card, i: int):

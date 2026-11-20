@@ -21,6 +21,7 @@ from array import array
 from dataclasses import dataclass
 
 import numpy as np
+from AIO_QC.core.diag import ignored as _ignored
 
 SORTS = ["File order", "Smallest first", "Largest first", "Narrowest first", "Widest first", "Random"]
 POOL_MIN_FILES = 40_000            # below this a process pool costs more than it saves (start-up ~1–2 s)
@@ -96,6 +97,7 @@ def _chunk_job(adapter, samples, label):
         try:
             rows.extend(collect_file(adapter, s, label))
         except Exception as exc:
+            _ignored(exc)
             errors.append(f"{s.name}: {exc}")
     return rows, errors
 
@@ -118,6 +120,7 @@ def iter_collect(adapter, samples, label, stop=lambda: False, workers: int | Non
         try:
             rows.extend(collect_file(adapter, s, label))
         except Exception as exc:
+            _ignored(exc)
             errors.append(f"{s.name}: {exc}")
         if len(rows) >= 400 or k % 500 == 0:
             yield k, rows, errors

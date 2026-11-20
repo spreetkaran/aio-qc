@@ -31,6 +31,7 @@ import uuid
 from pathlib import Path
 
 from .io import atomic_write_text
+from AIO_QC.core.diag import ignored as _ignored
 
 OPS = {"ge": "at least", "le": "at most", "eq": "exactly", "between": "between"}
 REVIEW = {"none": "not reviewed", "ok": "OK", "flag": "flagged", "fixed": "fixed"}
@@ -157,7 +158,8 @@ def snapshot(session, samples=None) -> dict:
                 tools.setdefault(k, set()).update({t, title})
         try:
             risk = {k: issues.risk(k) for k in tools}
-        except Exception:
+        except Exception as _exc:
+            _ignored(_exc)
             risk = {}
     return {"prefixes": tuple(rv._prefixes),
             "samples": samples if samples is not None else [(s.key, s.name, s.split, s.folder) for s in session.samples],

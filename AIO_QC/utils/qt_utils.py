@@ -24,7 +24,7 @@ import numpy as np
 from PyQt6.QtCore import QByteArray, QRect, QRectF, QRegularExpression, QSize, Qt
 from PyQt6.QtGui import (QAction, QGuiApplication, QIcon, QIconEngine, QKeySequence, QPainter, QPalette, QPixmap,
                          QRegularExpressionValidator)
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QMenu, QPushButton, QToolBar, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QLayout, QMenu, QPushButton, QToolBar, QWidget
 
 try:                                   # ships with PyQt6; without it icons fall back to PNG files if present
     from PyQt6.QtSvg import QSvgRenderer
@@ -43,6 +43,24 @@ EMOJI_ICONS = {
     "🏷": "group-labels", "🔍": "zoom", "🧩": "tool-crop-gallery", "🤖": "tool-model-check",
     "⚡": "export", "💾": "export", "⟳": "undo", "🎚": "tool-smart-filter",
 }
+
+
+_PICTO = None
+
+
+def no_emoji(text: str) -> str:
+    """Text without colour emoji (🔍 📝 ✅ ❌ 🖼️ …) — the 3.0 look uses icons, never emoji. Typographic symbols stay
+    (→ ✓ ✗ ⚑ · …), and ⚠️ becomes the plain ⚠."""
+    global _PICTO
+    if not text:
+        return text
+    if _PICTO is None:
+        import re
+        _PICTO = re.compile("[\U0001F000-\U0001FAFF\u2705\u274C\u274E\u2753-\u2757\u2B50\u2B55"
+                            "\u23E9-\u23FA\u231A\u231B\u2614\u2615\u26A1\u26BD\u26C4\u26D4\u26EA"
+                            "\u26F5\u26FA\u26FD\u2728\u2795-\u2797\u27B0\u27BF]\uFE0F?[ \u00A0]?")
+    out = _PICTO.sub("", str(text)).replace("\uFE0F", "")
+    return out.replace("  ", " ").strip() if out != text else out
 
 
 def is_dark() -> bool:
@@ -297,14 +315,54 @@ def set_icon(obj, name: str):
     obj.setProperty(ICON_PROP, name)
 
 
+_LATER: dict = {}          # id(timer) -> (timer, fire): alive until the timer fired or its owner went away
+
+
+def set_shown(w, on: bool):
+    """setVisible for a child widget that may not have its parent yet (built before its layout is attached):
+    setVisible(True) on a parentless widget opens it as a window of its own for a moment — on Windows a flash that
+    takes the focus. A new widget is visible by default anyway, so it simply shows with its parent."""
+    if on and w.parentWidget() is None:
+        return
+    w.setVisible(bool(on))
+
+
 def later(ms: int, owner, fn):
     """Run fn after ms milliseconds — unless `owner` (a QObject) is destroyed first. Unlike
-    QTimer.singleShot(ms, lambda: ...), a lambda that uses a closed window can never fire."""
+    QTimer.singleShot(ms, lambda: ...), a lambda that uses a closed window can never fire.
+
+    The timer's Python wrapper and its slot are kept in _LATER until it fires: a wrapper nobody references can be
+    collected by Python's cycle collector while Qt still owns the timer, and its slot function was then cleared
+    under Qt's feet (a crash when the timer fired — seen once style sheets made timing different)."""
+    from PyQt6 import sip
     from PyQt6.QtCore import QTimer
+    for k, (tt, _f) in list(_LATER.items()):            # timers whose owner was deleted before they fired
+        try:
+            if sip.isdeleted(tt):
+                del _LATER[k]
+        except (TypeError, RuntimeError):
+            _LATER.pop(k, None)
     t = QTimer(owner)
     t.setSingleShot(True)
-    t.timeout.connect(fn)
-    t.timeout.connect(t.deleteLater)
+    key = id(t)
+
+    def fire():
+        _LATER.pop(key, None)
+        try:
+            alive = not sip.isdeleted(owner)
+        except TypeError:
+            alive = True
+        try:
+            if alive:
+                fn()
+        finally:
+            try:
+                if not sip.isdeleted(t):
+                    t.deleteLater()
+            except (TypeError, RuntimeError):
+                pass
+    _LATER[key] = (t, fire)
+    t.timeout.connect(fire)
     t.start(max(0, int(ms)))
     return t
 
@@ -449,6 +507,249 @@ def preferred_size(win, w, h, frac=0.85):
     if g is not None:
         w, h = min(w, int(g.width() * frac)), min(h, int(g.height() * frac))
     win.resize(w, h)
+
+
+# Window classes, sized by the screen they open on (its usable area): share of width / height, and a cap so a window
+# on a very large screen stays a comfortable size instead of filling it.
+WINDOW_SIZES = {
+    "large": (0.92, 0.90, 2600, 1600),     # workspaces: Model Check, Testing, galleries, Preparation, Convert & Split
+    "medium": (0.72, 0.80, 1760, 1180),    # checks and lists: every scan window, Issues Inbox, Settings
+    "small": (0.52, 0.66, 1180, 860),      # readers and helpers: Help, Storage, Background Tasks
+}
+
+
+TITLE_ROOM = 44                            # the app's own title bar (feature windows), added after sizing
+
+
+def fit_size(win, kind: str = "medium"):
+    """Size a feature window for the screen it opens on (its parent's): `kind` sets the share of the usable area and
+    the cap (WINDOW_SIZES); never smaller than its content needs, never larger than the screen."""
+    g = available_geometry(win)
+    if g is None or g.width() < 200 or g.height() < 200:
+        return
+    fw, fh, cw, ch = WINDOW_SIZES.get(kind, WINDOW_SIZES["medium"])
+    wrap_long_labels(win)
+    m = win.minimumSizeHint()
+    w = max(min(int(g.width() * fw), cw), m.width())
+    h = max(min(int(g.height() * fh), ch), m.height())
+    # within the limits fit_before_show keeps (96 % × 94 %), with room for the title bar the frame adds on top
+    win.resize(min(w, int(g.width() * 0.96)), min(h, int(g.height() * 0.94) - TITLE_ROOM))
+
+
+def wrap_long_labels(win, limit: int = 560):
+    """Labels whose one line is wider than `limit` px wrap instead — a long hint never sets a window's width."""
+    from PyQt6.QtWidgets import QLabel
+    for lab in win.findChildren(QLabel):
+        try:
+            if not lab.wordWrap() and lab.pixmap().isNull() and lab.sizeHint().width() > limit:
+                lab.setWordWrap(True)
+        except RuntimeError:
+            pass
+
+
+class FlowLayout(QLayout):
+    """Widgets in a row that wraps onto the next line when the window is narrow (toolbars of buttons), instead of
+    forcing the window as wide as all of them. The minimum width is the widest single widget."""
+
+    def __init__(self, parent=None, spacing: int = 6, align_right: bool = False):
+        super().__init__(parent)
+        self._items = []
+        self._sp = spacing
+        self._right = align_right
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def insertWidget(self, index: int, w):
+        self.addChildWidget(w)
+        from PyQt6.QtWidgets import QWidgetItem
+        self._items.insert(max(0, min(index, len(self._items))), QWidgetItem(w))
+        self.invalidate()
+
+    def addStretch(self, *_a):                     # compatibility with QHBoxLayout callers: rows wrap instead
+        pass
+
+    def addSpacing(self, *_a):
+        pass
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._place(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._place(rect, False)
+
+    def sizeHint(self):
+        w = h = 0
+        for it in self._visible():
+            s = it.sizeHint()
+            w += s.width() + self._sp
+            h = max(h, s.height())
+        m = self.contentsMargins()
+        return QSize(max(0, w - self._sp) + m.left() + m.right(), h + m.top() + m.bottom())
+
+    def minimumSize(self):
+        s = QSize()
+        for it in self._visible():
+            s = s.expandedTo(it.minimumSize())
+        m = self.contentsMargins()
+        return s + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _visible(self):
+        return [it for it in self._items if not (it.widget() is not None and it.widget().isHidden())]
+
+    def _place(self, rect, test):
+        m = self.contentsMargins()
+        r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        rows, row, row_w = [], [], 0
+        for it in self._visible():
+            s = it.sizeHint()
+            need = s.width() + (self._sp if row else 0)
+            if row and row_w + need > r.width():
+                rows.append(row)
+                row, row_w = [], 0
+                need = s.width()
+            row.append((it, s))
+            row_w += need
+        if row:
+            rows.append(row)
+        y = r.y()
+        for row in rows:
+            h = max(s.height() for _it, s in row)
+            used = sum(s.width() for _it, s in row) + self._sp * (len(row) - 1)
+            x = r.x() + (max(0, r.width() - used) if self._right else 0)
+            for it, s in row:
+                if not test:
+                    it.setGeometry(QRect(x, y + (h - s.height()) // 2, s.width(), s.height()))
+                x += s.width() + self._sp
+            y += h + self._sp
+        return (y - self._sp - r.y() if rows else 0) + m.top() + m.bottom()
+
+
+class SplitRow(QLayout):
+    """Two groups on one line — the left one takes the spare room, the right one sits at the right edge — that
+    become two lines (the right group under the left, still right-aligned) when the window is too narrow for both.
+    The minimum width is the wider of the two groups, not their sum."""
+
+    def __init__(self, left: QWidget, right: QWidget, parent=None, spacing: int = 8):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import QWidgetItem
+        self._sp = spacing
+        self.addChildWidget(left)
+        self.addChildWidget(right)
+        self._items = [QWidgetItem(left), QWidgetItem(right)]
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):                          # fixed two items
+        pass
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation.Horizontal
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._place(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._place(rect, False)
+
+    def sizeHint(self):
+        a, b = (it.sizeHint() for it in self._items)
+        m = self.contentsMargins()
+        return QSize(a.width() + self._sp + b.width() + m.left() + m.right(),
+                     max(a.height(), b.height()) + m.top() + m.bottom())
+
+    def minimumSize(self):
+        a, b = (it.minimumSize() for it in self._items)
+        m = self.contentsMargins()
+        return QSize(max(a.width(), b.width()) + m.left() + m.right(),
+                     max(a.height(), b.height()) + m.top() + m.bottom())
+
+    def _place(self, rect, test):
+        m = self.contentsMargins()
+        r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        L, R = self._items
+        lh, rh = L.sizeHint(), R.sizeHint()
+        lmin = L.minimumSize()
+        if not R.widget().isHidden() and lmin.width() + self._sp + rh.width() > r.width():     # two lines
+            if not test:
+                L.setGeometry(QRect(r.x(), r.y(), r.width(), lh.height()))
+                rw = min(rh.width(), r.width())
+                R.setGeometry(QRect(r.right() + 1 - rw, r.y() + lh.height() + 4, rw, rh.height()))
+            return lh.height() + 4 + rh.height() + m.top() + m.bottom()
+        h = max(lh.height(), rh.height())
+        if not test:
+            rw = rh.width() if not R.widget().isHidden() else 0
+            lw = r.width() - rw - (self._sp if rw else 0)
+            L.setGeometry(QRect(r.x(), r.y() + (h - lh.height()) // 2, lw, lh.height()))
+            if rw:
+                R.setGeometry(QRect(r.right() + 1 - rw, r.y() + (h - rh.height()) // 2, rw, rh.height()))
+        return h + m.top() + m.bottom()
+
+
+def scrolled(widget, horizontal: bool = False):
+    """A page in a frameless scroll area: it keeps its natural size on a big screen and scrolls on a small one,
+    instead of forcing the whole window taller (or wider) than the screen."""
+    from PyQt6.QtWidgets import QFrame, QScrollArea
+    sa = QScrollArea()
+    sa.setWidgetResizable(True)
+    sa.setFrameShape(QFrame.Shape.NoFrame)
+    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded if horizontal
+                                    else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    sa.setWidget(widget)
+    return sa
+
+
+def flow_row(items, spacing: int = 10, align_right: bool = False) -> QWidget:
+    """A wrapping row: `items` are widgets or (label text, widget) pairs — a pair stays together on one line."""
+    from PyQt6.QtWidgets import QHBoxLayout, QLabel
+    host = QWidget()
+    flow = FlowLayout(host, spacing=spacing, align_right=align_right)
+    for it in items:
+        if isinstance(it, tuple):
+            text, w = it
+            box = QWidget()
+            h = QHBoxLayout(box)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(4)
+            if text:
+                lab = QLabel(text)
+                if w.toolTip():
+                    lab.setToolTip(w.toolTip())
+                h.addWidget(lab)
+            h.addWidget(w)
+            flow.addWidget(box)
+        else:
+            flow.addWidget(it)
+    return host
 
 
 def fit_to_screen(win):

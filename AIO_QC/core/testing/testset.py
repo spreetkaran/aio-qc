@@ -22,6 +22,7 @@ batch extraction (exposure-normalised; whole-picture AND local change).
 Labels: YOLO txt in labels/ or LabelMe json next to the image; pre-annotations written by FrameExtractor are
 fingerprinted and stay "unreviewed" (excluded from accuracy by default) until somebody edits them.
 """
+
 import hashlib
 import json
 import os
@@ -36,6 +37,7 @@ import numpy as np
 from AIO_QC.core.testing import dataset as D
 from AIO_QC.tools.frame_extractor.core.dedup import PRESETS as _DEDUP_PRESETS
 from AIO_QC.tools.frame_extractor.core.imageio import imread
+from AIO_QC.core.diag import ignored as _ignored
 
 MANIFEST = "testset.json"
 VERSION = 1
@@ -288,6 +290,7 @@ class TestSet:
                 plans.append((v, idx, src.fps, src.frame_count))
                 src.release()
             except Exception as e:
+                _ignored(e)
                 stats["failed"].append(f"{os.path.basename(v['path'])}: {e}")
         # one plan per video: the same video twice (or overlapping ranges) would make two threads write the same
         # file names at once - their frames are merged into one plan instead
@@ -315,6 +318,7 @@ class TestSet:
             try:
                 src = open_source(v["path"], "auto", hw_accel=False)
             except Exception as e:
+                _ignored(e)
                 return out, f"{os.path.basename(v['path'])}: {e}"
             try:
                 for k, frame in iter_frames(src, idx, cancel):
@@ -470,9 +474,10 @@ class TestSet:
             self.set_names(ds.names)
         return ds
 
-    def write_prelabels(self, preds_by_file, names, fmt="yolo", only_unlabelled=True):
+    def write_prelabels(self, preds_by_file, names, fmt="yolo", only_unlabelled=True, classify=False):
         """Pre-annotations for labelling: preds_by_file {item file: (n, 6) array in test-set class ids}.
-        Fingerprinted so they count as ground truth only after a person has edited them."""
+        Fingerprinted so they count as ground truth only after a person has edited them. classify: a classifier's
+        answer — a LabelMe file with no shapes whose flag names the image's class."""
         from AIO_QC.tools.frame_extractor.core.detector import Detection, write_labelme
         if not self.names and names:
             self.manifest["names"] = dict(names)
@@ -489,7 +494,12 @@ class TestSet:
             w, h = it.get("w") or 0, it.get("h") or 0
             if not w:
                 w, h = D.image_size(self.abspath(it))
-            if fmt == "labelme":
+            if classify:
+                if not len(pr):
+                    continue                          # unsure: left for a person
+                cls_name = self.names.get(int(pr[0][5]), str(int(pr[0][5])))
+                write_labelme(lp, os.path.basename(self.abspath(it)), w, h, [], flags={cls_name: True})
+            elif fmt == "labelme":
                 dets = [Detection(*map(float, b[:4]), float(b[4]), int(b[5]), self.names.get(int(b[5]), str(int(b[5]))))
                         for b in pr]
                 write_labelme(lp, os.path.basename(self.abspath(it)), w, h, dets, flags={"prelabel": True})

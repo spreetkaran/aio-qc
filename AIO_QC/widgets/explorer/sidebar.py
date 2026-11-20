@@ -165,7 +165,7 @@ class ModelRow(QWidget):
         self.spin.setSingleStep(0.05)
         self.spin.setValue(conf)
         self.spin.setKeyboardTracking(False)
-        self.spin.setFixedWidth(62)
+        self.spin.setMinimumWidth(self.spin.fontMetrics().horizontalAdvance("0.00") + 48)   # digits + arrows
         g.addWidget(self.cb, 0, 0, 1, 2)
         g.addWidget(self.slider, 1, 0)
         g.addWidget(self.spin, 1, 1)
@@ -206,11 +206,22 @@ class ModelRow(QWidget):
 class Sidebar(QScrollArea):
     changed = pyqtSignal()
 
+    def minimumSizeHint(self):
+        """As wide as its content needs (plus the scroll bar), so nothing on the right is cut off."""
+        from PyQt6.QtCore import QSize
+        w = self.widget()
+        need = (w.minimumSizeHint().width() if w is not None else 0) + self.verticalScrollBar().sizeHint().width()
+        return QSize(max(290, need + 2), 120)
+
+    def sizeHint(self):
+        s = self.minimumSizeHint()
+        s.setHeight(super().sizeHint().height())
+        return s
+
     def __init__(self):
         super().__init__()
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setMinimumWidth(290)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         host = QWidget()
         self.lay = QVBoxLayout(host)
